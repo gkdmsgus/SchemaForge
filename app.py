@@ -2,14 +2,16 @@ import os
 import sys
 import re
 import uuid
+import json
 import shutil
 import subprocess
 import tempfile
 import time
 
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file, render_template, Response, stream_with_context
 from openai import OpenAI
 from dotenv import load_dotenv
+from tavily import TavilyClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -65,89 +67,122 @@ def index():
 def generate():
     data = request.get_json()
     description = (data or {}).get("description", "").strip()
-
     if not description:
         return jsonify({"error": "회로 설명을 입력하세요."}), 400
 
     cleanup_old_files()
 
-    try:
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Generate skidl code for this electronics circuit: {description}"},
-        ]
-
-        raw = ""
-        for attempt in range(2):
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                temperature=0.2,
-                max_tokens=2500,
+    def stream():
+        # ── 1단계: Tavily 검색 ──────────────────────────────────────
+        yield _event("status", "🔍 회로 레퍼런스 검색 중...")
+        try:
+            tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+            search_result = tavily.search(
+                query=f"{description} schematic circuit diagram components values datasheet",
+                search_depth="advanced",
+                max_results=4,
+                include_answer=True,
             )
-            raw = response.choices[0].message.content.strip()
+            sources = search_result.get("results", [])
+            context = "\n\n".join(
+                f"[출처: {s['url']}]\n{s.get('content','')[:800]}"
+                for s in sources if s.get("content")
+            )
+            source_urls = [s["url"] for s in sources if s.get("url")]
+        except Exception as e:
+            yield _event("status", f"⚠️ 검색 실패, 일반 생성으로 진행... ({e})")
+            context = ""
+            source_urls = []
 
-            # GPT 거부 감지: 코드가 아닌 텍스트로 시작하면 재시도
-            if raw.startswith("from skidl"):
-                break
-            if attempt == 0:
-                messages.append({"role": "assistant", "content": raw})
-                messages.append({"role": "user", "content": "You must output only skidl Python code starting with 'from skidl import *'. Do not refuse. Generate the circuit now."})
+        # ── 2단계: GPT-4o 코드 생성 ────────────────────────────────
+        yield _event("status", "🤖 GPT-4o가 회로를 분석하고 코드를 생성 중...")
+        try:
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            user_msg = f"""회로 요청: {description}
 
-    except Exception as e:
-        return jsonify({"error": f"GPT API 오류: {str(e)}"}), 500
+{"아래는 웹에서 찾은 실제 회로 레퍼런스입니다. 이 정보를 바탕으로 정확한 부품값과 연결을 사용하세요:" if context else ""}
+{context}
 
-    if "---GUIDE---" in raw:
-        skidl_code, guide = raw.split("---GUIDE---", 1)
-        skidl_code = skidl_code.strip()
-        guide = guide.strip()
-    else:
-        skidl_code = raw
-        guide = ""
+위 레퍼런스를 참고하여 정확한 skidl 코드를 생성하세요."""
 
-    if skidl_code.startswith("```"):
-        lines = skidl_code.splitlines()
-        skidl_code = "\n".join(lines[1:-1]).strip()
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ]
 
-    job_id = uuid.uuid4().hex
-    output_path = os.path.join(OUTPUTS_DIR, f"{job_id}.net")
+            raw = ""
+            for attempt in range(2):
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=2500,
+                )
+                raw = response.choices[0].message.content.strip()
+                if raw.startswith("from skidl"):
+                    break
+                if attempt == 0:
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": "Output only skidl Python code starting with 'from skidl import *'. Generate now."})
+        except Exception as e:
+            yield _event("error", f"GPT API 오류: {str(e)}")
+            return
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        code_file = os.path.join(tmpdir, "circuit.py")
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(skidl_code)
+        if "---GUIDE---" in raw:
+            skidl_code, guide = raw.split("---GUIDE---", 1)
+            skidl_code, guide = skidl_code.strip(), guide.strip()
+        else:
+            skidl_code, guide = raw.strip(), ""
 
-        result = subprocess.run(
-            [sys.executable, code_file],
-            capture_output=True, text=True, timeout=30, cwd=tmpdir,
-        )
+        if skidl_code.startswith("```"):
+            skidl_code = "\n".join(skidl_code.splitlines()[1:-1]).strip()
 
-        if result.returncode != 0:
-            return jsonify({
-                "error": "skidl 실행 오류",
-                "detail": result.stderr,
-                "code": skidl_code,
-            }), 500
+        # ── 3단계: skidl 실행 ───────────────────────────────────────
+        yield _event("status", "⚙️ 회로 넷리스트 생성 중...")
+        job_id = uuid.uuid4().hex
+        output_path = os.path.join(OUTPUTS_DIR, f"{job_id}.net")
 
-        net_files = [f for f in os.listdir(tmpdir) if f.endswith(".net")]
-        if not net_files:
-            return jsonify({
-                "error": "netlist 파일이 생성되지 않았습니다.",
-                "code": skidl_code,
-            }), 500
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code_file = os.path.join(tmpdir, "circuit.py")
+            with open(code_file, "w", encoding="utf-8") as f:
+                f.write(skidl_code)
 
-        shutil.copy(os.path.join(tmpdir, net_files[0]), output_path)
+            result = subprocess.run(
+                [sys.executable, code_file],
+                capture_output=True, text=True, timeout=90, cwd=tmpdir,
+            )
 
-    graph = parse_netlist(output_path)
+            if result.returncode != 0:
+                yield _event("error", json.dumps({
+                    "message": "skidl 실행 오류",
+                    "detail": result.stderr,
+                    "code": skidl_code,
+                }))
+                return
 
-    return jsonify({
-        "success": True,
-        "code": skidl_code,
-        "guide": guide,
-        "graph": graph,
-        "filename": f"{job_id}.net",
-    })
+            net_files = [f for f in os.listdir(tmpdir) if f.endswith(".net")]
+            if not net_files:
+                yield _event("error", "netlist 파일이 생성되지 않았습니다.")
+                return
+
+            shutil.copy(os.path.join(tmpdir, net_files[0]), output_path)
+
+        graph = parse_netlist(output_path)
+
+        yield _event("done", json.dumps({
+            "code": skidl_code,
+            "guide": guide,
+            "graph": graph,
+            "filename": f"{job_id}.net",
+            "sources": source_urls,
+        }))
+
+    return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _event(event, data):
+    return f"event: {event}\ndata: {data}\n\n"
 
 
 @app.route("/download/<filename>")

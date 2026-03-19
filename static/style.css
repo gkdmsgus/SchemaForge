@@ -209,6 +209,33 @@ textarea::placeholder {
   width: 100%;
 }
 
+.sources-section {
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: #0f1a2a;
+  border: 1px solid #1a3a5a;
+  border-radius: 8px;
+}
+.sources-section.hidden { display: none; }
+.sources-section h2 {
+  color: #7ab8f5;
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.source-link {
+  display: block;
+  color: #5a9ad5;
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-link:hover { color: #7ab8f5; text-decoration: underline; }
+
 .bom-section {
   margin-top: 24px;
   border-top: 1px solid #2a2d40;
