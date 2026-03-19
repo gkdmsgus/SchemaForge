@@ -13,36 +13,71 @@
     <div class="logo-icon">⚡</div>
     <h1>SchemaForge</h1>
   </div>
-  <p class="subtitle">자연어로 KiCad 스키매틱을 자동 생성합니다</p>
+  <p class="subtitle">자연어로 KiCad 스키매틱을 자동 생성하는 AI 회로 설계 도구</p>
   <div class="badge-row">
     <span class="badge">GPT-4o</span>
-    <span class="badge">Tavily 검색</span>
+    <span class="badge">Tavily 웹 검색</span>
     <span class="badge">skidl</span>
-    <span class="badge">KiCad .net</span>
+    <span class="badge">KiCad 호환</span>
   </div>
 </header>
 
 <div class="main-wrap">
 
+  <!-- 사용 가이드 배너 -->
+  <div class="guide-banner">
+    <div class="guide-banner-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      사용 방법
+    </div>
+    <div class="guide-grid">
+      <div class="guide-tip">
+        <div class="guide-tip-num">① 구체적으로 입력</div>
+        <p>부품 모델명까지 명시하면 정확도가 높아져요.<br>
+          <span class="highlight">❌ "앰프 회로"</span><br>
+          <span class="highlight">✅ "LM386 베이스 앰프 회로"</span>
+        </p>
+      </div>
+      <div class="guide-tip">
+        <div class="guide-tip-num">② 용도를 설명</div>
+        <p>전압, 전류, 목적을 함께 쓰면 더 완성도 높은 회로가 나와요.<br>
+          <span class="highlight">✅ "5V USB 입력, 스피커 출력 앰프"</span>
+        </p>
+      </div>
+      <div class="guide-tip">
+        <div class="guide-tip-num">③ 다운로드 & KiCad</div>
+        <p><strong style="color:#e2e8f0">.net 파일</strong> 다운로드 후<br>KiCad → <span class="highlight">File → Import → Netlist</span><br>로 스키매틱에 불러올 수 있어요.</p>
+      </div>
+      <div class="guide-tip">
+        <div class="guide-tip-num">④ 추천 입력 패턴</div>
+        <p><span class="highlight">[IC 모델명] + [용도] + 회로</span><br>
+          예: <span class="highlight">"TP4056 리튬배터리 충전 회로"</span><br>
+          예: <span class="highlight">"NE555 LED 점멸 회로 1Hz"</span>
+        </p>
+      </div>
+    </div>
+  </div>
+
   <!-- 입력 카드 -->
   <div class="card input-card">
     <div class="input-label">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      회로 설명
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      회로 설명 입력
     </div>
-    <textarea id="description" rows="4"
-      placeholder="예: 베이스 앰프 회로&#10;예: 5V 입력받아서 LED 3개 깜빡이는 회로&#10;예: USB-C로 리튬배터리 충전하는 회로"></textarea>
+    <textarea id="description" rows="3"
+      placeholder="예: LM386 베이스 앰프 회로&#10;예: TP4056 리튬배터리 충전 회로&#10;예: NE555 타이머 LED 점멸 회로 1Hz"></textarea>
 
     <div class="example-row">
-      <span>예시</span>
-      <button class="chip" onclick="setExample(this)">LED 점멸 회로</button>
-      <button class="chip" onclick="setExample(this)">베이스 앰프</button>
-      <button class="chip" onclick="setExample(this)">아두이노 + 온도센서</button>
-      <button class="chip" onclick="setExample(this)">USB-C 배터리 충전</button>
+      <span>빠른 예시</span>
+      <button class="chip" onclick="setExample(this)">LM386 베이스 앰프</button>
+      <button class="chip" onclick="setExample(this)">클래스 AB 파워 앰프 (TDA2030)</button>
+      <button class="chip" onclick="setExample(this)">TP4056 리튬배터리 충전</button>
+      <button class="chip" onclick="setExample(this)">NE555 LED 점멸 1Hz</button>
+      <button class="chip" onclick="setExample(this)">아두이노 + DHT11 온도습도센서</button>
     </div>
 
     <button class="generate-btn" id="generate-btn" onclick="generate()">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       스키매틱 생성
       <span class="shortcut">Ctrl+Enter</span>
     </button>
@@ -51,19 +86,19 @@
   <!-- 상태 -->
   <div id="status" class="status hidden"></div>
 
-  <!-- 결과 -->
+  <!-- 결과 영역 -->
   <div id="result-section" class="result-section hidden">
 
     <!-- 회로 구성도 -->
     <div class="card">
       <div class="section-header">
         <div class="section-title">
-          <span class="section-dot"></span>
+          <span class="dot" style="background:var(--cyan)"></span>
           회로 구성도
         </div>
         <button class="dl-btn" onclick="downloadNet()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          KiCad .net
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          .net 다운로드
         </button>
       </div>
       <div class="canvas-wrap">
@@ -74,35 +109,35 @@
     <!-- 참고 출처 -->
     <div class="card sources-card hidden" id="sources-section">
       <div class="section-title">
-        <span class="section-dot" style="background:var(--blue)"></span>
+        <span class="dot" style="background:var(--blue)"></span>
         참고한 레퍼런스
       </div>
       <div class="sources-list" id="sources-list"></div>
     </div>
 
-    <!-- BOM 테이블 -->
+    <!-- BOM -->
     <div class="card bom-card hidden" id="bom-section">
       <div class="section-title">
-        <span class="section-dot" style="background:var(--yellow)"></span>
+        <span class="dot" style="background:var(--amber)"></span>
         필요한 부품 (BOM)
       </div>
       <div id="bom-table-wrap"></div>
     </div>
 
     <!-- 배선 가이드 -->
-    <div class="card guide-card hidden" id="guide-section">
+    <div class="card wiring-card hidden" id="guide-section">
       <div class="section-title">
-        <span class="section-dot" style="background:var(--green)"></span>
+        <span class="dot" style="background:var(--green)"></span>
         배선 가이드
       </div>
-      <div id="guide-content" class="guide-content"></div>
+      <div id="guide-content" class="wiring-content"></div>
     </div>
 
     <!-- skidl 코드 -->
     <details class="card code-card" id="code-card">
       <summary>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        생성된 skidl 코드
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        생성된 skidl 코드 보기
       </summary>
       <pre id="code-content"></pre>
     </details>
@@ -127,14 +162,15 @@ async function generate() {
 
   const btn = document.getElementById("generate-btn");
   btn.disabled = true;
-  btn.innerHTML = `<span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></span> 생성 중...`;
-  showStatus("🔍 회로 레퍼런스 검색 중...", "loading");
+  btn.innerHTML = `<span style="display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></span> 생성 중...`;
+  showStatus("회로 레퍼런스 검색 중...", "loading");
   document.getElementById("result-section").classList.add("hidden");
 
   try {
     const res = await fetch("/generate", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({description}),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
     });
 
     const reader = res.body.getReader();
@@ -142,27 +178,26 @@ async function generate() {
     let buf = "";
 
     while (true) {
-      const {done, value} = await reader.read();
+      const { done, value } = await reader.read();
       if (done) break;
-      buf += decoder.decode(value, {stream: true});
+      buf += decoder.decode(value, { stream: true });
       const parts = buf.split("\n\n");
       buf = parts.pop();
       for (const part of parts) {
-        const evtMatch  = part.match(/^event: (.+)$/m);
-        const dataMatch = part.match(/^data: ([\s\S]+)$/m);
-        if (!evtMatch || !dataMatch) continue;
-        const evt  = evtMatch[1].trim();
-        const data = dataMatch[1].trim();
+        const evtM  = part.match(/^event: (.+)$/m);
+        const dataM = part.match(/^data: ([\s\S]+)$/m);
+        if (!evtM || !dataM) continue;
+        const evt = evtM[1].trim(), raw = dataM[1].trim();
 
         if (evt === "status") {
-          showStatus(data, "loading");
+          showStatus(raw, "loading");
         } else if (evt === "error") {
-          let msg = data;
-          try { msg = JSON.parse(data).message || data; } catch(_){}
-          showStatus(`${msg}`, "error");
+          let msg = raw;
+          try { msg = JSON.parse(raw).message || raw; } catch(_){}
+          showStatus(msg, "error");
           return;
         } else if (evt === "done") {
-          const d = JSON.parse(data);
+          const d = JSON.parse(raw);
           currentFilename = d.filename;
           document.getElementById("code-content").textContent = d.code;
           document.getElementById("result-section").classList.remove("hidden");
@@ -178,7 +213,7 @@ async function generate() {
     showStatus(`네트워크 오류: ${e.message}`, "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 스키매틱 생성 <span class="shortcut">Ctrl+Enter</span>`;
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 스키매틱 생성 <span class="shortcut">Ctrl+Enter</span>`;
   }
 }
 
@@ -186,69 +221,44 @@ function downloadNet() { if (currentFilename) window.location.href = `/download/
 
 function showStatus(msg, type) {
   const el = document.getElementById("status");
-  el.textContent = msg;
-  el.className = `status ${type}`;
+  el.textContent = msg; el.className = `status ${type}`;
 }
 
-// ── 참고 출처 ──────────────────────────────────────────────────────────
 function renderSources(sources) {
-  const section = document.getElementById("sources-section");
-  const list    = document.getElementById("sources-list");
-  if (!sources || !sources.length) { section.classList.add("hidden"); return; }
-  list.innerHTML = sources.map(url =>
-    `<a class="source-link" href="${url}" target="_blank" rel="noopener">${url}</a>`
-  ).join("");
-  section.classList.remove("hidden");
+  const sec = document.getElementById("sources-section");
+  const list = document.getElementById("sources-list");
+  if (!sources?.length) { sec.classList.add("hidden"); return; }
+  list.innerHTML = sources.map(u => `<a class="source-link" href="${u}" target="_blank" rel="noopener">${u}</a>`).join("");
+  sec.classList.remove("hidden");
 }
 
-// ── BOM 테이블 ──────────────────────────────────────────────────────────
-const COMP_NAMES = {
-  R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED',
-  L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터',
-};
+const COMP_NAMES = { R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED', L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터' };
 
 function renderBOM(components, guide) {
-  const section = document.getElementById("bom-section");
-  const wrap    = document.getElementById("bom-table-wrap");
-  if (!components || !components.length) { section.classList.add("hidden"); return; }
+  const sec = document.getElementById("bom-section");
+  const wrap = document.getElementById("bom-table-wrap");
+  if (!components?.length) { sec.classList.add("hidden"); return; }
 
   const roles = {};
-  if (guide) {
-    guide.split('\n').forEach(line => {
-      const m = line.match(/^-\s+([A-Z]\d+)[^:]*:\s*(.+)/);
-      if (m) roles[m[1]] = m[2].trim();
-    });
-  }
-
-  let html = `<table class="bom-table">
-    <thead><tr><th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>역할</th></tr></thead>
-    <tbody>`;
-
-  components.forEach((c, i) => {
-    const type = c.ref.replace(/\d+/g,'');
-    html += `<tr>
-      <td>${i+1}</td>
-      <td><span class="bom-ref" style="color:${getCompColor(c.ref)}">${c.ref}</span></td>
-      <td>${COMP_NAMES[type] || type}</td>
-      <td class="bom-val">${c.value || '-'}</td>
-      <td class="bom-role">${roles[c.ref] || '-'}</td>
-    </tr>`;
+  guide?.split('\n').forEach(line => {
+    const m = line.match(/^-\s+([A-Z]\d+)[^:]*:\s*(.+)/);
+    if (m) roles[m[1]] = m[2].trim();
   });
 
-  html += `</tbody><tfoot><tr class="bom-total">
-    <td colspan="4">총 부품 수</td>
-    <td><strong>${components.length}개</strong></td>
-  </tr></tfoot></table>`;
-
+  let html = `<table class="bom-table"><thead><tr><th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>역할</th></tr></thead><tbody>`;
+  components.forEach((c, i) => {
+    const type = c.ref.replace(/\d+/g,'');
+    html += `<tr><td>${i+1}</td><td><span class="bom-ref" style="color:${getCompColor(c.ref)}">${c.ref}</span></td><td>${COMP_NAMES[type]||type}</td><td class="bom-val">${c.value||'-'}</td><td class="bom-role">${roles[c.ref]||'-'}</td></tr>`;
+  });
+  html += `</tbody><tfoot><tr class="bom-total"><td colspan="4">총 부품 수</td><td><strong>${components.length}개</strong></td></tr></tfoot></table>`;
   wrap.innerHTML = html;
-  section.classList.remove("hidden");
+  sec.classList.remove("hidden");
 }
 
-// ── 배선 가이드 ────────────────────────────────────────────────────────
 function renderGuide(guide) {
-  const section = document.getElementById("guide-section");
+  const sec = document.getElementById("guide-section");
   const content = document.getElementById("guide-content");
-  if (!guide) { section.classList.add("hidden"); return; }
+  if (!guide) { sec.classList.add("hidden"); return; }
   const html = guide
     .replace(/\[부품 목록\]/g, '<h3 class="guide-heading">📦 부품 목록</h3>')
     .replace(/\[배선 순서\]/g, '<h3 class="guide-heading">🔧 배선 순서</h3>')
@@ -256,221 +266,125 @@ function renderGuide(guide) {
     .replace(/^(\d+)\. (.+)$/gm, '<div class="step"><span class="step-num">$1</span><span>$2</span></div>')
     .replace(/(<li>.*<\/li>\n?)+/gs, m => `<ul>${m}</ul>`);
   content.innerHTML = html;
-  section.classList.remove("hidden");
+  sec.classList.remove("hidden");
 }
 
-// ── 회로 시각화 ────────────────────────────────────────────────────────
-const COLORS = {
-  wire:"#6c63ff", vcc:"#ff6b6b", gnd:"#5ba3f5",
-  comp:"#0e1220", text:"#e8eaf6", subtext:"#8892b0", label:"#ffd166",
-  R:"#ffd166", C:"#5ba3f5", Q:"#3ddc84", D:"#ff6b6b", L:"#c084fc", U:"#6c63ff",
-};
-const NET_COLORS = ["#6c63ff","#3ddc84","#ffd166","#ff6b6b","#5ba3f5","#c084fc","#fb923c"];
-
+// ── 회로 시각화 ─────────────────────────────────────────────────
+const NET_COLORS = ["#22d3ee","#34d399","#fbbf24","#f87171","#60a5fa","#a78bfa","#fb923c"];
 function getCompColor(ref) {
-  const map = {R:"#ffd166",C:"#5ba3f5",Q:"#3ddc84",D:"#ff6b6b",L:"#c084fc",U:"#6c63ff"};
-  return map[ref[0].toUpperCase()] || "#8892b0";
+  return ({R:"#fbbf24",C:"#60a5fa",Q:"#34d399",D:"#f87171",L:"#a78bfa",U:"#22d3ee"})[ref[0].toUpperCase()] || "#94a3b8";
 }
 
 function getPinLayout(ref, pinCount) {
   const t = ref[0].toUpperCase();
-  if (t === 'Q') return { w:64, h:72, pins:{1:{x:-32,y:0,side:'L'},2:{x:0,y:-36,side:'T'},3:{x:0,y:36,side:'B'}} };
-  if (pinCount <= 2) return { w:64, h:44, pins:{1:{x:-32,y:0,side:'L'},2:{x:32,y:0,side:'R'}} };
-  const left = Math.ceil(pinCount/2), right = Math.floor(pinCount/2);
-  const h = Math.max(64, Math.max(left,right)*20+24);
-  const pins = {};
-  for(let i=0;i<left;i++)  pins[i+1]      = {x:-42,y:-h/2+22+i*20,side:'L'};
-  for(let i=0;i<right;i++) pins[left+i+1] = {x:42, y:-h/2+22+i*20,side:'R'};
+  if (t==='Q') return {w:64,h:72,pins:{1:{x:-32,y:0,side:'L'},2:{x:0,y:-36,side:'T'},3:{x:0,y:36,side:'B'}}};
+  if (pinCount<=2) return {w:64,h:44,pins:{1:{x:-32,y:0,side:'L'},2:{x:32,y:0,side:'R'}}};
+  const l=Math.ceil(pinCount/2), r=Math.floor(pinCount/2);
+  const h=Math.max(64,Math.max(l,r)*20+24);
+  const pins={};
+  for(let i=0;i<l;i++) pins[i+1]={x:-42,y:-h/2+22+i*20,side:'L'};
+  for(let i=0;i<r;i++) pins[l+i+1]={x:42,y:-h/2+22+i*20,side:'R'};
   return {w:84,h,pins};
 }
-
-function getMaxPin(ref, nets) {
-  let max = 2;
-  nets.forEach(n => n.nodes.forEach(nd => { if(nd.ref===ref) max=Math.max(max,parseInt(nd.pin)||2); }));
-  return max;
-}
-
-function pinAbs(ref, pinId, pos, layouts) {
-  const p = pos[ref], layout = layouts[ref];
-  if(!p||!layout) return null;
-  const pin = layout.pins[pinId] || layout.pins[Object.keys(layout.pins)[0]];
-  const s = 10;
-  if(pin.side==='L') return {x:p.x-layout.w/2-s, y:p.y+pin.y};
-  if(pin.side==='R') return {x:p.x+layout.w/2+s, y:p.y+pin.y};
-  if(pin.side==='T') return {x:p.x+pin.x, y:p.y-layout.h/2-s};
-  if(pin.side==='B') return {x:p.x+pin.x, y:p.y+layout.h/2+s};
-  return {x:p.x+pin.x, y:p.y+pin.y};
+function getMaxPin(ref,nets){let m=2;nets.forEach(n=>n.nodes.forEach(nd=>{if(nd.ref===ref)m=Math.max(m,parseInt(nd.pin)||2);}));return m;}
+function pinAbs(ref,pin,pos,layouts){
+  const p=pos[ref],l=layouts[ref];if(!p||!l)return null;
+  const pn=l.pins[pin]||l.pins[Object.keys(l.pins)[0]];const s=10;
+  if(pn.side==='L')return{x:p.x-l.w/2-s,y:p.y+pn.y};
+  if(pn.side==='R')return{x:p.x+l.w/2+s,y:p.y+pn.y};
+  if(pn.side==='T')return{x:p.x+pn.x,y:p.y-l.h/2-s};
+  return{x:p.x+pn.x,y:p.y+l.h/2+s};
 }
 
 function drawSchematic(graph) {
-  const canvas = document.getElementById("circuit-canvas");
-  const ctx = canvas.getContext("2d");
-  const comps = graph.components||[], nets = graph.nets||[];
-  if(!comps.length) return;
+  const canvas=document.getElementById("circuit-canvas"),ctx=canvas.getContext("2d");
+  const comps=graph.components||[],nets=graph.nets||[];
+  if(!comps.length)return;
 
   const layouts={};
-  comps.forEach(c => { layouts[c.ref]=getPinLayout(c.ref, getMaxPin(c.ref,nets)); });
+  comps.forEach(c=>{layouts[c.ref]=getPinLayout(c.ref,getMaxPin(c.ref,nets));});
 
   const cols=Math.min(Math.ceil(Math.sqrt(comps.length)),4);
-  const HGAP=90, VGAP=90, MARGIN=70;
-  const colW=Array(cols).fill(0), rowH=[];
-  comps.forEach((c,i)=>{
-    const col=i%cols, row=Math.floor(i/cols);
-    colW[col]=Math.max(colW[col], layouts[c.ref].w+HGAP);
-    if(!rowH[row]) rowH[row]=0;
-    rowH[row]=Math.max(rowH[row], layouts[c.ref].h+VGAP);
-  });
+  const HGAP=90,VGAP=90,M=72;
+  const cW=Array(cols).fill(0),rH=[];
+  comps.forEach((c,i)=>{const col=i%cols,row=Math.floor(i/cols);cW[col]=Math.max(cW[col],layouts[c.ref].w+HGAP);if(!rH[row])rH[row]=0;rH[row]=Math.max(rH[row],layouts[c.ref].h+VGAP);});
 
-  const pos={};
-  let cx=MARGIN;
-  for(let col=0;col<cols;col++){
-    let cy=MARGIN+24;
-    for(let row=0;row<Math.ceil(comps.length/cols);row++){
-      const idx=row*cols+col; if(idx>=comps.length) continue;
-      pos[comps[idx].ref]={x:cx+colW[col]/2, y:cy+rowH[row]/2};
-      cy+=rowH[row];
-    }
-    cx+=colW[col];
-  }
+  const pos={};let cx=M;
+  for(let col=0;col<cols;col++){let cy=M+20;for(let row=0;row<Math.ceil(comps.length/cols);row++){const idx=row*cols+col;if(idx>=comps.length)continue;pos[comps[idx].ref]={x:cx+cW[col]/2,y:cy+rH[row]/2};cy+=rH[row];}cx+=cW[col];}
 
-  const TW = cx+MARGIN;
-  const TH = Object.values(pos).reduce((m,p)=>Math.max(m,p.y),0)+MARGIN+60+nets.length*22;
-  canvas.width=Math.max(TW,500); canvas.height=Math.max(TH,320);
+  const TW=cx+M,TH=Object.values(pos).reduce((m,p)=>Math.max(m,p.y),0)+M+60+nets.length*22;
+  canvas.width=Math.max(TW,500);canvas.height=Math.max(TH,320);
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle="#080b14"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#0f172a";ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // 배경 그리드
-  ctx.strokeStyle="#1e2640"; ctx.lineWidth=0.5;
-  for(let x=0;x<canvas.width;x+=32){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
-  for(let y=0;y<canvas.height;y+=32){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+  ctx.strokeStyle="rgba(51,65,85,0.5)";ctx.lineWidth=0.5;
+  for(let x=0;x<canvas.width;x+=28){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
+  for(let y=0;y<canvas.height;y+=28){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
 
-  // 와이어
-  nets.forEach((net,ni)=>{
-    const isPwr = net.name==='VCC'||net.name==='GND';
-    const color = isPwr ? (net.name==='VCC'?COLORS.vcc:COLORS.gnd) : NET_COLORS[ni%NET_COLORS.length];
-    const pts = net.nodes.map(n=>pinAbs(n.ref,n.pin,pos,layouts)).filter(Boolean);
-    if(pts.length<2){ if(pts.length===1) drawPower(ctx,pts[0],net.name,color); return; }
-
-    ctx.strokeStyle=color+"bb"; ctx.lineWidth=1.8; ctx.setLineDash([]);
-    for(let i=1;i<pts.length;i++){
-      const a=pts[0], b=pts[i];
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(a.x,b.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-      ctx.fillStyle=color;
-      ctx.beginPath(); ctx.arc(a.x,b.y,3,0,Math.PI*2); ctx.fill();
-    }
-    if(isPwr) pts.forEach(p=>drawPower(ctx,p,net.name,color));
-    if(!isPwr && pts.length>=2){
-      const mx=(pts[0].x+pts[pts.length-1].x)/2, my=(pts[0].y+pts[pts.length-1].y)/2-8;
-      ctx.fillStyle=COLORS.label; ctx.font=`600 10px 'JetBrains Mono',monospace`;
-      ctx.textAlign="left"; ctx.fillText(net.name, mx+4, my);
-    }
-  });
-
-  // 컴포넌트
-  comps.forEach(c => drawComp(ctx, c, pos[c.ref], layouts[c.ref]));
-
-  // 범례
-  const ly0 = canvas.height-nets.length*21-12;
-  ctx.fillStyle="#4a5278"; ctx.font="11px Inter,sans-serif"; ctx.textAlign="left";
-  ctx.fillText("NET", MARGIN, ly0);
   nets.forEach((net,ni)=>{
     const isPwr=net.name==='VCC'||net.name==='GND';
-    const color=isPwr?(net.name==='VCC'?COLORS.vcc:COLORS.gnd):NET_COLORS[ni%NET_COLORS.length];
+    const color=isPwr?(net.name==='VCC'?"#f87171":"#60a5fa"):NET_COLORS[ni%NET_COLORS.length];
+    const pts=net.nodes.map(n=>pinAbs(n.ref,n.pin,pos,layouts)).filter(Boolean);
+    if(pts.length<2){if(pts.length===1)drawPower(ctx,pts[0],net.name,color);return;}
+    ctx.strokeStyle=color+"99";ctx.lineWidth=1.8;ctx.setLineDash([]);
+    for(let i=1;i<pts.length;i++){
+      const a=pts[0],b=pts[i];
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(a.x,b.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      ctx.fillStyle=color;ctx.beginPath();ctx.arc(a.x,b.y,3,0,Math.PI*2);ctx.fill();
+    }
+    if(isPwr)pts.forEach(p=>drawPower(ctx,p,net.name,color));
+    if(!isPwr&&pts.length>=2){
+      const mx=(pts[0].x+pts[pts.length-1].x)/2,my=(pts[0].y+pts[pts.length-1].y)/2-8;
+      ctx.fillStyle="#fbbf24";ctx.font=`600 10px 'JetBrains Mono',monospace`;ctx.textAlign="left";ctx.fillText(net.name,mx+4,my);
+    }
+  });
+
+  comps.forEach(c=>drawComp(ctx,c,pos[c.ref],layouts[c.ref]));
+
+  const ly0=canvas.height-nets.length*21-10;
+  ctx.fillStyle="#475569";ctx.font="11px Inter,sans-serif";ctx.textAlign="left";ctx.fillText("NET",M,ly0);
+  nets.forEach((net,ni)=>{
+    const isPwr=net.name==='VCC'||net.name==='GND';
+    const color=isPwr?(net.name==='VCC'?"#f87171":"#60a5fa"):NET_COLORS[ni%NET_COLORS.length];
     const y=ly0+16+ni*21;
-    ctx.fillStyle=color; ctx.fillRect(MARGIN,y-3,16,3);
-    ctx.fillStyle="#8892b0"; ctx.font="11px Inter,sans-serif";
-    const refs=[...new Set(net.nodes.map(n=>n.ref))].join(", ");
-    ctx.fillText(`${net.name}  →  ${refs}`, MARGIN+24, y);
+    ctx.fillStyle=color;ctx.fillRect(M,y-3,16,3);
+    ctx.fillStyle="#94a3b8";ctx.font="11px Inter,sans-serif";
+    ctx.fillText(`${net.name}  →  ${[...new Set(net.nodes.map(n=>n.ref))].join(", ")}`,M+24,y);
   });
 }
 
-function drawComp(ctx, comp, p, layout) {
-  const {x,y}=p, t=comp.ref[0].toUpperCase();
-  const color = COLORS[t]||"#8892b0";
-  ctx.save(); ctx.translate(x,y);
-
-  // 핀 스텁
-  ctx.strokeStyle="#2a3356"; ctx.lineWidth=1.5;
+function drawComp(ctx,comp,p,layout){
+  if(!p||!layout)return;
+  const {x,y}=p,t=comp.ref[0].toUpperCase();
+  const color=getCompColor(comp.ref);
+  ctx.save();ctx.translate(x,y);
+  ctx.strokeStyle="#334155";ctx.lineWidth=1.5;
   Object.values(layout.pins).forEach(pin=>{
-    const s=10;
-    ctx.beginPath();
+    const s=10;ctx.beginPath();
     if(pin.side==='L'){ctx.moveTo(-layout.w/2,pin.y);ctx.lineTo(-layout.w/2-s,pin.y);}
     else if(pin.side==='R'){ctx.moveTo(layout.w/2,pin.y);ctx.lineTo(layout.w/2+s,pin.y);}
     else if(pin.side==='T'){ctx.moveTo(pin.x,-layout.h/2);ctx.lineTo(pin.x,-layout.h/2-s);}
     else{ctx.moveTo(pin.x,layout.h/2);ctx.lineTo(pin.x,layout.h/2+s);}
     ctx.stroke();
   });
-
-  // 글로우
-  ctx.shadowColor=color+"44"; ctx.shadowBlur=16;
-  // 박스
-  ctx.fillStyle="#0e1220";
-  ctx.strokeStyle=color; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.roundRect(-layout.w/2,-layout.h/2,layout.w,layout.h,8);
-  ctx.fill(); ctx.stroke();
-  ctx.shadowBlur=0;
-
-  // 심볼
-  ctx.strokeStyle=color; ctx.lineWidth=2; ctx.lineCap='round'; ctx.lineJoin='round';
-  if(t==='R') drawR(ctx);
-  else if(t==='C') drawC(ctx);
-  else if(t==='D') drawD(ctx, comp.ref);
-  else if(t==='Q') drawQ(ctx);
-  else if(t==='L') drawL(ctx);
-
-  // ref / value
-  ctx.shadowBlur=0;
-  ctx.fillStyle="#e8eaf6"; ctx.font=`600 12px 'JetBrains Mono',monospace`; ctx.textAlign="center";
-  ctx.fillText(comp.ref, 0, -layout.h/2-16);
-  ctx.fillStyle="#4a5278"; ctx.font=`11px Inter,sans-serif`;
-  ctx.fillText(comp.value||"", 0, layout.h/2+16);
+  ctx.shadowColor=color+"33";ctx.shadowBlur=14;
+  ctx.fillStyle="#1e293b";ctx.strokeStyle=color;ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.roundRect(-layout.w/2,-layout.h/2,layout.w,layout.h,8);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';
+  if(t==='R')drawR(ctx);else if(t==='C')drawC(ctx);else if(t==='D')drawD(ctx);else if(t==='Q')drawQ(ctx);else if(t==='L')drawL(ctx);
+  ctx.fillStyle="#e2e8f0";ctx.font=`600 12px 'JetBrains Mono',monospace`;ctx.textAlign="center";ctx.fillText(comp.ref,0,-layout.h/2-15);
+  ctx.fillStyle="#475569";ctx.font=`11px Inter,sans-serif`;ctx.fillText(comp.value||"",0,layout.h/2+15);
   ctx.restore();
 }
-
-function drawR(ctx){
-  ctx.beginPath();ctx.moveTo(-28,0);ctx.lineTo(-20,0);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-20,0);
-  [[-14,8],[-7,-8],[0,8],[7,-8],[14,8],[20,0]].forEach(([x,y])=>ctx.lineTo(x,y));
-  ctx.stroke();
-  ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(28,0);ctx.stroke();
-}
-function drawC(ctx){
-  ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(-5,0);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-5,-15);ctx.lineTo(-5,15);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(5,-15);ctx.lineTo(5,15);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(5,0);ctx.lineTo(24,0);ctx.stroke();
-}
-function drawD(ctx, ref){
-  ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(24,0);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(10,0);ctx.lineTo(-10,-10);ctx.closePath();ctx.stroke();
-  ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(10,10);ctx.stroke();
-  if(ref.startsWith('D')){ctx.beginPath();ctx.moveTo(14,-10);ctx.lineTo(20,-16);ctx.stroke();ctx.beginPath();ctx.moveTo(18,-6);ctx.lineTo(24,-12);ctx.stroke();}
-}
-function drawQ(ctx){
-  ctx.beginPath();ctx.moveTo(-10,-22);ctx.lineTo(-10,22);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-10,0);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(0,-10);ctx.lineTo(0,-32);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(0,10);ctx.lineTo(0,32);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-4,24);ctx.lineTo(0,32);ctx.lineTo(4,24);ctx.stroke();
-}
-function drawL(ctx){
-  ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-22,0);
-  for(let i=0;i<4;i++) ctx.arc(-20+i*10+5,0,5,Math.PI,0,false);
-  ctx.lineTo(26,0);ctx.stroke();
-}
+function drawR(ctx){ctx.beginPath();ctx.moveTo(-28,0);ctx.lineTo(-20,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-20,0);[[-14,8],[-7,-8],[0,8],[7,-8],[14,8],[20,0]].forEach(([x,y])=>ctx.lineTo(x,y));ctx.stroke();ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(28,0);ctx.stroke();}
+function drawC(ctx){ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(-5,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-5,-14);ctx.lineTo(-5,14);ctx.stroke();ctx.beginPath();ctx.moveTo(5,-14);ctx.lineTo(5,14);ctx.stroke();ctx.beginPath();ctx.moveTo(5,0);ctx.lineTo(24,0);ctx.stroke();}
+function drawD(ctx){ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(24,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(10,0);ctx.lineTo(-10,-10);ctx.closePath();ctx.stroke();ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(10,10);ctx.stroke();ctx.beginPath();ctx.moveTo(14,-10);ctx.lineTo(20,-16);ctx.stroke();ctx.beginPath();ctx.moveTo(18,-6);ctx.lineTo(24,-12);ctx.stroke();}
+function drawQ(ctx){ctx.beginPath();ctx.moveTo(-10,-22);ctx.lineTo(-10,22);ctx.stroke();ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-10,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(0,-10);ctx.lineTo(0,-32);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(0,10);ctx.lineTo(0,32);ctx.stroke();ctx.beginPath();ctx.moveTo(-4,24);ctx.lineTo(0,32);ctx.lineTo(4,24);ctx.stroke();}
+function drawL(ctx){ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-22,0);for(let i=0;i<4;i++)ctx.arc(-20+i*10+5,0,5,Math.PI,0,false);ctx.lineTo(26,0);ctx.stroke();}
 function drawPower(ctx,pt,name,color){
   ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
-  if(name==='VCC'){
-    ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y-18);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(pt.x-13,pt.y-18);ctx.lineTo(pt.x+13,pt.y-18);ctx.stroke();
-    ctx.font=`bold 10px Inter,sans-serif`;ctx.textAlign="center";
-    ctx.fillText("VCC",pt.x,pt.y-24);
-  } else {
-    ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y+10);ctx.stroke();
-    [[11,10],[7,15],[3,20]].forEach(([w,dy])=>{
-      ctx.beginPath();ctx.moveTo(pt.x-w/2,pt.y+dy);ctx.lineTo(pt.x+w/2,pt.y+dy);ctx.stroke();
-    });
-  }
+  if(name==='VCC'){ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y-18);ctx.stroke();ctx.beginPath();ctx.moveTo(pt.x-13,pt.y-18);ctx.lineTo(pt.x+13,pt.y-18);ctx.stroke();ctx.font=`600 10px Inter,sans-serif`;ctx.textAlign="center";ctx.fillText("VCC",pt.x,pt.y-24);}
+  else{ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y+10);ctx.stroke();[[11,10],[7,15],[3,20]].forEach(([w,dy])=>{ctx.beginPath();ctx.moveTo(pt.x-w/2,pt.y+dy);ctx.lineTo(pt.x+w/2,pt.y+dy);ctx.stroke();});}
 }
 </script>
 </body>
