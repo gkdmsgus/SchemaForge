@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SchemaForge — 자연어 회로 생성기</title>
+  <title>SchemaForge — 회로 설계 도구</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
     <div class="logo-icon">⚡</div>
     <h1>SchemaForge</h1>
   </div>
-  <p class="subtitle">자연어로 KiCad 스키매틱을 자동 생성하는 AI 회로 설계 도구</p>
+  <p class="subtitle">클릭 몇 번으로 KiCad 회로를 자동으로 만들어 드려요</p>
   <div class="badge-row">
     <span class="badge">GPT-4o</span>
     <span class="badge">Tavily 웹 검색</span>
@@ -24,63 +24,113 @@
 
 <div class="main-wrap">
 
-  <!-- 사용 가이드 배너 -->
-  <div class="guide-banner">
-    <div class="guide-banner-title">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      사용 방법
-    </div>
-    <div class="guide-grid">
-      <div class="guide-tip">
-        <div class="guide-tip-num">① 구체적으로 입력</div>
-        <p>부품 모델명까지 명시하면 정확도가 높아져요.<br>
-          <span class="highlight">❌ "앰프 회로"</span><br>
-          <span class="highlight">✅ "LM386 베이스 앰프 회로"</span>
-        </p>
-      </div>
-      <div class="guide-tip">
-        <div class="guide-tip-num">② 용도를 설명</div>
-        <p>전압, 전류, 목적을 함께 쓰면 더 완성도 높은 회로가 나와요.<br>
-          <span class="highlight">✅ "5V USB 입력, 스피커 출력 앰프"</span>
-        </p>
-      </div>
-      <div class="guide-tip">
-        <div class="guide-tip-num">③ 다운로드 & KiCad</div>
-        <p><strong style="color:#e2e8f0">.net 파일</strong> 다운로드 후<br>KiCad → <span class="highlight">File → Import → Netlist</span><br>로 스키매틱에 불러올 수 있어요.</p>
-      </div>
-      <div class="guide-tip">
-        <div class="guide-tip-num">④ 추천 입력 패턴</div>
-        <p><span class="highlight">[IC 모델명] + [용도] + 회로</span><br>
-          예: <span class="highlight">"TP4056 리튬배터리 충전 회로"</span><br>
-          예: <span class="highlight">"NE555 LED 점멸 회로 1Hz"</span>
-        </p>
-      </div>
-    </div>
-  </div>
+  <!-- ── 마법사 카드 ───────────────────────────────────────── -->
+  <div class="card wizard-card">
 
-  <!-- 입력 카드 -->
-  <div class="card input-card">
-    <div class="input-label">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      회로 설명 입력
-    </div>
-    <textarea id="description" rows="3"
-      placeholder="예: LM386 베이스 앰프 회로&#10;예: TP4056 리튬배터리 충전 회로&#10;예: NE555 타이머 LED 점멸 회로 1Hz"></textarea>
-
-    <div class="example-row">
-      <span>빠른 예시</span>
-      <button class="chip" onclick="setExample(this)">LM386 베이스 앰프</button>
-      <button class="chip" onclick="setExample(this)">클래스 AB 파워 앰프 (TDA2030)</button>
-      <button class="chip" onclick="setExample(this)">TP4056 리튬배터리 충전</button>
-      <button class="chip" onclick="setExample(this)">NE555 LED 점멸 1Hz</button>
-      <button class="chip" onclick="setExample(this)">아두이노 + DHT11 온도습도센서</button>
+    <!-- Step 1: 카테고리 선택 -->
+    <div id="step-1" class="wizard-step active">
+      <div class="wizard-heading">어떤 회로를 만들고 싶으세요?</div>
+      <div class="wizard-sub">카테고리를 선택하면 추천 회로 목록이 나타나요</div>
+      <div class="cat-grid">
+        <button class="cat-card" onclick="selectCategory('audio')">
+          <div class="cat-icon">🔊</div>
+          <div class="cat-name">오디오 앰프</div>
+          <div class="cat-desc">스피커, 헤드폰, 마이크 증폭</div>
+        </button>
+        <button class="cat-card" onclick="selectCategory('power')">
+          <div class="cat-icon">⚡</div>
+          <div class="cat-name">전원 & 충전</div>
+          <div class="cat-desc">배터리 충전, 전압 변환</div>
+        </button>
+        <button class="cat-card" onclick="selectCategory('led')">
+          <div class="cat-icon">💡</div>
+          <div class="cat-name">LED & 조명</div>
+          <div class="cat-desc">점멸, 밝기 조절, 색상 제어</div>
+        </button>
+        <button class="cat-card" onclick="selectCategory('sensor')">
+          <div class="cat-icon">🌡️</div>
+          <div class="cat-name">센서 회로</div>
+          <div class="cat-desc">온도, 빛, 움직임 감지</div>
+        </button>
+        <button class="cat-card" onclick="selectCategory('timer')">
+          <div class="cat-icon">⏱️</div>
+          <div class="cat-name">타이머 & 발진</div>
+          <div class="cat-desc">주기 제어, 신호 발생</div>
+        </button>
+        <button class="cat-card" onclick="selectCategory('motor')">
+          <div class="cat-icon">🎛️</div>
+          <div class="cat-name">모터 & 제어</div>
+          <div class="cat-desc">DC 모터, 릴레이 스위치</div>
+        </button>
+      </div>
+      <div class="or-divider"><span>또는</span></div>
+      <button class="manual-btn" onclick="showStep('manual')">✏️ 직접 입력하기 (고급)</button>
     </div>
 
-    <button class="generate-btn" id="generate-btn" onclick="generate()">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      스키매틱 생성
-      <span class="shortcut">Ctrl+Enter</span>
-    </button>
+    <!-- Step 2: 회로 선택 -->
+    <div id="step-2" class="wizard-step">
+      <div class="wizard-nav">
+        <button class="back-btn" onclick="showStep(1)">← 뒤로</button>
+        <div class="breadcrumb">
+          <span id="bc-cat"></span>
+          <span class="bc-arrow">›</span>
+          <span class="bc-current">회로 선택</span>
+        </div>
+      </div>
+      <div class="wizard-heading" id="step2-title">회로를 선택하세요</div>
+      <div class="circuit-list" id="circuit-list"></div>
+    </div>
+
+    <!-- Step 3: 확인 & 생성 -->
+    <div id="step-3" class="wizard-step">
+      <div class="wizard-nav">
+        <button class="back-btn" onclick="showStep(2)">← 뒤로</button>
+        <div class="breadcrumb">
+          <span id="bc-cat2"></span>
+          <span class="bc-arrow">›</span>
+          <span id="bc-circuit"></span>
+        </div>
+      </div>
+      <div class="preview-box">
+        <div class="preview-icon" id="preview-icon"></div>
+        <div class="preview-info">
+          <div class="preview-name" id="preview-name"></div>
+          <div class="preview-desc" id="preview-desc"></div>
+          <div class="preview-parts" id="preview-parts"></div>
+        </div>
+      </div>
+      <div class="kicad-tip">
+        💾 생성된 <strong>.net 파일</strong>은 KiCad → File → Import → Netlist 로 바로 불러올 수 있어요
+      </div>
+      <button class="generate-btn" id="generate-btn" onclick="generate()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        회로 생성하기
+      </button>
+    </div>
+
+    <!-- Manual Input (고급) -->
+    <div id="step-manual" class="wizard-step">
+      <div class="wizard-nav">
+        <button class="back-btn" onclick="showStep(1)">← 뒤로</button>
+        <div class="breadcrumb"><span class="bc-current">직접 입력</span></div>
+      </div>
+      <div class="wizard-heading">회로를 직접 설명해 주세요</div>
+      <div class="wizard-sub">부품 모델명과 용도를 함께 쓰면 더 정확해요</div>
+      <textarea id="description" rows="3"
+        placeholder="예: LM386 베이스 앰프 회로, 9V 배터리, 스피커 출력&#10;예: TP4056 리튬배터리 충전 회로 1A&#10;예: NE555 타이머 LED 점멸 회로 1Hz"></textarea>
+      <div class="example-row">
+        <span>빠른 예시</span>
+        <button class="chip" onclick="setExample(this)">LM386 베이스 앰프</button>
+        <button class="chip" onclick="setExample(this)">TP4056 리튬배터리 충전</button>
+        <button class="chip" onclick="setExample(this)">NE555 LED 점멸 1Hz</button>
+      </div>
+      <button class="generate-btn" id="manual-gen-btn" onclick="generateManual()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        스키매틱 생성
+        <span class="shortcut">Ctrl+Enter</span>
+      </button>
+    </div>
+
   </div>
 
   <!-- 상태 -->
@@ -89,7 +139,6 @@
   <!-- 결과 영역 -->
   <div id="result-section" class="result-section hidden">
 
-    <!-- 회로 구성도 -->
     <div class="card">
       <div class="section-header">
         <div class="section-title">
@@ -106,7 +155,6 @@
       </div>
     </div>
 
-    <!-- 참고 출처 -->
     <div class="card sources-card hidden" id="sources-section">
       <div class="section-title">
         <span class="dot" style="background:var(--blue)"></span>
@@ -115,7 +163,6 @@
       <div class="sources-list" id="sources-list"></div>
     </div>
 
-    <!-- BOM -->
     <div class="card bom-card hidden" id="bom-section">
       <div class="section-title">
         <span class="dot" style="background:var(--amber)"></span>
@@ -124,7 +171,6 @@
       <div id="bom-table-wrap"></div>
     </div>
 
-    <!-- 배선 가이드 -->
     <div class="card wiring-card hidden" id="guide-section">
       <div class="section-title">
         <span class="dot" style="background:var(--green)"></span>
@@ -133,7 +179,6 @@
       <div id="guide-content" class="wiring-content"></div>
     </div>
 
-    <!-- skidl 코드 -->
     <details class="card code-card" id="code-card">
       <summary>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -146,23 +191,250 @@
 </div>
 
 <script>
-let currentFilename = null;
+// ── 회로 데이터 ─────────────────────────────────────────────────
+const CIRCUITS = {
+  audio: {
+    icon: '🔊', name: '오디오 앰프',
+    items: [
+      {
+        name: 'LM386 소형 앰프',
+        desc: '배터리로 동작하는 0.5W 소형 앰프. 가장 쉬운 오디오 프로젝트!',
+        parts: 'LM386, 전해 캐패시터 × 3, 세라믹 캐패시터 × 2, 저항 × 2',
+        prompt: 'LM386 audio amplifier complete circuit with gain setting resistor and capacitor between pins 1 and 8, input coupling capacitor, output coupling electrolytic capacitor, bypass capacitor on pin 7, power supply decoupling capacitor. 9V battery powered, 0.5W output into 8 ohm speaker'
+      },
+      {
+        name: 'TDA2030 파워 앰프',
+        desc: '14W 고출력 클래스 AB 앰프. 스피커를 크게 울리고 싶을 때!',
+        parts: 'TDA2030, 전해 캐패시터 × 4, 세라믹 캐패시터 × 2, 저항 × 4',
+        prompt: 'TDA2030 class AB power amplifier complete circuit with feedback resistor network, input coupling capacitor, bootstrap capacitor, power supply bypass capacitors, output coupling capacitor, and thermal protection. Single 18V supply, 14W output into 4 ohm speaker'
+      },
+      {
+        name: '헤드폰 앰프',
+        desc: 'NE5532 기반 저잡음 헤드폰 출력. 고음질 청음용!',
+        parts: 'NE5532, 전해 캐패시터 × 3, 세라믹 캐패시터 × 2, 저항 × 6',
+        prompt: 'NE5532 headphone amplifier complete circuit with input coupling capacitor, gain resistors, DC bias network, output capacitor, power supply decoupling capacitors. Dual ±12V supply, low noise, drive 32 ohm headphones'
+      },
+      {
+        name: '마이크 프리앰프',
+        desc: '마이크 신호를 40dB 증폭. 녹음 프로젝트에 딱!',
+        parts: 'LM358, 전해 캐패시터 × 2, 세라믹 캐패시터 × 2, 저항 × 5',
+        prompt: 'LM358 microphone preamplifier complete circuit with bias resistors for electret microphone, input coupling capacitor, gain of 40dB feedback resistors, output coupling capacitor, power supply decoupling. 9V supply, suitable for electret condenser microphone'
+      },
+    ]
+  },
+  power: {
+    icon: '⚡', name: '전원 & 충전',
+    items: [
+      {
+        name: 'TP4056 리튬 배터리 충전',
+        desc: '18650 배터리를 USB 5V로 1A 충전. 가장 많이 쓰이는 충전 회로!',
+        parts: 'TP4056, 저항 × 2, LED × 2, 세라믹 캐패시터 × 2',
+        prompt: 'TP4056 lithium battery charger complete circuit with PROG resistor for 1A charge current, CHRG status LED with current limiting resistor, STDBY status LED with current limiting resistor, input bypass capacitor, output battery connection capacitor. USB 5V input'
+      },
+      {
+        name: 'LM7805 5V 정전압 공급',
+        desc: '안정적인 5V 1A 출력. 아두이노나 회로 전원 공급에 필수!',
+        parts: 'LM7805, 전해 캐패시터 × 2, 세라믹 캐패시터 × 2, 다이오드 × 2, LED × 1, 저항 × 1',
+        prompt: 'LM7805 5V linear voltage regulator complete circuit with input electrolytic filter capacitor, input ceramic bypass capacitor, output electrolytic filter capacitor, output ceramic bypass capacitor, input reverse protection diode, output protection diode, power LED indicator with current limiting resistor. 7-35V input, 5V 1A regulated output'
+      },
+      {
+        name: 'MT3608 부스트 컨버터',
+        desc: '3.7V 배터리를 5V로 승압. 배터리 구동 프로젝트에 최적!',
+        parts: 'MT3608, 인덕터 × 1, 쇼트키 다이오드 × 1, 전해 캐패시터 × 2, 세라믹 캐패시터 × 1, 저항 × 2',
+        prompt: 'MT3608 boost converter complete circuit with 4.7uH inductor, SS34 schottky diode, input electrolytic filter capacitor, input ceramic bypass capacitor, output electrolytic filter capacitor, feedback voltage divider resistors. 3.7V input, 5V 2A output'
+      },
+      {
+        name: 'LM317 가변 전압 조절기',
+        desc: '1.25V~30V 자유롭게 조절. 가변 전원공급기 프로젝트에!',
+        parts: 'LM317, 전해 캐패시터 × 2, 세라믹 캐패시터 × 1, 저항 × 2, 다이오드 × 2, 가변저항 × 1',
+        prompt: 'LM317 adjustable voltage regulator complete circuit with output programming resistor, potentiometer for voltage adjustment, adjustment pin filter capacitor, input bypass electrolytic capacitor, output bypass electrolytic capacitor, input-output protection diodes. 1.5A output, adjustable 1.25V to 12V'
+      },
+    ]
+  },
+  led: {
+    icon: '💡', name: 'LED & 조명',
+    items: [
+      {
+        name: 'NE555 LED 점멸기',
+        desc: '1Hz로 LED가 규칙적으로 깜빡임. 입문자 첫 번째 프로젝트로 추천!',
+        parts: 'NE555, LED × 1, 저항 × 3, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1',
+        prompt: 'NE555 astable mode LED blinker complete circuit with timing resistors R1 and R2, timing capacitor, bypass decoupling capacitor, output current limiting resistor, and LED. 1Hz blink rate, 50% duty cycle, 9V supply'
+      },
+      {
+        name: 'RGB LED 색상 제어',
+        desc: 'PWM 신호로 빨강/초록/파랑 밝기 조절. 원하는 색 만들기!',
+        parts: 'RGB LED × 1, 저항 × 3, NPN 트랜지스터 × 3, 세라믹 캐패시터 × 3',
+        prompt: 'RGB LED controller complete circuit with separate current limiting resistors for red, green, blue channels, NPN transistor drivers for each channel, base resistors, bypass capacitors on each transistor. Common cathode RGB LED, 9V supply, PWM compatible input'
+      },
+      {
+        name: 'LED 디머 (밝기 조절)',
+        desc: '가변저항으로 LED 밝기를 부드럽게 조절. 조명 제어 프로젝트에!',
+        parts: 'NE555, MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2, LED × 여러 개',
+        prompt: 'LED dimmer circuit using NE555 PWM complete circuit with potentiometer controlling duty cycle, timing capacitor, steering diodes, output N-channel MOSFET driver with gate resistor, flyback protection diode, LED array with current limiting resistor. 12V supply, 0-100% PWM dimming'
+      },
+      {
+        name: '자동 야간 조명',
+        desc: '어두워지면 자동으로 LED 켜짐. LDR 광센서 활용!',
+        parts: 'LM393, LDR × 1, LED × 1, 저항 × 4, NPN 트랜지스터 × 1, 전해 캐패시터 × 1',
+        prompt: 'Automatic night light circuit with LDR voltage divider, LM393 comparator with hysteresis resistors for clean switching, NPN transistor switch, LED array with current limiting resistor, power supply bypass capacitor. Auto on when dark, off when bright, 9V supply'
+      },
+    ]
+  },
+  sensor: {
+    icon: '🌡️', name: '센서 회로',
+    items: [
+      {
+        name: 'LM35 온도 측정',
+        desc: '10mV/°C로 온도를 전압으로 출력. 온도 모니터링 프로젝트에!',
+        parts: 'LM35, LM358, 저항 × 4, 세라믹 캐패시터 × 2, LED × 2',
+        prompt: 'LM35 temperature sensor complete circuit with output filtering capacitor, op-amp buffer amplifier, gain resistors, overheat LED indicator with comparator and reference divider, and power supply decoupling. Measures 0-100°C, 5V supply'
+      },
+      {
+        name: 'DHT11 온습도 (아두이노)',
+        desc: '디지털 온도+습도 동시 측정. 아두이노 연결 완성 회로!',
+        parts: 'DHT11 × 1, 저항 × 2, 세라믹 캐패시터 × 2, 커넥터 × 1',
+        prompt: 'DHT11 temperature and humidity sensor interface complete circuit with pull-up resistor on data line, power supply decoupling capacitor, signal filtering capacitor, ESD protection resistor, and Arduino header connector. 5V supply, digital single-wire output'
+      },
+      {
+        name: 'LDR 빛 감지 & 릴레이',
+        desc: '조도에 따라 릴레이로 외부 기기 ON/OFF. 자동화 프로젝트에!',
+        parts: 'LM393, LDR × 1, 저항 × 4, NPN 트랜지스터 × 1, 릴레이 × 1, 다이오드 × 1, LED × 1',
+        prompt: 'LDR light sensor relay control complete circuit with LDR voltage divider, LM393 comparator with hysteresis resistors, NPN transistor relay driver, flyback protection diode across relay coil, status LED indicator. 12V relay, 5V logic, adjustable threshold'
+      },
+      {
+        name: 'PIR 모션 감지 경보',
+        desc: '사람 움직임 감지 시 버저 알람. 방범 시스템 프로젝트!',
+        parts: 'PIR 센서 × 1, NPN 트랜지스터 × 2, 저항 × 4, 버저 × 1, LED × 1, 캐패시터 × 2',
+        prompt: 'PIR motion sensor alarm complete circuit with PIR module, signal amplification transistor, output one-shot timer NE555 circuit, buzzer driver transistor with base resistor, flyback diode, LED indicator with current limiting resistor, power supply bypass capacitors. 5V supply'
+      },
+    ]
+  },
+  timer: {
+    icon: '⏱️', name: '타이머 & 발진',
+    items: [
+      {
+        name: '지연 타이머 (단안정)',
+        desc: '버튼 누르면 N초 후 자동 OFF. 자동 소등 등 시간 제어에!',
+        parts: 'NE555, 저항 × 3, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1, 버튼 × 1, LED × 1',
+        prompt: 'NE555 monostable timer complete circuit with trigger pushbutton and pull-up resistor, timing resistor and electrolytic capacitor for 10 second delay, reset pin pull-up resistor, bypass decoupling capacitor, output LED with current limiting resistor. 9V supply'
+      },
+      {
+        name: '사각파 발진기 (가청음)',
+        desc: '1kHz 오디오 톤 발생. 버저 구동이나 신호 생성에!',
+        parts: 'NE555, 저항 × 2, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1, NPN 트랜지스터 × 1, 스피커',
+        prompt: 'NE555 astable oscillator 1kHz complete circuit with timing resistors for 1kHz frequency, timing capacitor, bypass capacitor, output NPN transistor driver with base resistor, output coupling capacitor, small speaker. 9V supply, audio tone output'
+      },
+      {
+        name: '주기 타이머 (반복 동작)',
+        desc: '설정 주기마다 자동으로 ON/OFF 반복. 자동화 제어에!',
+        parts: 'NE555, 저항 × 3, 전해 캐패시터 × 2, 가변저항 × 1, 릴레이 × 1, 다이오드 × 1, 트랜지스터 × 1',
+        prompt: 'NE555 astable repeating timer complete circuit with adjustable potentiometer for on-time control, timing capacitors, relay driver transistor, flyback protection diode, relay for load switching, status LED with current limiting resistor, bypass decoupling capacitor. 12V supply, adjustable 1-30 second period'
+      },
+    ]
+  },
+  motor: {
+    icon: '🎛️', name: '모터 & 제어',
+    items: [
+      {
+        name: 'DC 모터 속도 제어 (PWM)',
+        desc: '가변저항으로 모터 속도를 조절. 로봇, 팬 제어 등에!',
+        parts: 'NE555, N-CH MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2, 다이오드 × 2',
+        prompt: 'DC motor speed controller PWM complete circuit with NE555 astable PWM generator, potentiometer for duty cycle control, steering diodes for independent on/off time, N-channel MOSFET driver with gate resistor, flyback protection diode across motor, power supply bypass capacitors. 12V 2A motor'
+      },
+      {
+        name: 'L298N 모터 드라이버',
+        desc: '정방향/역방향 모두 가능한 H-bridge. 로봇 바퀴 구동에!',
+        parts: 'L298N, 다이오드 × 8, 세라믹 캐패시터 × 3, 전해 캐패시터 × 2, 저항 × 2',
+        prompt: 'L298N dual H-bridge motor driver complete circuit with 8 freewheeling diodes across all motor outputs, logic supply decoupling capacitor, motor supply electrolytic filter capacitor, ceramic bypass capacitors, enable and input signal resistors. 12V motor supply, 5V logic, controls 2 DC motors bidirectionally'
+      },
+      {
+        name: '릴레이 스위치 회로',
+        desc: '소신호로 고전압 기기를 안전하게 ON/OFF. 가전제품 제어에!',
+        parts: '릴레이 × 1, NPN 트랜지스터 × 1, 저항 × 2, 다이오드 × 1, LED × 2, 세라믹 캐패시터 × 1',
+        prompt: 'Relay switch circuit complete circuit with NPN transistor driver, base current limiting resistor, flyback protection diode across relay coil, status LED with current limiting resistor, output terminal indicator LED, power supply bypass ceramic capacitor. 5V logic input, 12V relay coil, 230V AC or 12V DC load switching'
+      },
+    ]
+  },
+};
 
+// ── 상태 변수 ────────────────────────────────────────────────────
+let currentFilename = null;
+let selectedCategory = null;
+let selectedCircuit = null;
+let currentStep = 1;
+
+// ── 초기화 ──────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("description").addEventListener("keydown", e => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) generate();
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) generateManual();
   });
 });
 
+// ── 마법사 내비게이션 ────────────────────────────────────────────
+function showStep(step) {
+  document.querySelectorAll('.wizard-step').forEach(el => el.classList.remove('active'));
+  const target = step === 'manual' ? 'step-manual' : `step-${step}`;
+  document.getElementById(target).classList.add('active');
+  currentStep = step;
+}
+
+function selectCategory(key) {
+  selectedCategory = key;
+  const cat = CIRCUITS[key];
+
+  document.getElementById('bc-cat').textContent = cat.icon + ' ' + cat.name;
+  document.getElementById('step2-title').textContent = cat.name + ' 회로 선택';
+
+  const list = document.getElementById('circuit-list');
+  list.innerHTML = cat.items.map((item, i) => `
+    <button class="circuit-item" onclick="selectCircuit('${key}', ${i})">
+      <div class="ci-left">
+        <div class="ci-name">${item.name}</div>
+        <div class="ci-desc">${item.desc}</div>
+        <div class="ci-parts">🔩 ${item.parts}</div>
+      </div>
+      <div class="ci-arrow">›</div>
+    </button>
+  `).join('');
+
+  showStep(2);
+}
+
+function selectCircuit(catKey, itemIndex) {
+  selectedCategory = catKey;
+  selectedCircuit = itemIndex;
+  const cat = CIRCUITS[catKey];
+  const item = cat.items[itemIndex];
+
+  document.getElementById('bc-cat2').textContent = cat.icon + ' ' + cat.name;
+  document.getElementById('bc-circuit').textContent = item.name;
+  document.getElementById('preview-icon').textContent = cat.icon;
+  document.getElementById('preview-name').textContent = item.name;
+  document.getElementById('preview-desc').textContent = item.desc;
+  document.getElementById('preview-parts').innerHTML = '🔩 ' + item.parts;
+
+  showStep(3);
+}
+
 function setExample(btn) { document.getElementById("description").value = btn.textContent; }
 
+// ── 생성 함수 ────────────────────────────────────────────────────
 async function generate() {
+  const item = CIRCUITS[selectedCategory].items[selectedCircuit];
+  await runGenerate(item.prompt, 'generate-btn');
+}
+
+async function generateManual() {
   const description = document.getElementById("description").value.trim();
   if (!description) { showStatus("회로 설명을 입력하세요.", "error"); return; }
+  await runGenerate(description, 'manual-gen-btn');
+}
 
-  const btn = document.getElementById("generate-btn");
+async function runGenerate(prompt, btnId) {
+  const btn = document.getElementById(btnId);
   btn.disabled = true;
-  btn.innerHTML = `<span style="display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></span> 생성 중...`;
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = `<span class="spinner"></span> 생성 중...`;
   showStatus("회로 레퍼런스 검색 중...", "loading");
   document.getElementById("result-section").classList.add("hidden");
 
@@ -170,7 +442,7 @@ async function generate() {
     const res = await fetch("/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
+      body: JSON.stringify({ description: prompt }),
     });
 
     const reader = res.body.getReader();
@@ -201,11 +473,12 @@ async function generate() {
           currentFilename = d.filename;
           document.getElementById("code-content").textContent = d.code;
           document.getElementById("result-section").classList.remove("hidden");
-          showStatus("생성 완료!", "success");
+          showStatus("✅ 생성 완료! .net 파일을 다운로드하거나 아래 회로를 확인하세요.", "success");
           drawSchematic(d.graph);
           renderSources(d.sources);
           renderBOM(d.graph.components, d.guide);
           renderGuide(d.guide);
+          document.getElementById("result-section").scrollIntoView({ behavior: "smooth" });
         }
       }
     }
@@ -213,7 +486,7 @@ async function generate() {
     showStatus(`네트워크 오류: ${e.message}`, "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 스키매틱 생성 <span class="shortcut">Ctrl+Enter</span>`;
+    btn.innerHTML = origHtml;
   }
 }
 
@@ -269,7 +542,7 @@ function renderGuide(guide) {
   sec.classList.remove("hidden");
 }
 
-// ── 회로 시각화 ─────────────────────────────────────────────────
+// ── 회로 시각화 ──────────────────────────────────────────────────
 const NET_COLORS = ["#22d3ee","#34d399","#fbbf24","#f87171","#60a5fa","#a78bfa","#fb923c"];
 function getCompColor(ref) {
   return ({R:"#fbbf24",C:"#60a5fa",Q:"#34d399",D:"#f87171",L:"#a78bfa",U:"#22d3ee"})[ref[0].toUpperCase()] || "#94a3b8";

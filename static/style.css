@@ -455,6 +455,186 @@ textarea::placeholder { color: var(--text3); }
   width: 22px;
 }
 
+/* ── 마법사 ─────────────────────────────────────────────────────── */
+.wizard-card { padding: 28px; }
+
+.wizard-step { display: none; }
+.wizard-step.active { display: flex; flex-direction: column; gap: 18px; }
+
+.wizard-heading {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.wizard-sub {
+  font-size: 0.85rem;
+  color: var(--text2);
+  margin-top: -10px;
+}
+
+/* 카테고리 그리드 */
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 600px) { .cat-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.cat-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 12px 18px;
+  text-align: center;
+  transition: all 0.18s;
+  font-family: 'Inter', sans-serif;
+}
+.cat-card:hover {
+  border-color: var(--cyan);
+  background: rgba(34,211,238,0.05);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(34,211,238,0.12);
+}
+.cat-icon { font-size: 2rem; line-height: 1; }
+.cat-name { font-size: 0.9rem; font-weight: 700; color: var(--text); }
+.cat-desc { font-size: 0.75rem; color: var(--text2); line-height: 1.4; }
+
+/* 구분선 */
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text3);
+  font-size: 0.78rem;
+}
+.or-divider::before, .or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.manual-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.84rem;
+  padding: 10px 16px;
+  transition: all 0.15s;
+  align-self: center;
+}
+.manual-btn:hover { border-color: var(--border2); color: var(--text); }
+
+/* 내비게이션 바 */
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.back-btn:hover { border-color: var(--border2); color: var(--text); }
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text2);
+  flex-wrap: wrap;
+}
+.bc-arrow { color: var(--text3); }
+.bc-current { color: var(--cyan); font-weight: 600; }
+
+/* 회로 목록 */
+.circuit-list { display: flex; flex-direction: column; gap: 8px; }
+
+.circuit-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  text-align: left;
+  transition: all 0.18s;
+  font-family: 'Inter', sans-serif;
+  width: 100%;
+}
+.circuit-item:hover {
+  border-color: var(--amber);
+  background: rgba(251,191,36,0.04);
+}
+.ci-left { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.ci-name { font-size: 0.95rem; font-weight: 700; color: var(--text); }
+.ci-desc { font-size: 0.82rem; color: var(--text2); line-height: 1.4; }
+.ci-parts { font-size: 0.76rem; color: var(--text3); margin-top: 2px; }
+.ci-arrow { font-size: 1.3rem; color: var(--text3); flex-shrink: 0; }
+.circuit-item:hover .ci-arrow { color: var(--amber); }
+
+/* 미리보기 박스 */
+.preview-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+}
+.preview-icon { font-size: 2.8rem; line-height: 1; flex-shrink: 0; }
+.preview-info { display: flex; flex-direction: column; gap: 6px; }
+.preview-name { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+.preview-desc { font-size: 0.88rem; color: var(--text2); line-height: 1.5; }
+.preview-parts { font-size: 0.8rem; color: var(--text3); }
+
+.kicad-tip {
+  background: rgba(167,139,250,0.07);
+  border: 1px solid rgba(167,139,250,0.2);
+  border-radius: 10px;
+  color: var(--text2);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 12px 16px;
+}
+.kicad-tip strong { color: var(--violet2); }
+
+/* 수동 입력 */
+#step-manual .example-row { flex-wrap: wrap; gap: 6px; }
+
+/* 스피너 */
+.spinner {
+  display: inline-block;
+  width: 13px; height: 13px;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+}
+
 /* ── 코드 ──────────────────────────────────────────────────────── */
 .code-card { padding: 0; overflow: hidden; }
 .code-card.hidden { display: none; }
