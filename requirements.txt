@@ -1,3 +1,4 @@
-flask
+django
 openai
 skidl
+python-dotenv
