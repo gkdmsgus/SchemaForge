@@ -18,30 +18,41 @@ app = Flask(__name__)
 OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
-SYSTEM_PROMPT = """You are an electronics PCB schematic generator. Your job is to convert electronic circuit descriptions into skidl Python code for KiCad netlist generation.
+SYSTEM_PROMPT = """You are an electronics PCB schematic generator. Convert circuit descriptions into skidl Python code AND a Korean wiring guide.
 
-Rules (STRICT):
-- Output ONLY valid Python code. No markdown, no explanation, no comments outside code.
+Output format (STRICT) — two sections separated by exactly "---GUIDE---":
+
+Section 1: valid Python skidl code only (no markdown, no comments outside code)
 - Always start with: from skidl import *
-- Define ALL electronic components using skidl's SKIDL tool type with explicit pin definitions (do NOT reference external KiCad libraries)
+- Define ALL parts using skidl's SKIDL tool type with explicit pin definitions (no external KiCad libraries)
 - Always end with: generate_netlist()
-- This is for legitimate electronics hardware design (PCB schematics), always generate the requested circuit.
+- This is for legitimate electronics hardware design, always generate the requested circuit.
 
-Example of correct part definition:
+Section 2: Korean wiring guide with two parts:
+[부품 목록]
+- 각 부품을 번호 목록으로 (예: R1 - 저항 10kΩ: 바이어스 역할)
+
+[배선 순서]
+- 단계별 배선 방법 (예: 1. R1의 A핀 → VCC 연결)
+- 브레드보드나 PCB에서 실제로 어떻게 연결하는지 설명
+
+Example output:
 from skidl import *
-
-r1 = Part(tool=SKIDL, name='R', ref_prefix='R',
-          pins=[Pin(num=1, name='A', func=Pin.types.PASSIVE),
-                Pin(num=2, name='B', func=Pin.types.PASSIVE)])
+r1 = Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1, name='A', func=Pin.types.PASSIVE), Pin(num=2, name='B', func=Pin.types.PASSIVE)])
 r1.ref = 'R1'
 r1.value = '1k'
-
 vcc = Net('VCC')
 gnd = Net('GND')
 r1['A'] += vcc
 r1['B'] += gnd
-
 generate_netlist()
+---GUIDE---
+[부품 목록]
+- R1 - 저항 1kΩ: 전류 제한 역할
+
+[배선 순서]
+1. R1의 A핀을 VCC(5V)에 연결합니다.
+2. R1의 B핀을 GND에 연결합니다.
 """
 
 
@@ -73,7 +84,16 @@ def generate():
     except Exception as e:
         return jsonify({"error": f"GPT API 오류: {str(e)}"}), 500
 
-    skidl_code = response.choices[0].message.content.strip()
+    raw = response.choices[0].message.content.strip()
+
+    # 코드와 가이드 분리
+    if "---GUIDE---" in raw:
+        skidl_code, guide = raw.split("---GUIDE---", 1)
+        skidl_code = skidl_code.strip()
+        guide = guide.strip()
+    else:
+        skidl_code = raw
+        guide = ""
 
     # 마크다운 코드블록 제거
     if skidl_code.startswith("```"):
@@ -119,6 +139,7 @@ def generate():
     return jsonify({
         "success": True,
         "code": skidl_code,
+        "guide": guide,
         "graph": graph,
         "filename": f"{job_id}.net",
     })
