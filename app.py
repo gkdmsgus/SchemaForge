@@ -176,13 +176,16 @@ def parse_netlist(net_path):
             # 간단한 방법: 전체에서 net 블록 추출
             pass
 
-        # 더 안정적인 방식으로 net 파싱
+        # net 파싱 (핀 정보 포함)
         nets = []
         for net_block in re.split(r'(?=\(net\s+\(code)', content):
             name_m = re.search(r'\(name\s+"([^"]+)"', net_block)
-            nodes = re.findall(r'\(node\s+\(ref\s+"([^"]+)"', net_block)
+            nodes = re.findall(r'\(node\s+\(ref\s+"([^"]+)"\)\s+\(pin\s+"([^"]+)"', net_block)
             if name_m and nodes:
-                nets.append({"name": name_m.group(1), "nodes": nodes})
+                nets.append({
+                    "name": name_m.group(1),
+                    "nodes": [{"ref": r, "pin": p} for r, p in nodes]
+                })
 
         return {"components": components, "nets": nets}
     except Exception:
