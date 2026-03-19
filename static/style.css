@@ -155,33 +155,76 @@ textarea::placeholder {
   color: #f57a7a;
 }
 
-.code-preview {
+.result-section {
   margin-top: 20px;
   background: #1a1d2e;
   border: 1px solid #2a2d40;
   border-radius: 12px;
-  padding: 20px;
+  padding: 24px;
 }
 
-.code-preview.hidden {
-  display: none;
+.result-section.hidden { display: none; }
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
-.code-preview h3 {
-  font-size: 0.9rem;
+.result-header h2 {
+  font-size: 1rem;
   color: #aaa;
-  margin-bottom: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.code-preview pre {
+#download-btn {
+  background: #2a2d40;
+  border: 1px solid #3a3d55;
+  border-radius: 6px;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  transition: all 0.2s;
+}
+
+#download-btn:hover {
+  background: #3a3d55;
+  color: #e0e0e0;
+}
+
+#circuit-canvas {
+  background: #0f1117;
+  border-radius: 8px;
+  display: block;
+  max-width: 100%;
+  width: 100%;
+}
+
+.code-details {
+  margin-top: 16px;
+}
+
+.code-details summary {
+  color: #666;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 6px 0;
+  user-select: none;
+}
+
+.code-details summary:hover { color: #aaa; }
+
+.code-details pre {
   background: #0f1117;
   border-radius: 6px;
   color: #b0c4de;
   font-family: 'Courier New', monospace;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   line-height: 1.6;
+  margin-top: 10px;
   overflow-x: auto;
   padding: 16px;
   white-space: pre-wrap;

@@ -19,14 +19,14 @@
         <textarea
           id="description"
           placeholder="예: 5V 입력받아서 LED 3개 깜빡이는 회로&#10;예: 아두이노 나노에 온도센서 연결하는 회로&#10;예: USB-C로 리튬배터리 충전하는 회로"
-          rows="5"
+          rows="4"
         ></textarea>
 
         <div class="examples">
           <span>예시:</span>
           <button class="example-btn" onclick="setExample(this)">LED 3개 점멸 회로</button>
           <button class="example-btn" onclick="setExample(this)">아두이노 + 온도센서</button>
-          <button class="example-btn" onclick="setExample(this)">USB-C 배터리 충전</button>
+          <button class="example-btn" onclick="setExample(this)">베이스 앰프 회로</button>
         </div>
 
         <button id="generate-btn" onclick="generate()">스키매틱 생성</button>
@@ -34,66 +34,174 @@
 
       <div id="status" class="status hidden"></div>
 
-      <div id="code-preview" class="code-preview hidden">
-        <h3>생성된 skidl 코드</h3>
-        <pre id="code-content"></pre>
+      <!-- 시각화 영역 -->
+      <div id="result-section" class="result-section hidden">
+        <div class="result-header">
+          <h2>회로 구성도</h2>
+          <button id="download-btn" onclick="downloadNet()">⬇ .net 다운로드</button>
+        </div>
+        <canvas id="circuit-canvas"></canvas>
+
+        <details class="code-details">
+          <summary>생성된 skidl 코드 보기</summary>
+          <pre id="code-content"></pre>
+        </details>
       </div>
     </main>
   </div>
 
   <script>
+    let currentFilename = null;
+    let currentGraph = null;
+
     function setExample(btn) {
       document.getElementById("description").value = btn.textContent;
     }
 
     async function generate() {
       const description = document.getElementById("description").value.trim();
-      if (!description) {
-        showStatus("회로 설명을 입력하세요.", "error");
-        return;
-      }
+      if (!description) { showStatus("회로 설명을 입력하세요.", "error"); return; }
 
       const btn = document.getElementById("generate-btn");
       btn.disabled = true;
       btn.textContent = "생성 중...";
       showStatus("GPT-4o가 회로를 분석하고 있습니다...", "loading");
-      document.getElementById("code-preview").classList.add("hidden");
+      document.getElementById("result-section").classList.add("hidden");
 
       try {
-        const response = await fetch("/generate", {
+        const res = await fetch("/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ description }),
         });
 
-        if (response.ok) {
-          const blob = await response.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "schematic.net";
-          a.click();
-          URL.revokeObjectURL(url);
-          showStatus("✅ 스키매틱 생성 완료! 파일이 다운로드됩니다.", "success");
-        } else {
-          const data = await response.json();
+        const data = await res.json();
+
+        if (!res.ok) {
           showStatus(`❌ 오류: ${data.error}`, "error");
           if (data.code) {
-            document.getElementById("code-content").textContent = data.code;
-            document.getElementById("code-preview").classList.remove("hidden");
-          }
-          if (data.detail) {
             document.getElementById("code-content").textContent =
-              (data.code || "") + "\n\n--- 오류 메시지 ---\n" + data.detail;
-            document.getElementById("code-preview").classList.remove("hidden");
+              data.code + (data.detail ? "\n\n--- 오류 ---\n" + data.detail : "");
+            document.getElementById("result-section").classList.remove("hidden");
           }
+          return;
         }
+
+        currentFilename = data.filename;
+        currentGraph = data.graph;
+        document.getElementById("code-content").textContent = data.code;
+        document.getElementById("result-section").classList.remove("hidden");
+        showStatus("✅ 생성 완료!", "success");
+        drawCircuit(data.graph);
+
       } catch (err) {
         showStatus(`❌ 네트워크 오류: ${err.message}`, "error");
       } finally {
         btn.disabled = false;
         btn.textContent = "스키매틱 생성";
       }
+    }
+
+    function downloadNet() {
+      if (!currentFilename) return;
+      window.location.href = `/download/${currentFilename}`;
+    }
+
+    function drawCircuit(graph) {
+      const canvas = document.getElementById("circuit-canvas");
+      const comps = graph.components || [];
+      const nets = graph.nets || [];
+      if (comps.length === 0) return;
+
+      const COMP_W = 100, COMP_H = 50, PAD = 40;
+      const cols = Math.ceil(Math.sqrt(comps.length));
+      const rows = Math.ceil(comps.length / cols);
+      canvas.width = cols * (COMP_W + PAD * 2) + PAD;
+      canvas.height = rows * (COMP_H + PAD * 2) + PAD * 2 + nets.length * 24 + 60;
+
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 컴포넌트 위치 계산
+      const positions = {};
+      comps.forEach((comp, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        positions[comp.ref] = {
+          x: PAD + col * (COMP_W + PAD * 2) + COMP_W / 2,
+          y: PAD + row * (COMP_H + PAD * 2) + COMP_H / 2,
+        };
+      });
+
+      // 네트 연결선 그리기
+      const netColors = ["#7c6af5", "#5adf8a", "#f5c26a", "#f57a7a", "#7ab8f5", "#f57af5"];
+      nets.forEach((net, ni) => {
+        const color = netColors[ni % netColors.length];
+        const nodePositions = net.nodes
+          .filter(ref => positions[ref])
+          .map(ref => positions[ref]);
+
+        if (nodePositions.length < 2) return;
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        nodePositions.forEach((pos, idx) => {
+          if (idx === 0) ctx.moveTo(pos.x, pos.y);
+          else ctx.lineTo(pos.x, pos.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 네트 이름 레이블 (중간 지점)
+        const mid = nodePositions[Math.floor(nodePositions.length / 2)];
+        ctx.fillStyle = color;
+        ctx.font = "11px monospace";
+        ctx.fillText(net.name, mid.x + 4, mid.y - 6);
+      });
+
+      // 컴포넌트 박스 그리기
+      comps.forEach(comp => {
+        const pos = positions[comp.ref];
+        const x = pos.x - COMP_W / 2;
+        const y = pos.y - COMP_H / 2;
+
+        // 박스
+        ctx.fillStyle = "#1a1d2e";
+        ctx.strokeStyle = "#7c6af5";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(x, y, COMP_W, COMP_H, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        // ref (R1, D1 등)
+        ctx.fillStyle = "#e0e0e0";
+        ctx.font = "bold 13px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(comp.ref, pos.x, pos.y - 4);
+
+        // value
+        ctx.fillStyle = "#aaa";
+        ctx.font = "11px monospace";
+        ctx.fillText(comp.value || "", pos.x, pos.y + 12);
+        ctx.textAlign = "left";
+      });
+
+      // 네트 범례
+      const legendY = rows * (COMP_H + PAD * 2) + PAD * 2;
+      ctx.fillStyle = "#666";
+      ctx.font = "12px monospace";
+      ctx.fillText("── 네트 연결", PAD, legendY);
+      nets.forEach((net, ni) => {
+        const color = netColors[ni % netColors.length];
+        ctx.fillStyle = color;
+        ctx.fillRect(PAD, legendY + 16 + ni * 22, 16, 3);
+        ctx.fillStyle = "#aaa";
+        ctx.font = "12px monospace";
+        ctx.fillText(`${net.name}  (${net.nodes.join(", ")})`, PAD + 24, legendY + 20 + ni * 22);
+      });
     }
 
     function showStatus(message, type) {
