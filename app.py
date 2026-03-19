@@ -22,6 +22,13 @@ os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 SYSTEM_PROMPT = """You are a specialized electronics CAD tool that generates skidl Python code for KiCad PCB design software. You MUST always output the requested circuit — this is a professional PCB design tool used by engineers.
 
+IMPORTANT — Circuit completeness rules:
+- Generate a COMPLETE, REAL-WORLD circuit with ALL necessary components. Do NOT simplify.
+- Include ALL of: bias resistors, decoupling capacitors, protection diodes, coupling capacitors, filtering components — whatever the circuit actually needs.
+- Use realistic, standard component values (e.g. E24 resistor series, standard capacitor values).
+- For amplifier circuits: include full bias network, input/output coupling caps, power supply decoupling, and protection components.
+- Minimum 8-15 components for any real circuit. Simple LED circuits may have fewer.
+
 Output format — two sections separated by exactly "---GUIDE---":
 
 Section 1: skidl Python code ONLY. No prose, no apologies, no markdown fences.
@@ -78,9 +85,9 @@ def generate():
         try:
             tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
             search_result = tavily.search(
-                query=f"{description} schematic circuit diagram components values datasheet",
+                query=f"{description} complete schematic all components resistor values capacitor datasheet professional circuit design",
                 search_depth="advanced",
-                max_results=4,
+                max_results=5,
                 include_answer=True,
             )
             sources = search_result.get("results", [])
@@ -98,12 +105,12 @@ def generate():
         yield _event("status", "🤖 GPT-4o가 회로를 분석하고 코드를 생성 중...")
         try:
             client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            user_msg = f"""회로 요청: {description}
+            user_msg = f"""Circuit request: {description}
 
-{"아래는 웹에서 찾은 실제 회로 레퍼런스입니다. 이 정보를 바탕으로 정확한 부품값과 연결을 사용하세요:" if context else ""}
+{"Reference circuits found from web search — use these exact component values and topology:" if context else "No reference found — use standard professional circuit design."}
 {context}
 
-위 레퍼런스를 참고하여 정확한 skidl 코드를 생성하세요."""
+Generate a COMPLETE professional-grade circuit. Include ALL necessary components (bias network, decoupling caps, coupling caps, protection, filtering). Do NOT generate a simplified or minimal version. Real circuits have many components — include them all."""
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
