@@ -752,6 +752,81 @@ textarea::placeholder { color: var(--text3); }
 .qa-opt-custom { border-style: dashed; color: var(--text2); }
 .qa-opt-custom:hover:not(:disabled) { border-color: var(--amber); background: rgba(251,191,36,0.06); }
 
+/* 비교 힌트 */
+.qa-opt-hint {
+  font-size: 0.68rem;
+  color: var(--text3);
+  margin-top: 4px;
+  letter-spacing: 0.3px;
+  transition: color 0.15s;
+}
+.qa-opt:hover .qa-opt-hint { color: var(--cyan); }
+
+/* 옵션 정보 패널 */
+.opt-info-panel {
+  display: none;
+  width: 100%;
+  background: linear-gradient(135deg, rgba(30,41,59,0.98) 0%, rgba(15,23,42,0.98) 100%);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 6px;
+  animation: fadeUp 0.18s ease;
+  backdrop-filter: blur(8px);
+}
+.opt-info-panel.visible { display: flex; flex-direction: column; gap: 10px; }
+
+.oip-header {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.oip-desc {
+  font-size: 0.82rem;
+  color: var(--text2);
+  line-height: 1.55;
+}
+.oip-specs {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 14px;
+  background: rgba(15,23,42,0.6);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.oip-k {
+  font-size: 0.74rem;
+  color: var(--text3);
+  white-space: nowrap;
+}
+.oip-v {
+  font-size: 0.74rem;
+  color: var(--text);
+  font-family: var(--mono);
+}
+.oip-pros {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.oip-pro {
+  font-size: 0.78rem;
+  color: var(--green);
+}
+.oip-con {
+  font-size: 0.78rem;
+  color: var(--amber);
+}
+.oip-best {
+  font-size: 0.78rem;
+  color: var(--cyan2);
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
 .qa-custom-input {
   width: 100%;
   display: flex;

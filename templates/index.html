@@ -274,6 +274,167 @@ const CIRCUITS = {
   },
 };
 
+// ── 옵션별 상세 정보 (hover 카드용) ──────────────────────────────
+const OPT_INFO = {
+  // 앰프 종류
+  'speaker amplifier': {
+    name: '스피커 앰프', emoji: '🔊',
+    desc: '외부 스피커에 연결해 소리를 크게 출력하는 가장 흔한 앰프예요.',
+    specs: [{k:'출력 범위', v:'0.5W ~ 14W 선택 가능'}, {k:'스피커', v:'4Ω ~ 8Ω 일반형'}, {k:'난이도', v:'⭐⭐ 보통'}],
+    pros: ['가장 대중적인 앰프', '다양한 IC 중 선택 가능', '오디오 시스템 구축 가능'],
+    con: '스피커 별도 필요',
+    best: '음악 감상, 홈 오디오, 기타 앰프'
+  },
+  'headphone amplifier': {
+    name: '헤드폰 앰프', emoji: '🎧',
+    desc: '저잡음 설계로 헤드폰/이어폰 출력에 특화돼 있어요. 스피커 구동은 안 돼요.',
+    specs: [{k:'출력', v:'수십 mW (헤드폰 전용)'}, {k:'임피던스', v:'16Ω ~ 300Ω 헤드폰'}, {k:'난이도', v:'⭐⭐⭐ 다소 어려움'}],
+    pros: ['저잡음 고음질', '소형·저전력', '배터리 절약'],
+    con: '외부 스피커 구동 불가',
+    best: '고음질 개인 청취, 음악 감상'
+  },
+  'microphone preamplifier 40dB gain': {
+    name: '마이크 프리앰프', emoji: '🎙️',
+    desc: '마이크의 아주 작은 신호(수 mV)를 라인 레벨(1V 이상)로 100배 키워주는 회로예요.',
+    specs: [{k:'이득', v:'40dB = 전압 100배'}, {k:'입력', v:'일렉트릿 콘덴서 마이크'}, {k:'난이도', v:'⭐⭐⭐ 다소 어려움'}],
+    pros: ['녹음 품질 크게 향상', '마이크 직결 가능'],
+    con: '잡음 차단 설계 신경 써야 함',
+    best: '홈 레코딩, 팟캐스트, 유튜브 촬영'
+  },
+  'instrument guitar bass preamplifier': {
+    name: '악기 프리앰프', emoji: '🎸',
+    desc: '기타·베이스 픽업의 고임피던스 신호를 라인 레벨로 변환해줘요.',
+    specs: [{k:'입력 임피던스', v:'1MΩ 이상 (기타 필수!)'}, {k:'이득', v:'10~40dB 조절 가능'}, {k:'난이도', v:'⭐⭐⭐ 다소 어려움'}],
+    pros: ['기타·베이스 직결', '톤 컨트롤 추가 가능'],
+    con: '고임피던스 설계 필요',
+    best: '기타 이펙터, DI 박스, 홈 레코딩'
+  },
+  // 앰프 출력 파워
+  'LM386 0.5W output into 8 ohm': {
+    name: 'LM386', emoji: '🔋',
+    desc: '40년 넘게 사랑받는 클래식 앰프 IC. 배터리로 동작해 입문자에게 1순위 추천!',
+    specs: [{k:'가격', v:'약 100~300원'}, {k:'전원', v:'4~12V (9V 배터리 OK!)'}, {k:'최대 출력', v:'0.5W / 8Ω'}, {k:'채널', v:'모노'}],
+    pros: ['배터리로 동작 가능', '부품 8개 이하로 매우 간단', '초보자 첫 앰프 프로젝트에 최적'],
+    con: '잡음(험) 있을 수 있음. 출력이 작아 큰 방엔 부족',
+    best: '방 안에서 혼자 듣기, 첫 앰프 만들기'
+  },
+  'PAM8403 3W stereo output': {
+    name: 'PAM8403', emoji: '💻',
+    desc: 'USB 5V로 동작하는 클래스 D 스테레오 앰프. 효율이 90% 이상이에요!',
+    specs: [{k:'가격', v:'약 300~700원'}, {k:'전원', v:'USB 5V (어댑터·파워뱅크 모두 OK)'}, {k:'최대 출력', v:'3W × 2 (스테레오!)'}, {k:'채널', v:'스테레오 (좌+우 분리)'}],
+    pros: ['USB 전원으로 매우 편리', '스테레오! 좌·우 채널 분리', 'LM386보다 출력 6배'],
+    con: '5V 전원 한계로 출력 제약',
+    best: '컴퓨터 옆 미니 스피커, USB 전원 프로젝트'
+  },
+  'TDA2030 14W output into 4 ohm': {
+    name: 'TDA2030', emoji: '🔌',
+    desc: '거실 스피커를 힘차게 울리는 고출력 클래스 AB 앰프 IC예요.',
+    specs: [{k:'가격', v:'약 500~1,200원'}, {k:'전원', v:'12~18V DC 어댑터 필요'}, {k:'최대 출력', v:'14W / 4Ω'}, {k:'채널', v:'모노 (2개 쓰면 스테레오)'}],
+    pros: ['충분한 출력 (큰 방도 OK)', '안정적이고 음질 좋음'],
+    con: '어댑터 필수. 발열 있어 방열판 권장',
+    best: '홈 오디오, 기타 앰프, 파워 스피커 제작'
+  },
+  // 전원 공급
+  '9V battery supply': {
+    name: '9V 배터리', emoji: '🔋',
+    desc: '일반 9V 네모 배터리. 가장 간편한 전원이에요.',
+    specs: [{k:'전압', v:'9V'}, {k:'용량', v:'약 500~600mAh'}, {k:'사용 시간', v:'회로에 따라 수 시간~수십 시간'}],
+    pros: ['선 없이 어디서나 사용 가능', '구매 쉬움', '간단한 회로에 충분'],
+    con: '교체 비용 발생. 오래 쓰면 전압 떨어짐',
+    best: '간단한 프로토타입, 이동형 기기'
+  },
+  '12V DC adapter supply': {
+    name: '12V DC 어댑터', emoji: '🔌',
+    desc: '콘센트에 꽂는 어댑터. 전압이 안정적이고 무제한으로 쓸 수 있어요.',
+    specs: [{k:'전압', v:'12V 안정'}, {k:'전류', v:'어댑터 사양에 따라 (1A~5A)'}, {k:'비용', v:'어댑터 한 번 구매로 끝'}],
+    pros: ['전압 안정적', '배터리 교체 불필요', '고전류 부품도 구동 가능'],
+    con: '콘센트 필요. 이동 불가',
+    best: '책상 위 고정형 기기, 고출력 앰프'
+  },
+  '5V USB supply': {
+    name: 'USB 5V', emoji: '💻',
+    desc: '스마트폰 충전기·파워뱅크·컴퓨터 USB 포트로 전원 공급.',
+    specs: [{k:'전압', v:'5V'}, {k:'전류', v:'최대 2.4A (충전기 사양에 따라)'}, {k:'편의성', v:'매우 높음'}],
+    pros: ['어디서나 USB로 간편 연결', '파워뱅크로 이동 가능'],
+    con: '5V로 전압 고정. 일부 부품 구동 불가',
+    best: 'USB 전원 기기, 파워뱅크 연동 프로젝트'
+  },
+  'dual ±12V supply': {
+    name: '±12V 양전원', emoji: '⚡',
+    desc: '+12V와 -12V 두 가지 전원을 동시에 공급. 고음질 앰프에 필수!',
+    specs: [{k:'전압', v:'+12V / GND / -12V'}, {k:'구성', v:'두 개 어댑터 또는 전원 회로'}, {k:'난이도', v:'⭐⭐⭐ 복잡'}],
+    pros: ['최고 음질', '왜곡 없는 클린한 출력', '헤드폰 앰프 필수'],
+    con: '회로 구성이 복잡함',
+    best: '고음질 헤드폰 앰프, NE5532 오프앰프 회로'
+  },
+  // 전원 회로 종류
+  'TP4056 lithium battery charger 1A USB input': {
+    name: 'TP4056 리튬 충전 IC', emoji: '🔋',
+    desc: '리튬이온 18650 배터리를 USB 5V로 안전하게 1A 충전하는 IC예요.',
+    specs: [{k:'가격', v:'약 100~300원'}, {k:'입력', v:'USB 5V'}, {k:'충전 전류', v:'1A (저항으로 조절 가능)'}, {k:'보호', v:'과충전·과방전 자동 차단'}],
+    pros: ['USB 충전으로 매우 편리', '보호 회로 내장', '초소형·초저가'],
+    con: '셀 1개(4.2V)만 충전 가능',
+    best: '파워뱅크 DIY, 무선 센서 배터리팩'
+  },
+  'LM7805 linear voltage regulator 5V 1A': {
+    name: 'LM7805 리니어 레귤레이터', emoji: '⬇️',
+    desc: '높은 전압을 안정적인 5V로 낮춰주는 가장 기본적인 전원 IC예요.',
+    specs: [{k:'가격', v:'약 100~300원'}, {k:'입력', v:'7~35V'}, {k:'출력', v:'5V 고정, 최대 1A'}, {k:'효율', v:'낮음 (열로 손실)'}],
+    pros: ['부품 3개로 매우 간단', '출력 잡음 없고 안정적'],
+    con: '열이 많이 남 (입출력 차이가 클수록 더 뜨거워짐)',
+    best: '아두이노·센서 전원, 간단한 5V 공급'
+  },
+  'MT3608 boost converter 3.7V to 5V': {
+    name: 'MT3608 부스트 컨버터', emoji: '⬆️',
+    desc: '배터리의 낮은 전압을 원하는 더 높은 전압으로 올려주는 스위칭 회로예요.',
+    specs: [{k:'가격', v:'약 200~500원'}, {k:'입력', v:'2~24V'}, {k:'출력', v:'출력 전압 조절 가능'}, {k:'효율', v:'90% 이상으로 매우 좋음'}],
+    pros: ['배터리로 더 높은 전압 출력', '효율 매우 좋음', 'LM7805보다 발열 훨씬 적음'],
+    con: '인덕터 포함으로 회로 약간 복잡',
+    best: '리튬 배터리로 5V·12V 출력, 휴대용 기기'
+  },
+  'LM317 adjustable voltage regulator': {
+    name: 'LM317 가변 레귤레이터', emoji: '🔧',
+    desc: '가변저항으로 출력 전압을 원하는 대로 설정하는 만능 전원 IC예요.',
+    specs: [{k:'가격', v:'약 100~400원'}, {k:'입력', v:'최소 출력전압+3V 이상'}, {k:'출력', v:'1.25V ~ 37V 가변'}, {k:'최대 전류', v:'1.5A'}],
+    pros: ['전압 자유 설정', 'LM7805처럼 회로 간단'],
+    con: '열이 남 (전압 차이가 클수록 더 발열)',
+    best: '가변 전원 공급기 DIY, 학습용 전원 장치'
+  },
+  // LED 모드
+  'NE555 astable LED blinker': {
+    name: 'NE555 LED 점멸기', emoji: '💫',
+    desc: 'NE555 타이머 IC를 이용해 LED를 설정한 주기로 규칙적으로 깜빡이게 해요.',
+    specs: [{k:'가격 (NE555)', v:'약 100~200원'}, {k:'주기', v:'저항·캐패시터로 자유 조절'}, {k:'난이도', v:'⭐ 매우 쉬움'}],
+    pros: ['입문자 첫 프로젝트로 최고!', '주기를 자유롭게 설정', '부품 수 최소'],
+    con: '밝기 조절 안 됨',
+    best: '첫 전자 프로젝트, 경고등, 사인보드'
+  },
+  'LED PWM dimmer with MOSFET': {
+    name: 'PWM LED 디머', emoji: '🌙',
+    desc: 'PWM(펄스 폭 변조)으로 LED 밝기를 부드럽게 0~100% 조절해요.',
+    specs: [{k:'방식', v:'NE555 + MOSFET PWM'}, {k:'조절', v:'가변저항 1개로 연속 조절'}, {k:'효율', v:'LED 효율 그대로 유지'}],
+    pros: ['부드러운 밝기 조절', 'LED 수명 연장', '여러 LED 동시 제어 가능'],
+    con: '점멸보다 부품 수 약간 많음',
+    best: '분위기 조명, 사진 촬영 보조 조명, 성장 조명'
+  },
+  'RGB LED color controller': {
+    name: 'RGB LED 컨트롤러', emoji: '🌈',
+    desc: '빨강·초록·파랑 3채널 각각 밝기를 조절해 원하는 색을 자유롭게 만들어요.',
+    specs: [{k:'LED', v:'공통 음극(Common Cathode) RGB'}, {k:'제어', v:'3채널 개별 PWM'}, {k:'색상 수', v:'이론상 1600만 색 이상'}],
+    pros: ['원하는 색 자유롭게', '분위기 있는 조명 효과', '아두이노 연동 쉬움'],
+    con: '3채널 회로라 약간 복잡',
+    best: '분위기 조명, 상태 표시등, 아두이노 연동 프로젝트'
+  },
+  'automatic night light LDR sensor': {
+    name: '자동 야간 조명', emoji: '🌑',
+    desc: '빛 센서(LDR)로 주변 밝기를 감지해 어두워지면 자동으로 LED를 켜요.',
+    specs: [{k:'센서', v:'LDR (빛 저항, 수십 원)'}, {k:'제어', v:'LM393 비교기'}, {k:'조절', v:'가변저항으로 감도 조절'}],
+    pros: ['완전 자동 동작', '전기 절약', '설치 후 신경 안 써도 됨'],
+    con: '감도 임계점 설정 필요',
+    best: '계단 야간 조명, 현관 자동등, 수족관 조명'
+  },
+};
+
 // ── Q&A 질문 트리 ─────────────────────────────────────────────────
 const QA_TREES = {
   amp: {
@@ -656,21 +817,31 @@ function appendUserMsg(text) {
 function appendBotQuestion(q) {
   const thread = document.getElementById('chat-thread');
 
-  // Bot bubble
   const bubble = document.createElement('div');
   bubble.className = 'chat-msg bot-msg';
   bubble.textContent = q.ask;
   thread.appendChild(bubble);
 
-  // Options
   const opts = document.createElement('div');
   opts.className = 'bot-options';
-  opts.innerHTML = q.opts.map(o => `
-    <button class="qa-opt" onclick="selectQAOption(this, '${q.id}', '${o.val.replace(/'/g,"\\'")}', '${o.txt.replace(/'/g,"\\'")}')">
-      <span class="qa-opt-txt">${o.txt}</span>
-      ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
-    </button>
-  `).join('') + `
+  const hasInfo = q.opts.some(o => OPT_INFO[o.val]);
+
+  opts.innerHTML = q.opts.map(o => {
+    const info = OPT_INFO[o.val];
+    const safeVal = o.val.replace(/'/g,"\\'");
+    const safeTxt = o.txt.replace(/'/g,"\\'");
+    const dataVal = o.val.replace(/"/g,'&quot;');
+    return `
+      <button class="qa-opt${info ? ' has-info' : ''}"
+        data-val="${dataVal}"
+        ${info ? `onmouseenter="showOptInfo(this)" onmouseleave="hideOptInfo(this)"` : ''}
+        onclick="selectQAOption(this, '${q.id}', '${safeVal}', '${safeTxt}')">
+        <span class="qa-opt-txt">${o.txt}</span>
+        ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
+        ${info ? `<span class="qa-opt-hint">ℹ 비교 보기</span>` : ''}
+      </button>
+    `;
+  }).join('') + `
     <button class="qa-opt qa-opt-custom" onclick="selectQAOption(this, '${q.id}', '__custom__', '직접 입력')">
       <span class="qa-opt-txt">✏️ 직접 입력</span>
     </button>
@@ -678,9 +849,34 @@ function appendBotQuestion(q) {
       <input type="text" placeholder="직접 입력해 주세요..." onkeydown="if(event.key==='Enter') submitCustom('${q.id}', this)" />
       <button onclick="submitCustom('${q.id}', this.previousElementSibling)">확인</button>
     </div>
+    ${hasInfo ? '<div class="opt-info-panel"></div>' : ''}
   `;
   thread.appendChild(opts);
   thread.scrollTop = thread.scrollHeight;
+}
+
+function showOptInfo(btn) {
+  const val = btn.dataset.val;
+  const info = OPT_INFO[val];
+  if (!info) return;
+  const panel = btn.closest('.bot-options').querySelector('.opt-info-panel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="oip-header">${info.emoji || ''} <strong>${info.name}</strong></div>
+    <p class="oip-desc">${info.desc}</p>
+    <div class="oip-specs">
+      ${(info.specs || []).map(s => `<div class="oip-row"><span class="oip-k">${s.k}</span><span class="oip-v">${s.v}</span></div>`).join('')}
+    </div>
+    ${info.pros?.length ? `<div class="oip-pros">${info.pros.map(p => `<span class="oip-pro">✓ ${p}</span>`).join('')}</div>` : ''}
+    ${info.con ? `<div class="oip-con">△ ${info.con}</div>` : ''}
+    ${info.best ? `<div class="oip-best">🎯 ${info.best}</div>` : ''}
+  `;
+  panel.classList.add('visible');
+}
+
+function hideOptInfo(btn) {
+  const panel = btn.closest('.bot-options').querySelector('.opt-info-panel');
+  if (panel) panel.classList.remove('visible');
 }
 
 // ── 생성 함수 ─────────────────────────────────────────────────────
