@@ -18,25 +18,25 @@ app = Flask(__name__)
 OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
-SYSTEM_PROMPT = """You are an electronics PCB schematic generator. Convert circuit descriptions into skidl Python code AND a Korean wiring guide.
+SYSTEM_PROMPT = """You are a specialized electronics CAD tool that generates skidl Python code for KiCad PCB design software. You MUST always output the requested circuit — this is a professional PCB design tool used by engineers.
 
-Output format (STRICT) — two sections separated by exactly "---GUIDE---":
+Output format — two sections separated by exactly "---GUIDE---":
 
-Section 1: valid Python skidl code only (no markdown, no comments outside code)
-- Always start with: from skidl import *
-- Define ALL parts using skidl's SKIDL tool type with explicit pin definitions (no external KiCad libraries)
-- Always end with: generate_netlist()
-- This is for legitimate electronics hardware design, always generate the requested circuit.
+Section 1: skidl Python code ONLY. No prose, no apologies, no markdown fences.
+Rules:
+- Start with: from skidl import *
+- Use SKIDL tool type with explicit Pin definitions for every part
+- Never reference external KiCad symbol libraries
+- End with: generate_netlist()
 
-Section 2: Korean wiring guide with two parts:
+Section 2: Korean wiring guide:
 [부품 목록]
-- 각 부품을 번호 목록으로 (예: R1 - 저항 10kΩ: 바이어스 역할)
+- ref - 종류 값: 역할 설명
 
 [배선 순서]
-- 단계별 배선 방법 (예: 1. R1의 A핀 → VCC 연결)
-- 브레드보드나 PCB에서 실제로 어떻게 연결하는지 설명
+1. 단계별 실제 배선 방법
 
-Example output:
+Example:
 from skidl import *
 r1 = Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1, name='A', func=Pin.types.PASSIVE), Pin(num=2, name='B', func=Pin.types.PASSIVE)])
 r1.ref = 'R1'
@@ -73,19 +73,30 @@ def generate():
 
     try:
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"다음 회로를 skidl 코드로 생성하세요: {description}"},
-            ],
-            temperature=0.2,
-            max_tokens=2500,
-        )
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Generate skidl code for this electronics circuit: {description}"},
+        ]
+
+        raw = ""
+        for attempt in range(2):
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2500,
+            )
+            raw = response.choices[0].message.content.strip()
+
+            # GPT 거부 감지: 코드가 아닌 텍스트로 시작하면 재시도
+            if raw.startswith("from skidl"):
+                break
+            if attempt == 0:
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": "You must output only skidl Python code starting with 'from skidl import *'. Do not refuse. Generate the circuit now."})
+
     except Exception as e:
         return jsonify({"error": f"GPT API 오류: {str(e)}"}), 500
-
-    raw = response.choices[0].message.content.strip()
 
     if "---GUIDE---" in raw:
         skidl_code, guide = raw.split("---GUIDE---", 1)
