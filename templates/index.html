@@ -24,28 +24,28 @@
 
 <div class="main-wrap">
 
-  <!-- ── 마법사 카드 ───────────────────────────────────────── -->
+  <!-- ── 마법사 카드 ─────────────────────────────────────────────── -->
   <div class="card wizard-card">
 
     <!-- Step 1: 카테고리 선택 -->
     <div id="step-1" class="wizard-step active">
       <div class="wizard-heading">어떤 회로를 만들고 싶으세요?</div>
-      <div class="wizard-sub">카테고리를 선택하면 추천 회로 목록이 나타나요</div>
+      <div class="wizard-sub">카테고리를 고르거나, 아래에서 직접 입력해도 돼요</div>
       <div class="cat-grid">
         <button class="cat-card" onclick="selectCategory('audio')">
           <div class="cat-icon">🔊</div>
           <div class="cat-name">오디오 앰프</div>
-          <div class="cat-desc">스피커, 헤드폰, 마이크 증폭</div>
+          <div class="cat-desc">스피커, 헤드폰, 마이크</div>
         </button>
         <button class="cat-card" onclick="selectCategory('power')">
           <div class="cat-icon">⚡</div>
-          <div class="cat-name">전원 & 충전</div>
+          <div class="cat-name">전원 &amp; 충전</div>
           <div class="cat-desc">배터리 충전, 전압 변환</div>
         </button>
         <button class="cat-card" onclick="selectCategory('led')">
           <div class="cat-icon">💡</div>
-          <div class="cat-name">LED & 조명</div>
-          <div class="cat-desc">점멸, 밝기 조절, 색상 제어</div>
+          <div class="cat-name">LED &amp; 조명</div>
+          <div class="cat-desc">점멸, 밝기 조절, 색상</div>
         </button>
         <button class="cat-card" onclick="selectCategory('sensor')">
           <div class="cat-icon">🌡️</div>
@@ -54,17 +54,17 @@
         </button>
         <button class="cat-card" onclick="selectCategory('timer')">
           <div class="cat-icon">⏱️</div>
-          <div class="cat-name">타이머 & 발진</div>
+          <div class="cat-name">타이머 &amp; 발진</div>
           <div class="cat-desc">주기 제어, 신호 발생</div>
         </button>
         <button class="cat-card" onclick="selectCategory('motor')">
           <div class="cat-icon">🎛️</div>
-          <div class="cat-name">모터 & 제어</div>
+          <div class="cat-name">모터 &amp; 제어</div>
           <div class="cat-desc">DC 모터, 릴레이 스위치</div>
         </button>
       </div>
       <div class="or-divider"><span>또는</span></div>
-      <button class="manual-btn" onclick="showStep('manual')">✏️ 직접 입력하기 (고급)</button>
+      <button class="manual-btn" onclick="showStep('manual')">✏️ 직접 입력하기</button>
     </div>
 
     <!-- Step 2: 회로 선택 -->
@@ -108,27 +108,54 @@
       </button>
     </div>
 
-    <!-- Manual Input (고급) -->
+    <!-- ── 직접 입력 (대화형 Q&A) ───────────────────────────────── -->
     <div id="step-manual" class="wizard-step">
-      <div class="wizard-nav">
-        <button class="back-btn" onclick="showStep(1)">← 뒤로</button>
-        <div class="breadcrumb"><span class="bc-current">직접 입력</span></div>
+
+      <!-- Phase A: 초기 입력 -->
+      <div id="qa-input" class="qa-phase active">
+        <div class="wizard-nav">
+          <button class="back-btn" onclick="showStep(1)">← 뒤로</button>
+        </div>
+        <div class="wizard-heading">어떤 회로를 원하세요?</div>
+        <div class="wizard-sub">대충 말해도 괜찮아요, 이어서 몇 가지 여쭤볼게요 😊</div>
+        <textarea id="description" rows="2"
+          placeholder="예: 베이스 앰프&#10;예: LED 점멸&#10;예: 리튬 배터리 충전&#10;예: 온도 센서"></textarea>
+        <div class="qa-input-actions">
+          <button class="qa-next-btn" onclick="startQA()">다음 →</button>
+          <button class="qa-skip-btn" onclick="skipQA()">정확히 알고 있어요, 바로 생성</button>
+        </div>
       </div>
-      <div class="wizard-heading">회로를 직접 설명해 주세요</div>
-      <div class="wizard-sub">부품 모델명과 용도를 함께 쓰면 더 정확해요</div>
-      <textarea id="description" rows="3"
-        placeholder="예: LM386 베이스 앰프 회로, 9V 배터리, 스피커 출력&#10;예: TP4056 리튬배터리 충전 회로 1A&#10;예: NE555 타이머 LED 점멸 회로 1Hz"></textarea>
-      <div class="example-row">
-        <span>빠른 예시</span>
-        <button class="chip" onclick="setExample(this)">LM386 베이스 앰프</button>
-        <button class="chip" onclick="setExample(this)">TP4056 리튬배터리 충전</button>
-        <button class="chip" onclick="setExample(this)">NE555 LED 점멸 1Hz</button>
+
+      <!-- Phase B: 대화형 Q&A -->
+      <div id="qa-chat" class="qa-phase">
+        <div class="wizard-nav">
+          <button class="back-btn" onclick="resetQA()">← 다시 입력</button>
+          <span class="bc-current">세부 정보 입력</span>
+        </div>
+        <div id="chat-thread" class="chat-thread"></div>
       </div>
-      <button class="generate-btn" id="manual-gen-btn" onclick="generateManual()">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        스키매틱 생성
-        <span class="shortcut">Ctrl+Enter</span>
-      </button>
+
+      <!-- Phase C: 생성 준비 완료 -->
+      <div id="qa-ready" class="qa-phase">
+        <div class="wizard-nav">
+          <button class="back-btn" onclick="resetQA()">← 다시 입력</button>
+        </div>
+        <div class="ready-box">
+          <div class="ready-check">✅</div>
+          <div class="ready-info">
+            <div class="ready-title">회로 정보가 완성됐어요!</div>
+            <div id="ready-details" class="ready-details"></div>
+          </div>
+        </div>
+        <div class="kicad-tip">
+          💾 생성된 <strong>.net 파일</strong>은 KiCad → File → Import → Netlist 로 불러올 수 있어요
+        </div>
+        <button class="generate-btn" id="qa-gen-btn" onclick="generateFromQA()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          회로 생성하기
+        </button>
+      </div>
+
     </div>
 
   </div>
@@ -191,200 +218,287 @@
 </div>
 
 <script>
-// ── 회로 데이터 ─────────────────────────────────────────────────
+// ── 카테고리 마법사 데이터 ───────────────────────────────────────
 const CIRCUITS = {
   audio: {
     icon: '🔊', name: '오디오 앰프',
     items: [
-      {
-        name: 'LM386 소형 앰프',
-        desc: '배터리로 동작하는 0.5W 소형 앰프. 가장 쉬운 오디오 프로젝트!',
-        parts: 'LM386, 전해 캐패시터 × 3, 세라믹 캐패시터 × 2, 저항 × 2',
-        prompt: 'LM386 audio amplifier complete circuit with gain setting resistor and capacitor between pins 1 and 8, input coupling capacitor, output coupling electrolytic capacitor, bypass capacitor on pin 7, power supply decoupling capacitor. 9V battery powered, 0.5W output into 8 ohm speaker'
-      },
-      {
-        name: 'TDA2030 파워 앰프',
-        desc: '14W 고출력 클래스 AB 앰프. 스피커를 크게 울리고 싶을 때!',
-        parts: 'TDA2030, 전해 캐패시터 × 4, 세라믹 캐패시터 × 2, 저항 × 4',
-        prompt: 'TDA2030 class AB power amplifier complete circuit with feedback resistor network, input coupling capacitor, bootstrap capacitor, power supply bypass capacitors, output coupling capacitor, and thermal protection. Single 18V supply, 14W output into 4 ohm speaker'
-      },
-      {
-        name: '헤드폰 앰프',
-        desc: 'NE5532 기반 저잡음 헤드폰 출력. 고음질 청음용!',
-        parts: 'NE5532, 전해 캐패시터 × 3, 세라믹 캐패시터 × 2, 저항 × 6',
-        prompt: 'NE5532 headphone amplifier complete circuit with input coupling capacitor, gain resistors, DC bias network, output capacitor, power supply decoupling capacitors. Dual ±12V supply, low noise, drive 32 ohm headphones'
-      },
-      {
-        name: '마이크 프리앰프',
-        desc: '마이크 신호를 40dB 증폭. 녹음 프로젝트에 딱!',
-        parts: 'LM358, 전해 캐패시터 × 2, 세라믹 캐패시터 × 2, 저항 × 5',
-        prompt: 'LM358 microphone preamplifier complete circuit with bias resistors for electret microphone, input coupling capacitor, gain of 40dB feedback resistors, output coupling capacitor, power supply decoupling. 9V supply, suitable for electret condenser microphone'
-      },
+      { name: 'LM386 소형 앰프', desc: '배터리로 동작하는 0.5W 소형 앰프', parts: 'LM386, 전해 캐패시터 × 3, 저항 × 2', prompt: 'LM386 audio amplifier complete circuit with gain setting resistor and capacitor between pins 1 and 8, input coupling capacitor, output coupling electrolytic capacitor, bypass capacitor on pin 7, power supply decoupling capacitor. 9V battery powered, 0.5W output into 8 ohm speaker' },
+      { name: 'TDA2030 파워 앰프', desc: '14W 고출력 클래스 AB 앰프', parts: 'TDA2030, 전해 캐패시터 × 4, 저항 × 4', prompt: 'TDA2030 class AB power amplifier complete circuit with feedback resistor network, input coupling capacitor, bootstrap capacitor, power supply bypass capacitors, output coupling capacitor. Single 18V supply, 14W output into 4 ohm speaker' },
+      { name: '헤드폰 앰프', desc: 'NE5532 기반 저잡음 헤드폰 출력', parts: 'NE5532, 캐패시터 × 5, 저항 × 6', prompt: 'NE5532 headphone amplifier complete circuit with input coupling capacitor, gain resistors, DC bias network, output capacitor, power supply decoupling. Dual ±12V supply, low noise, 32 ohm headphones' },
+      { name: '마이크 프리앰프', desc: '마이크 신호 40dB 증폭', parts: 'LM358, 캐패시터 × 4, 저항 × 5', prompt: 'LM358 microphone preamplifier complete circuit with bias resistors for electret microphone, input coupling capacitor, gain of 40dB feedback resistors, output coupling capacitor, power supply decoupling. 9V supply' },
     ]
   },
   power: {
     icon: '⚡', name: '전원 & 충전',
     items: [
-      {
-        name: 'TP4056 리튬 배터리 충전',
-        desc: '18650 배터리를 USB 5V로 1A 충전. 가장 많이 쓰이는 충전 회로!',
-        parts: 'TP4056, 저항 × 2, LED × 2, 세라믹 캐패시터 × 2',
-        prompt: 'TP4056 lithium battery charger complete circuit with PROG resistor for 1A charge current, CHRG status LED with current limiting resistor, STDBY status LED with current limiting resistor, input bypass capacitor, output battery connection capacitor. USB 5V input'
-      },
-      {
-        name: 'LM7805 5V 정전압 공급',
-        desc: '안정적인 5V 1A 출력. 아두이노나 회로 전원 공급에 필수!',
-        parts: 'LM7805, 전해 캐패시터 × 2, 세라믹 캐패시터 × 2, 다이오드 × 2, LED × 1, 저항 × 1',
-        prompt: 'LM7805 5V linear voltage regulator complete circuit with input electrolytic filter capacitor, input ceramic bypass capacitor, output electrolytic filter capacitor, output ceramic bypass capacitor, input reverse protection diode, output protection diode, power LED indicator with current limiting resistor. 7-35V input, 5V 1A regulated output'
-      },
-      {
-        name: 'MT3608 부스트 컨버터',
-        desc: '3.7V 배터리를 5V로 승압. 배터리 구동 프로젝트에 최적!',
-        parts: 'MT3608, 인덕터 × 1, 쇼트키 다이오드 × 1, 전해 캐패시터 × 2, 세라믹 캐패시터 × 1, 저항 × 2',
-        prompt: 'MT3608 boost converter complete circuit with 4.7uH inductor, SS34 schottky diode, input electrolytic filter capacitor, input ceramic bypass capacitor, output electrolytic filter capacitor, feedback voltage divider resistors. 3.7V input, 5V 2A output'
-      },
-      {
-        name: 'LM317 가변 전압 조절기',
-        desc: '1.25V~30V 자유롭게 조절. 가변 전원공급기 프로젝트에!',
-        parts: 'LM317, 전해 캐패시터 × 2, 세라믹 캐패시터 × 1, 저항 × 2, 다이오드 × 2, 가변저항 × 1',
-        prompt: 'LM317 adjustable voltage regulator complete circuit with output programming resistor, potentiometer for voltage adjustment, adjustment pin filter capacitor, input bypass electrolytic capacitor, output bypass electrolytic capacitor, input-output protection diodes. 1.5A output, adjustable 1.25V to 12V'
-      },
+      { name: 'TP4056 리튬 배터리 충전', desc: 'USB 5V로 1A 충전', parts: 'TP4056, 저항 × 2, LED × 2, 캐패시터 × 2', prompt: 'TP4056 lithium battery charger complete circuit with PROG resistor for 1A, CHRG LED, STDBY LED with resistors, input and output bypass capacitors. USB 5V input' },
+      { name: 'LM7805 5V 정전압', desc: '안정적인 5V 1A 출력', parts: 'LM7805, 전해 캐패시터 × 2, 다이오드 × 2, LED × 1, 저항 × 1', prompt: 'LM7805 5V linear regulator complete circuit with input electrolytic, output electrolytic, ceramic bypass capacitors, input and output protection diodes, power LED. 5V 1A regulated output' },
+      { name: 'MT3608 부스트 컨버터', desc: '3.7V → 5V 승압', parts: 'MT3608, 인덕터 × 1, 쇼트키 다이오드 × 1, 캐패시터 × 3, 저항 × 2', prompt: 'MT3608 boost converter complete circuit with 4.7uH inductor, SS34 schottky diode, input and output filter capacitors, feedback voltage divider resistors. 3.7V to 5V, 2A output' },
+      { name: 'LM317 가변 전압', desc: '1.25V~30V 자유롭게 조절', parts: 'LM317, 전해 캐패시터 × 2, 가변저항 × 1, 다이오드 × 2', prompt: 'LM317 adjustable voltage regulator complete circuit with programming resistors, potentiometer, adjustment capacitor, input and output bypass capacitors, protection diodes. 1.25V to 12V, 1.5A' },
     ]
   },
   led: {
     icon: '💡', name: 'LED & 조명',
     items: [
-      {
-        name: 'NE555 LED 점멸기',
-        desc: '1Hz로 LED가 규칙적으로 깜빡임. 입문자 첫 번째 프로젝트로 추천!',
-        parts: 'NE555, LED × 1, 저항 × 3, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1',
-        prompt: 'NE555 astable mode LED blinker complete circuit with timing resistors R1 and R2, timing capacitor, bypass decoupling capacitor, output current limiting resistor, and LED. 1Hz blink rate, 50% duty cycle, 9V supply'
-      },
-      {
-        name: 'RGB LED 색상 제어',
-        desc: 'PWM 신호로 빨강/초록/파랑 밝기 조절. 원하는 색 만들기!',
-        parts: 'RGB LED × 1, 저항 × 3, NPN 트랜지스터 × 3, 세라믹 캐패시터 × 3',
-        prompt: 'RGB LED controller complete circuit with separate current limiting resistors for red, green, blue channels, NPN transistor drivers for each channel, base resistors, bypass capacitors on each transistor. Common cathode RGB LED, 9V supply, PWM compatible input'
-      },
-      {
-        name: 'LED 디머 (밝기 조절)',
-        desc: '가변저항으로 LED 밝기를 부드럽게 조절. 조명 제어 프로젝트에!',
-        parts: 'NE555, MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2, LED × 여러 개',
-        prompt: 'LED dimmer circuit using NE555 PWM complete circuit with potentiometer controlling duty cycle, timing capacitor, steering diodes, output N-channel MOSFET driver with gate resistor, flyback protection diode, LED array with current limiting resistor. 12V supply, 0-100% PWM dimming'
-      },
-      {
-        name: '자동 야간 조명',
-        desc: '어두워지면 자동으로 LED 켜짐. LDR 광센서 활용!',
-        parts: 'LM393, LDR × 1, LED × 1, 저항 × 4, NPN 트랜지스터 × 1, 전해 캐패시터 × 1',
-        prompt: 'Automatic night light circuit with LDR voltage divider, LM393 comparator with hysteresis resistors for clean switching, NPN transistor switch, LED array with current limiting resistor, power supply bypass capacitor. Auto on when dark, off when bright, 9V supply'
-      },
+      { name: 'NE555 LED 점멸기', desc: '1Hz 규칙적 깜빡임', parts: 'NE555, LED × 1, 저항 × 3, 캐패시터 × 2', prompt: 'NE555 astable LED blinker complete circuit with timing resistors, timing capacitor, bypass capacitor, output current limiting resistor, LED. 1Hz blink rate, 9V supply' },
+      { name: 'RGB LED 색상 제어', desc: 'PWM으로 색상 자유 조절', parts: 'RGB LED × 1, 저항 × 3, NPN 트랜지스터 × 3, 캐패시터 × 3', prompt: 'RGB LED controller complete circuit with current limiting resistors, NPN transistor drivers for each channel, base resistors, bypass capacitors. Common cathode RGB LED, 9V supply, PWM input' },
+      { name: 'LED 디머', desc: '가변저항으로 밝기 조절', parts: 'NE555, N-CH MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2', prompt: 'LED dimmer NE555 PWM complete circuit with potentiometer duty cycle control, timing capacitor, steering diodes, N-channel MOSFET gate resistor, LED array. 12V supply, 0-100% dimming' },
+      { name: '자동 야간 조명', desc: '어두워지면 자동으로 켜짐', parts: 'LM393, LDR × 1, LED × 1, 저항 × 4, 트랜지스터 × 1', prompt: 'Automatic night light with LDR voltage divider, LM393 comparator with hysteresis, NPN transistor switch, LED with current limiting resistor. Auto on dark, off bright, 9V supply' },
     ]
   },
   sensor: {
     icon: '🌡️', name: '센서 회로',
     items: [
-      {
-        name: 'LM35 온도 측정',
-        desc: '10mV/°C로 온도를 전압으로 출력. 온도 모니터링 프로젝트에!',
-        parts: 'LM35, LM358, 저항 × 4, 세라믹 캐패시터 × 2, LED × 2',
-        prompt: 'LM35 temperature sensor complete circuit with output filtering capacitor, op-amp buffer amplifier, gain resistors, overheat LED indicator with comparator and reference divider, and power supply decoupling. Measures 0-100°C, 5V supply'
-      },
-      {
-        name: 'DHT11 온습도 (아두이노)',
-        desc: '디지털 온도+습도 동시 측정. 아두이노 연결 완성 회로!',
-        parts: 'DHT11 × 1, 저항 × 2, 세라믹 캐패시터 × 2, 커넥터 × 1',
-        prompt: 'DHT11 temperature and humidity sensor interface complete circuit with pull-up resistor on data line, power supply decoupling capacitor, signal filtering capacitor, ESD protection resistor, and Arduino header connector. 5V supply, digital single-wire output'
-      },
-      {
-        name: 'LDR 빛 감지 & 릴레이',
-        desc: '조도에 따라 릴레이로 외부 기기 ON/OFF. 자동화 프로젝트에!',
-        parts: 'LM393, LDR × 1, 저항 × 4, NPN 트랜지스터 × 1, 릴레이 × 1, 다이오드 × 1, LED × 1',
-        prompt: 'LDR light sensor relay control complete circuit with LDR voltage divider, LM393 comparator with hysteresis resistors, NPN transistor relay driver, flyback protection diode across relay coil, status LED indicator. 12V relay, 5V logic, adjustable threshold'
-      },
-      {
-        name: 'PIR 모션 감지 경보',
-        desc: '사람 움직임 감지 시 버저 알람. 방범 시스템 프로젝트!',
-        parts: 'PIR 센서 × 1, NPN 트랜지스터 × 2, 저항 × 4, 버저 × 1, LED × 1, 캐패시터 × 2',
-        prompt: 'PIR motion sensor alarm complete circuit with PIR module, signal amplification transistor, output one-shot timer NE555 circuit, buzzer driver transistor with base resistor, flyback diode, LED indicator with current limiting resistor, power supply bypass capacitors. 5V supply'
-      },
+      { name: 'LM35 온도 측정', desc: '10mV/°C 정밀 온도 측정', parts: 'LM35, LM358, 저항 × 4, 캐패시터 × 2, LED × 2', prompt: 'LM35 temperature sensor complete circuit with output filtering capacitor, op-amp buffer, gain resistors, overheat LED indicator. 0-100°C, 5V supply' },
+      { name: 'DHT11 온습도 (아두이노)', desc: '온도+습도 동시 측정', parts: 'DHT11 × 1, 저항 × 2, 캐패시터 × 2', prompt: 'DHT11 temperature humidity sensor interface complete circuit with pull-up resistor, decoupling capacitor, signal filtering capacitor, Arduino header. 5V supply' },
+      { name: 'LDR 빛 감지 & 릴레이', desc: '조도에 따라 기기 ON/OFF', parts: 'LM393, LDR × 1, 저항 × 4, 트랜지스터 × 1, 릴레이 × 1, 다이오드 × 1', prompt: 'LDR light sensor relay control with LM393 comparator, hysteresis resistors, NPN transistor relay driver, flyback diode. 12V relay, adjustable threshold' },
+      { name: 'PIR 모션 감지 경보', desc: '움직임 감지 시 버저 알람', parts: 'PIR 센서 × 1, 트랜지스터 × 2, 저항 × 4, 버저 × 1, LED × 1, 캐패시터 × 2', prompt: 'PIR motion sensor alarm with transistor amplifier, NE555 one-shot timer, buzzer driver transistor, flyback diode, LED indicator. 5V supply' },
     ]
   },
   timer: {
     icon: '⏱️', name: '타이머 & 발진',
     items: [
-      {
-        name: '지연 타이머 (단안정)',
-        desc: '버튼 누르면 N초 후 자동 OFF. 자동 소등 등 시간 제어에!',
-        parts: 'NE555, 저항 × 3, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1, 버튼 × 1, LED × 1',
-        prompt: 'NE555 monostable timer complete circuit with trigger pushbutton and pull-up resistor, timing resistor and electrolytic capacitor for 10 second delay, reset pin pull-up resistor, bypass decoupling capacitor, output LED with current limiting resistor. 9V supply'
-      },
-      {
-        name: '사각파 발진기 (가청음)',
-        desc: '1kHz 오디오 톤 발생. 버저 구동이나 신호 생성에!',
-        parts: 'NE555, 저항 × 2, 전해 캐패시터 × 1, 세라믹 캐패시터 × 1, NPN 트랜지스터 × 1, 스피커',
-        prompt: 'NE555 astable oscillator 1kHz complete circuit with timing resistors for 1kHz frequency, timing capacitor, bypass capacitor, output NPN transistor driver with base resistor, output coupling capacitor, small speaker. 9V supply, audio tone output'
-      },
-      {
-        name: '주기 타이머 (반복 동작)',
-        desc: '설정 주기마다 자동으로 ON/OFF 반복. 자동화 제어에!',
-        parts: 'NE555, 저항 × 3, 전해 캐패시터 × 2, 가변저항 × 1, 릴레이 × 1, 다이오드 × 1, 트랜지스터 × 1',
-        prompt: 'NE555 astable repeating timer complete circuit with adjustable potentiometer for on-time control, timing capacitors, relay driver transistor, flyback protection diode, relay for load switching, status LED with current limiting resistor, bypass decoupling capacitor. 12V supply, adjustable 1-30 second period'
-      },
+      { name: '지연 타이머 (단안정)', desc: '버튼 누르면 N초 후 자동 OFF', parts: 'NE555, 저항 × 3, 전해 캐패시터 × 1, 버튼 × 1, LED × 1', prompt: 'NE555 monostable timer complete circuit with trigger button, pull-up resistor, timing R and C for 10 second delay, reset pull-up, bypass capacitor, output LED. 9V supply' },
+      { name: '사각파 발진기', desc: '1kHz 오디오 톤 발생', parts: 'NE555, 저항 × 2, 캐패시터 × 2, 트랜지스터 × 1, 스피커', prompt: 'NE555 astable 1kHz oscillator complete circuit with timing resistors, timing capacitor, bypass capacitor, NPN transistor driver, coupling capacitor, speaker. 9V supply' },
+      { name: '반복 타이머', desc: '일정 주기로 ON/OFF 반복', parts: 'NE555, 가변저항 × 1, 저항 × 2, 캐패시터 × 2, 릴레이 × 1, 트랜지스터 × 1, 다이오드 × 1', prompt: 'NE555 astable repeating timer with potentiometer period control, relay driver transistor, flyback diode, status LED. 12V supply, adjustable 1-30 second period' },
     ]
   },
   motor: {
     icon: '🎛️', name: '모터 & 제어',
     items: [
-      {
-        name: 'DC 모터 속도 제어 (PWM)',
-        desc: '가변저항으로 모터 속도를 조절. 로봇, 팬 제어 등에!',
-        parts: 'NE555, N-CH MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2, 다이오드 × 2',
-        prompt: 'DC motor speed controller PWM complete circuit with NE555 astable PWM generator, potentiometer for duty cycle control, steering diodes for independent on/off time, N-channel MOSFET driver with gate resistor, flyback protection diode across motor, power supply bypass capacitors. 12V 2A motor'
-      },
-      {
-        name: 'L298N 모터 드라이버',
-        desc: '정방향/역방향 모두 가능한 H-bridge. 로봇 바퀴 구동에!',
-        parts: 'L298N, 다이오드 × 8, 세라믹 캐패시터 × 3, 전해 캐패시터 × 2, 저항 × 2',
-        prompt: 'L298N dual H-bridge motor driver complete circuit with 8 freewheeling diodes across all motor outputs, logic supply decoupling capacitor, motor supply electrolytic filter capacitor, ceramic bypass capacitors, enable and input signal resistors. 12V motor supply, 5V logic, controls 2 DC motors bidirectionally'
-      },
-      {
-        name: '릴레이 스위치 회로',
-        desc: '소신호로 고전압 기기를 안전하게 ON/OFF. 가전제품 제어에!',
-        parts: '릴레이 × 1, NPN 트랜지스터 × 1, 저항 × 2, 다이오드 × 1, LED × 2, 세라믹 캐패시터 × 1',
-        prompt: 'Relay switch circuit complete circuit with NPN transistor driver, base current limiting resistor, flyback protection diode across relay coil, status LED with current limiting resistor, output terminal indicator LED, power supply bypass ceramic capacitor. 5V logic input, 12V relay coil, 230V AC or 12V DC load switching'
-      },
+      { name: 'DC 모터 PWM 속도 제어', desc: '가변저항으로 모터 속도 조절', parts: 'NE555, N-CH MOSFET × 1, 가변저항 × 1, 저항 × 3, 캐패시터 × 2, 다이오드 × 2', prompt: 'DC motor speed controller PWM with NE555 generator, potentiometer duty cycle, steering diodes, N-channel MOSFET, flyback diode. 12V 2A motor' },
+      { name: 'L298N 모터 드라이버', desc: '정방향/역방향 양방향 제어', parts: 'L298N, 다이오드 × 8, 캐패시터 × 5, 저항 × 2', prompt: 'L298N dual H-bridge motor driver complete circuit with 8 freewheeling diodes, logic and motor supply bypass capacitors, enable and input resistors. 12V motor, 5V logic, bidirectional 2 motors' },
+      { name: '릴레이 스위치 회로', desc: '소신호로 고전압 기기 제어', parts: '릴레이 × 1, NPN 트랜지스터 × 1, 저항 × 2, 다이오드 × 1, LED × 2, 캐패시터 × 1', prompt: 'Relay switch circuit with NPN transistor driver, base resistor, flyback diode, status LED, bypass capacitor. 5V logic input, 12V relay coil' },
     ]
   },
 };
 
-// ── 상태 변수 ────────────────────────────────────────────────────
+// ── Q&A 질문 트리 ─────────────────────────────────────────────────
+const QA_TREES = {
+  amp: {
+    label: '앰프 회로',
+    questions: [
+      {
+        id: 'amp_type',
+        ask: '어떤 종류의 앰프인가요?',
+        opts: [
+          { txt: '🔊 스피커 앰프', sub: '외부 스피커에 소리 크게 내기', val: 'speaker amplifier' },
+          { txt: '🎧 헤드폰 앰프', sub: '이어폰·헤드셋 출력', val: 'headphone amplifier' },
+          { txt: '🎙️ 마이크 프리앰프', sub: '마이크 신호 40dB 증폭', val: 'microphone preamplifier 40dB gain' },
+          { txt: '🎸 악기 프리앰프', sub: '기타·베이스 신호 처리', val: 'instrument guitar bass preamplifier' },
+        ]
+      },
+      {
+        id: 'amp_power',
+        ask: '출력 파워는 어느 정도 원하세요?',
+        show_if: a => a.amp_type === 'speaker amplifier',
+        opts: [
+          { txt: 'LM386 (0.5W)', sub: '배터리 동작 가능, 조용한 환경', val: 'LM386 0.5W output into 8 ohm' },
+          { txt: 'PAM8403 (3W)', sub: 'USB 5V 전원, 책상용 스피커', val: 'PAM8403 3W stereo output' },
+          { txt: 'TDA2030 (14W)', sub: '어댑터 필요, 큰 방·야외', val: 'TDA2030 14W output into 4 ohm' },
+        ]
+      },
+      {
+        id: 'amp_supply',
+        ask: '전원 공급은 어떻게 할까요?',
+        show_if: a => a.amp_type !== 'speaker amplifier' || a.amp_power === 'LM386 0.5W output into 8 ohm',
+        opts: [
+          { txt: '🔋 9V 배터리', val: '9V battery supply' },
+          { txt: '🔌 12V DC 어댑터', val: '12V DC adapter supply' },
+          { txt: '💻 USB 5V', val: '5V USB supply' },
+          { txt: '± 양전원 (고음질)', sub: '헤드폰 앰프 권장', val: 'dual ±12V supply' },
+        ]
+      },
+    ],
+    build: (base, a) => {
+      const parts = [];
+      if (a.amp_power) parts.push(a.amp_power);
+      else if (a.amp_type) parts.push(a.amp_type);
+      if (a.amp_supply) parts.push(a.amp_supply);
+      return `${parts.join(', ')} complete circuit with all necessary components bias decoupling coupling protection. Based on: ${base}`;
+    }
+  },
+
+  led: {
+    label: 'LED 회로',
+    questions: [
+      {
+        id: 'led_mode',
+        ask: 'LED를 어떻게 동작시킬까요?',
+        opts: [
+          { txt: '💫 규칙적으로 깜빡이게', sub: 'NE555 타이머 활용', val: 'NE555 astable LED blinker' },
+          { txt: '🌙 밝기 조절 (디머)', sub: '가변저항으로 0~100% 조절', val: 'LED PWM dimmer with MOSFET' },
+          { txt: '🌈 RGB 색상 제어', sub: 'R, G, B 각각 조절', val: 'RGB LED color controller' },
+          { txt: '🌑 어두워지면 자동 켜짐', sub: '빛 감지 자동 조명', val: 'automatic night light LDR sensor' },
+        ]
+      },
+      {
+        id: 'led_supply',
+        ask: '전원은 어떻게 할까요?',
+        opts: [
+          { txt: '9V 배터리', val: '9V battery' },
+          { txt: '12V 어댑터', val: '12V DC adapter' },
+          { txt: 'USB 5V', val: '5V USB' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.led_mode || 'LED circuit'}, ${a.led_supply || '9V supply'}, complete circuit with all components. Based on: ${base}`
+  },
+
+  power: {
+    label: '전원 회로',
+    questions: [
+      {
+        id: 'pwr_type',
+        ask: '어떤 전원 회로인가요?',
+        opts: [
+          { txt: '🔋 리튬 배터리 충전기', sub: 'USB로 18650 충전', val: 'TP4056 lithium battery charger 1A USB input' },
+          { txt: '⬇️ 전압 낮추기 (강압)', sub: '예: 12V → 5V 안정화', val: 'LM7805 linear voltage regulator 5V 1A' },
+          { txt: '⬆️ 전압 높이기 (승압)', sub: '예: 3.7V → 5V 부스트', val: 'MT3608 boost converter 3.7V to 5V' },
+          { txt: '🔧 가변 전압 조절기', sub: '1.25V~30V 자유 설정', val: 'LM317 adjustable voltage regulator' },
+        ]
+      },
+      {
+        id: 'pwr_current',
+        ask: '최대 전류는 어느 정도 필요한가요?',
+        opts: [
+          { txt: '소전류 (500mA 이하)', sub: '소형 부품, LED 등', val: '500mA max current' },
+          { txt: '중전류 (1~2A)', sub: '아두이노, 센서 등', val: '1-2A max current' },
+          { txt: '대전류 (2A 이상)', sub: '모터, 히터 등', val: '2A or more max current' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.pwr_type || 'power supply circuit'}, ${a.pwr_current || ''}, complete circuit with filter capacitors protection diodes indicators. Based on: ${base}`
+  },
+
+  sensor: {
+    label: '센서 회로',
+    questions: [
+      {
+        id: 'sensor_type',
+        ask: '무엇을 감지하고 싶으세요?',
+        opts: [
+          { txt: '🌡️ 온도', sub: 'LM35로 정밀 측정', val: 'LM35 temperature sensor circuit' },
+          { txt: '💧 온도 + 습도', sub: 'DHT11 디지털 출력', val: 'DHT11 temperature humidity sensor Arduino interface' },
+          { txt: '☀️ 빛 (조도)', sub: 'LDR로 밝기 감지', val: 'LDR light sensor comparator circuit' },
+          { txt: '👋 움직임 (모션)', sub: 'PIR 센서로 사람 감지', val: 'PIR motion detection alarm circuit' },
+          { txt: '🔊 소리', sub: '마이크로 소리 감지', val: 'microphone sound detection comparator circuit' },
+        ]
+      },
+      {
+        id: 'sensor_output',
+        ask: '감지 후 어떻게 하고 싶으세요?',
+        opts: [
+          { txt: '💡 LED 표시', sub: '감지 시 LED 켜짐', val: 'LED indicator output' },
+          { txt: '🔔 버저 알람', sub: '감지 시 소리 경보', val: 'buzzer alarm output' },
+          { txt: '🔌 릴레이 제어', sub: '다른 기기 ON/OFF', val: 'relay control output' },
+          { txt: '📊 아두이노 연결', sub: '아날로그/디지털 신호 출력', val: 'Arduino analog digital output interface' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.sensor_type || 'sensor circuit'} with ${a.sensor_output || 'indicator output'}, complete circuit. Based on: ${base}`
+  },
+
+  timer: {
+    label: '타이머 회로',
+    questions: [
+      {
+        id: 'timer_type',
+        ask: '타이머를 어떻게 사용할 건가요?',
+        opts: [
+          { txt: '⏰ 일정 시간 후 OFF', sub: '버튼 누르면 N초 뒤 꺼짐', val: 'NE555 monostable timer delay off circuit' },
+          { txt: '🔁 주기적으로 ON/OFF 반복', sub: '자동 반복 동작', val: 'NE555 astable repeating timer circuit' },
+          { txt: '🎵 소리/신호 발생', sub: '오디오 주파수 발진기', val: 'NE555 astable oscillator audio tone 1kHz' },
+        ]
+      },
+      {
+        id: 'timer_time',
+        ask: '동작 시간(주기)은요?',
+        opts: [
+          { txt: '짧게 (1초 미만)', val: 'less than 1 second' },
+          { txt: '1~10초', val: '1 to 10 seconds' },
+          { txt: '10초~1분', val: '10 seconds to 1 minute' },
+          { txt: '1분 이상', val: 'more than 1 minute' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.timer_type || 'NE555 timer circuit'}, timing period ${a.timer_time || ''}, complete circuit. Based on: ${base}`
+  },
+
+  motor: {
+    label: '모터 제어 회로',
+    questions: [
+      {
+        id: 'motor_type',
+        ask: '어떤 모터를 제어하나요?',
+        opts: [
+          { txt: '🔄 DC 모터', sub: '속도 조절 (PWM)', val: 'DC motor PWM speed control' },
+          { txt: '↔️ DC 모터 양방향', sub: '정방향·역방향 모두', val: 'L298N H-bridge DC motor bidirectional control' },
+          { txt: '🔌 릴레이 스위치', sub: '고전압 기기 ON/OFF', val: 'relay switch transistor driver circuit' },
+        ]
+      },
+      {
+        id: 'motor_voltage',
+        ask: '모터 전원 전압은요?',
+        opts: [
+          { txt: '5V', val: '5V motor supply' },
+          { txt: '9V', val: '9V motor supply' },
+          { txt: '12V', val: '12V motor supply' },
+          { txt: '24V', val: '24V motor supply' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.motor_type || 'motor control circuit'}, ${a.motor_voltage || '12V'}, complete circuit with all protection components. Based on: ${base}`
+  },
+
+  general: {
+    label: '회로',
+    questions: [
+      {
+        id: 'gen_type',
+        ask: '어떤 기능의 회로인가요?',
+        opts: [
+          { txt: '신호 증폭 (앰프)', val: 'amplifier circuit' },
+          { txt: '전원 공급 / 충전', val: 'power supply circuit' },
+          { txt: 'LED / 조명 제어', val: 'LED control circuit' },
+          { txt: '센서 / 측정', val: 'sensor measurement circuit' },
+          { txt: '타이머 / 발진', val: 'timer oscillator circuit' },
+          { txt: '모터 / 릴레이', val: 'motor relay control circuit' },
+        ]
+      },
+    ],
+    build: (base, a) => `${a.gen_type || ''} ${base}, complete professional circuit with all necessary components bias decoupling protection`
+  },
+};
+
+// ── 상태 변수 ─────────────────────────────────────────────────────
 let currentFilename = null;
 let selectedCategory = null;
 let selectedCircuit = null;
-let currentStep = 1;
+let qaBaseInput = '';
+let qaTree = null;
+let qaAnswers = {};
+let qaQueueIndex = 0;
+let qaFinalPrompt = '';
 
-// ── 초기화 ──────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("description").addEventListener("keydown", e => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) generateManual();
-  });
-});
-
-// ── 마법사 내비게이션 ────────────────────────────────────────────
+// ── 마법사 내비게이션 ──────────────────────────────────────────────
 function showStep(step) {
   document.querySelectorAll('.wizard-step').forEach(el => el.classList.remove('active'));
-  const target = step === 'manual' ? 'step-manual' : `step-${step}`;
-  document.getElementById(target).classList.add('active');
-  currentStep = step;
+  const id = step === 'manual' ? 'step-manual' : `step-${step}`;
+  document.getElementById(id).classList.add('active');
+}
+
+function showQAPhase(id) {
+  document.querySelectorAll('.qa-phase').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
 }
 
 function selectCategory(key) {
   selectedCategory = key;
   const cat = CIRCUITS[key];
-
   document.getElementById('bc-cat').textContent = cat.icon + ' ' + cat.name;
   document.getElementById('step2-title').textContent = cat.name + ' 회로 선택';
-
   const list = document.getElementById('circuit-list');
   list.innerHTML = cat.items.map((item, i) => `
     <button class="circuit-item" onclick="selectCircuit('${key}', ${i})">
@@ -396,64 +510,214 @@ function selectCategory(key) {
       <div class="ci-arrow">›</div>
     </button>
   `).join('');
-
   showStep(2);
 }
 
-function selectCircuit(catKey, itemIndex) {
+function selectCircuit(catKey, idx) {
   selectedCategory = catKey;
-  selectedCircuit = itemIndex;
+  selectedCircuit = idx;
   const cat = CIRCUITS[catKey];
-  const item = cat.items[itemIndex];
-
+  const item = cat.items[idx];
   document.getElementById('bc-cat2').textContent = cat.icon + ' ' + cat.name;
   document.getElementById('bc-circuit').textContent = item.name;
   document.getElementById('preview-icon').textContent = cat.icon;
   document.getElementById('preview-name').textContent = item.name;
   document.getElementById('preview-desc').textContent = item.desc;
   document.getElementById('preview-parts').innerHTML = '🔩 ' + item.parts;
-
   showStep(3);
 }
 
-function setExample(btn) { document.getElementById("description").value = btn.textContent; }
+// ── Q&A 대화형 흐름 ───────────────────────────────────────────────
+function detectCategory(text) {
+  const t = text.toLowerCase();
+  if (t.match(/앰프|엠프|amplif|스피커|헤드폰|마이크|프리앰프|오디오|bass|guitar|베이스/)) return 'amp';
+  if (t.match(/led|조명|점멸|발광|깜빡|디머/)) return 'led';
+  if (t.match(/충전|배터리|전원|전압|voltage|power|regul|boost|강압|승압/)) return 'power';
+  if (t.match(/센서|sensor|온도|습도|temp|모션|pir|ldr|빛|소리|감지/)) return 'sensor';
+  if (t.match(/타이머|timer|555|발진|oscillat|딜레이|delay|점멸/)) return 'timer';
+  if (t.match(/모터|motor|relay|릴레이|servo/)) return 'motor';
+  return 'general';
+}
 
-// ── 생성 함수 ────────────────────────────────────────────────────
+function startQA() {
+  const input = document.getElementById('description').value.trim();
+  if (!input) { alert('회로 설명을 입력해 주세요.'); return; }
+
+  qaBaseInput = input;
+  const catKey = detectCategory(input);
+  qaTree = QA_TREES[catKey];
+  qaAnswers = {};
+  qaQueueIndex = 0;
+
+  document.getElementById('chat-thread').innerHTML = '';
+  showQAPhase('qa-chat');
+
+  appendUserMsg(input);
+  setTimeout(askNextQuestion, 400);
+}
+
+function skipQA() {
+  const input = document.getElementById('description').value.trim();
+  if (!input) { alert('회로 설명을 입력해 주세요.'); return; }
+  qaFinalPrompt = input + ', complete professional circuit with all necessary components';
+  runGenerate(qaFinalPrompt, 'qa-gen-btn');
+}
+
+function resetQA() {
+  showQAPhase('qa-input');
+}
+
+function askNextQuestion() {
+  if (!qaTree) return;
+  const questions = qaTree.questions;
+
+  // Find next applicable question
+  while (qaQueueIndex < questions.length) {
+    const q = questions[qaQueueIndex];
+    if (!q.show_if || q.show_if(qaAnswers)) break;
+    qaQueueIndex++;
+  }
+
+  if (qaQueueIndex >= questions.length) {
+    // Done!
+    finishQA();
+    return;
+  }
+
+  const q = questions[qaQueueIndex];
+  appendBotQuestion(q);
+}
+
+function selectQAOption(optEl, qId, val, txt) {
+  // Prevent re-selecting
+  const block = optEl.closest('.bot-options');
+  if (block.dataset.answered) return;
+  block.dataset.answered = 'true';
+
+  // Highlight selected
+  block.querySelectorAll('.qa-opt').forEach(b => b.classList.remove('selected'));
+  optEl.classList.add('selected');
+  block.querySelectorAll('.qa-opt').forEach(b => { b.disabled = true; });
+
+  // Custom input?
+  if (val === '__custom__') {
+    const customInput = block.querySelector('.qa-custom-input');
+    if (customInput) {
+      customInput.style.display = 'flex';
+      customInput.querySelector('input').focus();
+    }
+    block.dataset.answered = ''; // allow re-interact for custom
+    return;
+  }
+
+  // Record answer
+  qaAnswers[qId] = val;
+  qaQueueIndex++;
+
+  // Add user echo
+  setTimeout(() => {
+    appendUserMsg(txt);
+    setTimeout(askNextQuestion, 500);
+  }, 200);
+}
+
+function submitCustom(qId, inputEl) {
+  const val = inputEl.value.trim();
+  if (!val) return;
+  qaAnswers[qId] = val;
+  qaQueueIndex++;
+  inputEl.closest('.bot-options').dataset.answered = 'true';
+  appendUserMsg(val);
+  setTimeout(askNextQuestion, 500);
+}
+
+function finishQA() {
+  qaFinalPrompt = qaTree.build(qaBaseInput, qaAnswers);
+
+  // Build summary
+  const details = Object.entries(qaAnswers)
+    .map(([k, v]) => `<span class="ready-tag">${v}</span>`)
+    .join(' ');
+  document.getElementById('ready-details').innerHTML = details;
+
+  showQAPhase('qa-ready');
+}
+
+// ── 채팅 버블 렌더링 ──────────────────────────────────────────────
+function appendUserMsg(text) {
+  const thread = document.getElementById('chat-thread');
+  const el = document.createElement('div');
+  el.className = 'chat-msg user-msg';
+  el.textContent = text;
+  thread.appendChild(el);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function appendBotQuestion(q) {
+  const thread = document.getElementById('chat-thread');
+
+  // Bot bubble
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-msg bot-msg';
+  bubble.textContent = q.ask;
+  thread.appendChild(bubble);
+
+  // Options
+  const opts = document.createElement('div');
+  opts.className = 'bot-options';
+  opts.innerHTML = q.opts.map(o => `
+    <button class="qa-opt" onclick="selectQAOption(this, '${q.id}', '${o.val.replace(/'/g,"\\'")}', '${o.txt.replace(/'/g,"\\'")}')">
+      <span class="qa-opt-txt">${o.txt}</span>
+      ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
+    </button>
+  `).join('') + `
+    <button class="qa-opt qa-opt-custom" onclick="selectQAOption(this, '${q.id}', '__custom__', '직접 입력')">
+      <span class="qa-opt-txt">✏️ 직접 입력</span>
+    </button>
+    <div class="qa-custom-input" style="display:none">
+      <input type="text" placeholder="직접 입력해 주세요..." onkeydown="if(event.key==='Enter') submitCustom('${q.id}', this)" />
+      <button onclick="submitCustom('${q.id}', this.previousElementSibling)">확인</button>
+    </div>
+  `;
+  thread.appendChild(opts);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+// ── 생성 함수 ─────────────────────────────────────────────────────
 async function generate() {
   const item = CIRCUITS[selectedCategory].items[selectedCircuit];
   await runGenerate(item.prompt, 'generate-btn');
 }
 
-async function generateManual() {
-  const description = document.getElementById("description").value.trim();
-  if (!description) { showStatus("회로 설명을 입력하세요.", "error"); return; }
-  await runGenerate(description, 'manual-gen-btn');
+async function generateFromQA() {
+  await runGenerate(qaFinalPrompt, 'qa-gen-btn');
 }
 
 async function runGenerate(prompt, btnId) {
   const btn = document.getElementById(btnId);
+  if (!btn) return;
   btn.disabled = true;
-  const origHtml = btn.innerHTML;
+  const orig = btn.innerHTML;
   btn.innerHTML = `<span class="spinner"></span> 생성 중...`;
-  showStatus("회로 레퍼런스 검색 중...", "loading");
-  document.getElementById("result-section").classList.add("hidden");
+  showStatus('회로 레퍼런스 검색 중...', 'loading');
+  document.getElementById('result-section').classList.add('hidden');
 
   try {
-    const res = await fetch("/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const res = await fetch('/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: prompt }),
     });
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buf = "";
+    let buf = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
+      const parts = buf.split('\n\n');
       buf = parts.pop();
       for (const part of parts) {
         const evtM  = part.match(/^event: (.+)$/m);
@@ -461,63 +725,61 @@ async function runGenerate(prompt, btnId) {
         if (!evtM || !dataM) continue;
         const evt = evtM[1].trim(), raw = dataM[1].trim();
 
-        if (evt === "status") {
-          showStatus(raw, "loading");
-        } else if (evt === "error") {
+        if (evt === 'status') {
+          showStatus(raw, 'loading');
+        } else if (evt === 'error') {
           let msg = raw;
           try { msg = JSON.parse(raw).message || raw; } catch(_){}
-          showStatus(msg, "error");
+          showStatus(msg, 'error');
           return;
-        } else if (evt === "done") {
+        } else if (evt === 'done') {
           const d = JSON.parse(raw);
           currentFilename = d.filename;
-          document.getElementById("code-content").textContent = d.code;
-          document.getElementById("result-section").classList.remove("hidden");
-          showStatus("✅ 생성 완료! .net 파일을 다운로드하거나 아래 회로를 확인하세요.", "success");
+          document.getElementById('code-content').textContent = d.code;
+          document.getElementById('result-section').classList.remove('hidden');
+          showStatus('✅ 생성 완료! 아래 회로를 확인하세요.', 'success');
           drawSchematic(d.graph);
           renderSources(d.sources);
           renderBOM(d.graph.components, d.guide);
           renderGuide(d.guide);
-          document.getElementById("result-section").scrollIntoView({ behavior: "smooth" });
+          document.getElementById('result-section').scrollIntoView({ behavior: 'smooth' });
         }
       }
     }
   } catch(e) {
-    showStatus(`네트워크 오류: ${e.message}`, "error");
+    showStatus(`네트워크 오류: ${e.message}`, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = origHtml;
+    btn.innerHTML = orig;
   }
 }
 
 function downloadNet() { if (currentFilename) window.location.href = `/download/${currentFilename}`; }
 
 function showStatus(msg, type) {
-  const el = document.getElementById("status");
+  const el = document.getElementById('status');
   el.textContent = msg; el.className = `status ${type}`;
 }
 
 function renderSources(sources) {
-  const sec = document.getElementById("sources-section");
-  const list = document.getElementById("sources-list");
-  if (!sources?.length) { sec.classList.add("hidden"); return; }
-  list.innerHTML = sources.map(u => `<a class="source-link" href="${u}" target="_blank" rel="noopener">${u}</a>`).join("");
-  sec.classList.remove("hidden");
+  const sec = document.getElementById('sources-section');
+  const list = document.getElementById('sources-list');
+  if (!sources?.length) { sec.classList.add('hidden'); return; }
+  list.innerHTML = sources.map(u => `<a class="source-link" href="${u}" target="_blank" rel="noopener">${u}</a>`).join('');
+  sec.classList.remove('hidden');
 }
 
 const COMP_NAMES = { R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED', L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터' };
 
 function renderBOM(components, guide) {
-  const sec = document.getElementById("bom-section");
-  const wrap = document.getElementById("bom-table-wrap");
-  if (!components?.length) { sec.classList.add("hidden"); return; }
-
+  const sec = document.getElementById('bom-section');
+  const wrap = document.getElementById('bom-table-wrap');
+  if (!components?.length) { sec.classList.add('hidden'); return; }
   const roles = {};
   guide?.split('\n').forEach(line => {
     const m = line.match(/^-\s+([A-Z]\d+)[^:]*:\s*(.+)/);
     if (m) roles[m[1]] = m[2].trim();
   });
-
   let html = `<table class="bom-table"><thead><tr><th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>역할</th></tr></thead><tbody>`;
   components.forEach((c, i) => {
     const type = c.ref.replace(/\d+/g,'');
@@ -525,13 +787,13 @@ function renderBOM(components, guide) {
   });
   html += `</tbody><tfoot><tr class="bom-total"><td colspan="4">총 부품 수</td><td><strong>${components.length}개</strong></td></tr></tfoot></table>`;
   wrap.innerHTML = html;
-  sec.classList.remove("hidden");
+  sec.classList.remove('hidden');
 }
 
 function renderGuide(guide) {
-  const sec = document.getElementById("guide-section");
-  const content = document.getElementById("guide-content");
-  if (!guide) { sec.classList.add("hidden"); return; }
+  const sec = document.getElementById('guide-section');
+  const content = document.getElementById('guide-content');
+  if (!guide) { sec.classList.add('hidden'); return; }
   const html = guide
     .replace(/\[부품 목록\]/g, '<h3 class="guide-heading">📦 부품 목록</h3>')
     .replace(/\[배선 순서\]/g, '<h3 class="guide-heading">🔧 배선 순서</h3>')
@@ -539,15 +801,14 @@ function renderGuide(guide) {
     .replace(/^(\d+)\. (.+)$/gm, '<div class="step"><span class="step-num">$1</span><span>$2</span></div>')
     .replace(/(<li>.*<\/li>\n?)+/gs, m => `<ul>${m}</ul>`);
   content.innerHTML = html;
-  sec.classList.remove("hidden");
+  sec.classList.remove('hidden');
 }
 
-// ── 회로 시각화 ──────────────────────────────────────────────────
-const NET_COLORS = ["#22d3ee","#34d399","#fbbf24","#f87171","#60a5fa","#a78bfa","#fb923c"];
+// ── 회로 시각화 ───────────────────────────────────────────────────
+const NET_COLORS = ['#22d3ee','#34d399','#fbbf24','#f87171','#60a5fa','#a78bfa','#fb923c'];
 function getCompColor(ref) {
-  return ({R:"#fbbf24",C:"#60a5fa",Q:"#34d399",D:"#f87171",L:"#a78bfa",U:"#22d3ee"})[ref[0].toUpperCase()] || "#94a3b8";
+  return ({R:'#fbbf24',C:'#60a5fa',Q:'#34d399',D:'#f87171',L:'#a78bfa',U:'#22d3ee'})[ref[0].toUpperCase()] || '#94a3b8';
 }
-
 function getPinLayout(ref, pinCount) {
   const t = ref[0].toUpperCase();
   if (t==='Q') return {w:64,h:72,pins:{1:{x:-32,y:0,side:'L'},2:{x:0,y:-36,side:'T'},3:{x:0,y:36,side:'B'}}};
@@ -568,70 +829,52 @@ function pinAbs(ref,pin,pos,layouts){
   if(pn.side==='T')return{x:p.x+pn.x,y:p.y-l.h/2-s};
   return{x:p.x+pn.x,y:p.y+l.h/2+s};
 }
-
 function drawSchematic(graph) {
-  const canvas=document.getElementById("circuit-canvas"),ctx=canvas.getContext("2d");
+  const canvas=document.getElementById('circuit-canvas'),ctx=canvas.getContext('2d');
   const comps=graph.components||[],nets=graph.nets||[];
   if(!comps.length)return;
-
   const layouts={};
   comps.forEach(c=>{layouts[c.ref]=getPinLayout(c.ref,getMaxPin(c.ref,nets));});
-
   const cols=Math.min(Math.ceil(Math.sqrt(comps.length)),4);
   const HGAP=90,VGAP=90,M=72;
   const cW=Array(cols).fill(0),rH=[];
   comps.forEach((c,i)=>{const col=i%cols,row=Math.floor(i/cols);cW[col]=Math.max(cW[col],layouts[c.ref].w+HGAP);if(!rH[row])rH[row]=0;rH[row]=Math.max(rH[row],layouts[c.ref].h+VGAP);});
-
   const pos={};let cx=M;
   for(let col=0;col<cols;col++){let cy=M+20;for(let row=0;row<Math.ceil(comps.length/cols);row++){const idx=row*cols+col;if(idx>=comps.length)continue;pos[comps[idx].ref]={x:cx+cW[col]/2,y:cy+rH[row]/2};cy+=rH[row];}cx+=cW[col];}
-
   const TW=cx+M,TH=Object.values(pos).reduce((m,p)=>Math.max(m,p.y),0)+M+60+nets.length*22;
   canvas.width=Math.max(TW,500);canvas.height=Math.max(TH,320);
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle="#0f172a";ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  ctx.strokeStyle="rgba(51,65,85,0.5)";ctx.lineWidth=0.5;
+  ctx.fillStyle='#0f172a';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='rgba(51,65,85,0.5)';ctx.lineWidth=0.5;
   for(let x=0;x<canvas.width;x+=28){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
   for(let y=0;y<canvas.height;y+=28){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
-
   nets.forEach((net,ni)=>{
     const isPwr=net.name==='VCC'||net.name==='GND';
-    const color=isPwr?(net.name==='VCC'?"#f87171":"#60a5fa"):NET_COLORS[ni%NET_COLORS.length];
+    const color=isPwr?(net.name==='VCC'?'#f87171':'#60a5fa'):NET_COLORS[ni%NET_COLORS.length];
     const pts=net.nodes.map(n=>pinAbs(n.ref,n.pin,pos,layouts)).filter(Boolean);
     if(pts.length<2){if(pts.length===1)drawPower(ctx,pts[0],net.name,color);return;}
-    ctx.strokeStyle=color+"99";ctx.lineWidth=1.8;ctx.setLineDash([]);
-    for(let i=1;i<pts.length;i++){
-      const a=pts[0],b=pts[i];
-      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(a.x,b.y);ctx.lineTo(b.x,b.y);ctx.stroke();
-      ctx.fillStyle=color;ctx.beginPath();ctx.arc(a.x,b.y,3,0,Math.PI*2);ctx.fill();
-    }
+    ctx.strokeStyle=color+'99';ctx.lineWidth=1.8;ctx.setLineDash([]);
+    for(let i=1;i<pts.length;i++){const a=pts[0],b=pts[i];ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(a.x,b.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.fillStyle=color;ctx.beginPath();ctx.arc(a.x,b.y,3,0,Math.PI*2);ctx.fill();}
     if(isPwr)pts.forEach(p=>drawPower(ctx,p,net.name,color));
-    if(!isPwr&&pts.length>=2){
-      const mx=(pts[0].x+pts[pts.length-1].x)/2,my=(pts[0].y+pts[pts.length-1].y)/2-8;
-      ctx.fillStyle="#fbbf24";ctx.font=`600 10px 'JetBrains Mono',monospace`;ctx.textAlign="left";ctx.fillText(net.name,mx+4,my);
-    }
+    if(!isPwr&&pts.length>=2){const mx=(pts[0].x+pts[pts.length-1].x)/2,my=(pts[0].y+pts[pts.length-1].y)/2-8;ctx.fillStyle='#fbbf24';ctx.font=`600 10px 'JetBrains Mono',monospace`;ctx.textAlign='left';ctx.fillText(net.name,mx+4,my);}
   });
-
   comps.forEach(c=>drawComp(ctx,c,pos[c.ref],layouts[c.ref]));
-
   const ly0=canvas.height-nets.length*21-10;
-  ctx.fillStyle="#475569";ctx.font="11px Inter,sans-serif";ctx.textAlign="left";ctx.fillText("NET",M,ly0);
+  ctx.fillStyle='#475569';ctx.font='11px Inter,sans-serif';ctx.textAlign='left';ctx.fillText('NET',M,ly0);
   nets.forEach((net,ni)=>{
     const isPwr=net.name==='VCC'||net.name==='GND';
-    const color=isPwr?(net.name==='VCC'?"#f87171":"#60a5fa"):NET_COLORS[ni%NET_COLORS.length];
+    const color=isPwr?(net.name==='VCC'?'#f87171':'#60a5fa'):NET_COLORS[ni%NET_COLORS.length];
     const y=ly0+16+ni*21;
     ctx.fillStyle=color;ctx.fillRect(M,y-3,16,3);
-    ctx.fillStyle="#94a3b8";ctx.font="11px Inter,sans-serif";
-    ctx.fillText(`${net.name}  →  ${[...new Set(net.nodes.map(n=>n.ref))].join(", ")}`,M+24,y);
+    ctx.fillStyle='#94a3b8';ctx.font='11px Inter,sans-serif';
+    ctx.fillText(`${net.name}  →  ${[...new Set(net.nodes.map(n=>n.ref))].join(', ')}`,M+24,y);
   });
 }
-
 function drawComp(ctx,comp,p,layout){
   if(!p||!layout)return;
-  const {x,y}=p,t=comp.ref[0].toUpperCase();
-  const color=getCompColor(comp.ref);
+  const {x,y}=p,t=comp.ref[0].toUpperCase(),color=getCompColor(comp.ref);
   ctx.save();ctx.translate(x,y);
-  ctx.strokeStyle="#334155";ctx.lineWidth=1.5;
+  ctx.strokeStyle='#334155';ctx.lineWidth=1.5;
   Object.values(layout.pins).forEach(pin=>{
     const s=10;ctx.beginPath();
     if(pin.side==='L'){ctx.moveTo(-layout.w/2,pin.y);ctx.lineTo(-layout.w/2-s,pin.y);}
@@ -640,23 +883,23 @@ function drawComp(ctx,comp,p,layout){
     else{ctx.moveTo(pin.x,layout.h/2);ctx.lineTo(pin.x,layout.h/2+s);}
     ctx.stroke();
   });
-  ctx.shadowColor=color+"33";ctx.shadowBlur=14;
-  ctx.fillStyle="#1e293b";ctx.strokeStyle=color;ctx.lineWidth=1.5;
+  ctx.shadowColor=color+'33';ctx.shadowBlur=14;
+  ctx.fillStyle='#1e293b';ctx.strokeStyle=color;ctx.lineWidth=1.5;
   ctx.beginPath();ctx.roundRect(-layout.w/2,-layout.h/2,layout.w,layout.h,8);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
   ctx.strokeStyle=color;ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';
   if(t==='R')drawR(ctx);else if(t==='C')drawC(ctx);else if(t==='D')drawD(ctx);else if(t==='Q')drawQ(ctx);else if(t==='L')drawL(ctx);
-  ctx.fillStyle="#e2e8f0";ctx.font=`600 12px 'JetBrains Mono',monospace`;ctx.textAlign="center";ctx.fillText(comp.ref,0,-layout.h/2-15);
-  ctx.fillStyle="#475569";ctx.font=`11px Inter,sans-serif`;ctx.fillText(comp.value||"",0,layout.h/2+15);
+  ctx.fillStyle='#e2e8f0';ctx.font=`600 12px 'JetBrains Mono',monospace`;ctx.textAlign='center';ctx.fillText(comp.ref,0,-layout.h/2-15);
+  ctx.fillStyle='#475569';ctx.font=`11px Inter,sans-serif`;ctx.fillText(comp.value||'',0,layout.h/2+15);
   ctx.restore();
 }
 function drawR(ctx){ctx.beginPath();ctx.moveTo(-28,0);ctx.lineTo(-20,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-20,0);[[-14,8],[-7,-8],[0,8],[7,-8],[14,8],[20,0]].forEach(([x,y])=>ctx.lineTo(x,y));ctx.stroke();ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(28,0);ctx.stroke();}
 function drawC(ctx){ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(-5,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-5,-14);ctx.lineTo(-5,14);ctx.stroke();ctx.beginPath();ctx.moveTo(5,-14);ctx.lineTo(5,14);ctx.stroke();ctx.beginPath();ctx.moveTo(5,0);ctx.lineTo(24,0);ctx.stroke();}
-function drawD(ctx){ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(24,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(10,0);ctx.lineTo(-10,-10);ctx.closePath();ctx.stroke();ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(10,10);ctx.stroke();ctx.beginPath();ctx.moveTo(14,-10);ctx.lineTo(20,-16);ctx.stroke();ctx.beginPath();ctx.moveTo(18,-6);ctx.lineTo(24,-12);ctx.stroke();}
+function drawD(ctx){ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(24,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(10,0);ctx.lineTo(-10,-10);ctx.closePath();ctx.stroke();ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(10,10);ctx.stroke();}
 function drawQ(ctx){ctx.beginPath();ctx.moveTo(-10,-22);ctx.lineTo(-10,22);ctx.stroke();ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-10,0);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(0,-10);ctx.lineTo(0,-32);ctx.stroke();ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(0,10);ctx.lineTo(0,32);ctx.stroke();ctx.beginPath();ctx.moveTo(-4,24);ctx.lineTo(0,32);ctx.lineTo(4,24);ctx.stroke();}
 function drawL(ctx){ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-22,0);for(let i=0;i<4;i++)ctx.arc(-20+i*10+5,0,5,Math.PI,0,false);ctx.lineTo(26,0);ctx.stroke();}
 function drawPower(ctx,pt,name,color){
   ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
-  if(name==='VCC'){ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y-18);ctx.stroke();ctx.beginPath();ctx.moveTo(pt.x-13,pt.y-18);ctx.lineTo(pt.x+13,pt.y-18);ctx.stroke();ctx.font=`600 10px Inter,sans-serif`;ctx.textAlign="center";ctx.fillText("VCC",pt.x,pt.y-24);}
+  if(name==='VCC'){ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y-18);ctx.stroke();ctx.beginPath();ctx.moveTo(pt.x-13,pt.y-18);ctx.lineTo(pt.x+13,pt.y-18);ctx.stroke();ctx.font=`600 10px Inter,sans-serif`;ctx.textAlign='center';ctx.fillText('VCC',pt.x,pt.y-24);}
   else{ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y+10);ctx.stroke();[[11,10],[7,15],[3,20]].forEach(([w,dy])=>{ctx.beginPath();ctx.moveTo(pt.x-w/2,pt.y+dy);ctx.lineTo(pt.x+w/2,pt.y+dy);ctx.stroke();});}
 }
 </script>
