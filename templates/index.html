@@ -3,66 +3,112 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SchemaForge</title>
+  <title>SchemaForge — 자연어 회로 생성기</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>⚡ SchemaForge</h1>
-      <p class="subtitle">자연어로 KiCad 스키매틱을 자동 생성합니다</p>
-    </header>
 
-    <main>
-      <div class="input-section">
-        <label for="description">회로 설명</label>
-        <textarea id="description"
-          placeholder="예: 5V 입력받아서 LED 3개 깜빡이는 회로&#10;예: 베이스 앰프 회로&#10;예: USB-C로 리튬배터리 충전하는 회로"
-          rows="4"></textarea>
-        <div class="examples">
-          <span>예시:</span>
-          <button class="example-btn" onclick="setExample(this)">LED 점멸 회로</button>
-          <button class="example-btn" onclick="setExample(this)">베이스 앰프 회로</button>
-          <button class="example-btn" onclick="setExample(this)">USB-C 배터리 충전</button>
-        </div>
-        <button id="generate-btn" onclick="generate()">스키매틱 생성 <span class="shortcut">Ctrl+Enter</span></button>
-      </div>
-
-      <div id="status" class="status hidden"></div>
-
-      <div id="result-section" class="result-section hidden">
-        <div class="result-header">
-          <h2>회로 구성도</h2>
-          <button id="download-btn" onclick="downloadNet()">⬇ KiCad .net 다운로드</button>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="circuit-canvas"></canvas>
-        </div>
-
-        <!-- 참고 출처 -->
-        <div id="sources-section" class="sources-section hidden">
-          <h2>🔍 참고한 레퍼런스</h2>
-          <div id="sources-list"></div>
-        </div>
-
-        <!-- BOM 테이블 -->
-        <div id="bom-section" class="bom-section hidden">
-          <h2>필요한 부품 (BOM)</h2>
-          <div id="bom-table-wrap"></div>
-        </div>
-
-        <div id="guide-section" class="guide-section hidden">
-          <h2>배선 가이드</h2>
-          <div id="guide-content" class="guide-content"></div>
-        </div>
-
-        <details class="code-details">
-          <summary>생성된 skidl 코드 보기</summary>
-          <pre id="code-content"></pre>
-        </details>
-      </div>
-    </main>
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <h1>SchemaForge</h1>
   </div>
+  <p class="subtitle">자연어로 KiCad 스키매틱을 자동 생성합니다</p>
+  <div class="badge-row">
+    <span class="badge">GPT-4o</span>
+    <span class="badge">Tavily 검색</span>
+    <span class="badge">skidl</span>
+    <span class="badge">KiCad .net</span>
+  </div>
+</header>
+
+<div class="main-wrap">
+
+  <!-- 입력 카드 -->
+  <div class="card input-card">
+    <div class="input-label">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      회로 설명
+    </div>
+    <textarea id="description" rows="4"
+      placeholder="예: 베이스 앰프 회로&#10;예: 5V 입력받아서 LED 3개 깜빡이는 회로&#10;예: USB-C로 리튬배터리 충전하는 회로"></textarea>
+
+    <div class="example-row">
+      <span>예시</span>
+      <button class="chip" onclick="setExample(this)">LED 점멸 회로</button>
+      <button class="chip" onclick="setExample(this)">베이스 앰프</button>
+      <button class="chip" onclick="setExample(this)">아두이노 + 온도센서</button>
+      <button class="chip" onclick="setExample(this)">USB-C 배터리 충전</button>
+    </div>
+
+    <button class="generate-btn" id="generate-btn" onclick="generate()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      스키매틱 생성
+      <span class="shortcut">Ctrl+Enter</span>
+    </button>
+  </div>
+
+  <!-- 상태 -->
+  <div id="status" class="status hidden"></div>
+
+  <!-- 결과 -->
+  <div id="result-section" class="result-section hidden">
+
+    <!-- 회로 구성도 -->
+    <div class="card">
+      <div class="section-header">
+        <div class="section-title">
+          <span class="section-dot"></span>
+          회로 구성도
+        </div>
+        <button class="dl-btn" onclick="downloadNet()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          KiCad .net
+        </button>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="circuit-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 참고 출처 -->
+    <div class="card sources-card hidden" id="sources-section">
+      <div class="section-title">
+        <span class="section-dot" style="background:var(--blue)"></span>
+        참고한 레퍼런스
+      </div>
+      <div class="sources-list" id="sources-list"></div>
+    </div>
+
+    <!-- BOM 테이블 -->
+    <div class="card bom-card hidden" id="bom-section">
+      <div class="section-title">
+        <span class="section-dot" style="background:var(--yellow)"></span>
+        필요한 부품 (BOM)
+      </div>
+      <div id="bom-table-wrap"></div>
+    </div>
+
+    <!-- 배선 가이드 -->
+    <div class="card guide-card hidden" id="guide-section">
+      <div class="section-title">
+        <span class="section-dot" style="background:var(--green)"></span>
+        배선 가이드
+      </div>
+      <div id="guide-content" class="guide-content"></div>
+    </div>
+
+    <!-- skidl 코드 -->
+    <details class="card code-card" id="code-card">
+      <summary>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        생성된 skidl 코드
+      </summary>
+      <pre id="code-content"></pre>
+    </details>
+
+  </div>
+</div>
 
 <script>
 let currentFilename = null;
@@ -78,10 +124,13 @@ function setExample(btn) { document.getElementById("description").value = btn.te
 async function generate() {
   const description = document.getElementById("description").value.trim();
   if (!description) { showStatus("회로 설명을 입력하세요.", "error"); return; }
+
   const btn = document.getElementById("generate-btn");
-  btn.disabled = true; btn.textContent = "생성 중...";
-  showStatus("GPT-4o가 회로를 분석하고 있습니다...", "loading");
+  btn.disabled = true;
+  btn.innerHTML = `<span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></span> 생성 중...`;
+  showStatus("🔍 회로 레퍼런스 검색 중...", "loading");
   document.getElementById("result-section").classList.add("hidden");
+
   try {
     const res = await fetch("/generate", {
       method: "POST", headers: {"Content-Type":"application/json"},
@@ -110,31 +159,38 @@ async function generate() {
         } else if (evt === "error") {
           let msg = data;
           try { msg = JSON.parse(data).message || data; } catch(_){}
-          showStatus(`❌ ${msg}`, "error");
+          showStatus(`${msg}`, "error");
           return;
         } else if (evt === "done") {
           const d = JSON.parse(data);
           currentFilename = d.filename;
           document.getElementById("code-content").textContent = d.code;
           document.getElementById("result-section").classList.remove("hidden");
-          showStatus("✅ 생성 완료!", "success");
+          showStatus("생성 완료!", "success");
           drawSchematic(d.graph);
+          renderSources(d.sources);
           renderBOM(d.graph.components, d.guide);
           renderGuide(d.guide);
-          renderSources(d.sources);
         }
       }
     }
   } catch(e) {
-    showStatus(`❌ 네트워크 오류: ${e.message}`, "error");
+    showStatus(`네트워크 오류: ${e.message}`, "error");
   } finally {
-    btn.disabled = false; btn.textContent = "스키매틱 생성";
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 스키매틱 생성 <span class="shortcut">Ctrl+Enter</span>`;
   }
 }
 
 function downloadNet() { if (currentFilename) window.location.href = `/download/${currentFilename}`; }
 
-// ─── 참고 출처 ──────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = `status ${type}`;
+}
+
+// ── 참고 출처 ──────────────────────────────────────────────────────────
 function renderSources(sources) {
   const section = document.getElementById("sources-section");
   const list    = document.getElementById("sources-list");
@@ -145,19 +201,17 @@ function renderSources(sources) {
   section.classList.remove("hidden");
 }
 
-// ─── BOM 테이블 ─────────────────────────────────────────────────────────
+// ── BOM 테이블 ──────────────────────────────────────────────────────────
 const COMP_NAMES = {
   R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED',
-  L:'인덕터', U:'IC/칩', Y:'크리스탈', SW:'스위치', J:'커넥터',
+  L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터',
 };
-const COMP_UNITS = { R:'Ω', C:'F', L:'H' };
 
 function renderBOM(components, guide) {
   const section = document.getElementById("bom-section");
   const wrap    = document.getElementById("bom-table-wrap");
   if (!components || !components.length) { section.classList.add("hidden"); return; }
 
-  // 가이드에서 각 부품 역할 추출 (예: "R1 - 저항 10kΩ: 바이어스 역할")
   const roles = {};
   if (guide) {
     guide.split('\n').forEach(line => {
@@ -166,45 +220,31 @@ function renderBOM(components, guide) {
     });
   }
 
-  // 타입별 그룹화 & 카운트
-  const groups = {};
-  components.forEach(c => {
-    const type = c.ref.replace(/\d+/g,'');
-    if (!groups[type]) groups[type] = [];
-    groups[type].push(c);
-  });
-
   let html = `<table class="bom-table">
-    <thead><tr>
-      <th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>수량</th><th>역할</th>
-    </tr></thead><tbody>`;
+    <thead><tr><th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>역할</th></tr></thead>
+    <tbody>`;
 
-  let idx = 1;
-  Object.entries(groups).forEach(([type, items]) => {
-    items.forEach(c => {
-      const name = COMP_NAMES[type] || type;
-      const role = roles[c.ref] || '-';
-      html += `<tr>
-        <td>${idx++}</td>
-        <td><span class="bom-ref" style="color:${getCompColor(c.ref)}">${c.ref}</span></td>
-        <td>${name}</td>
-        <td class="bom-val">${c.value || '-'}</td>
-        <td>1</td>
-        <td class="bom-role">${role}</td>
-      </tr>`;
-    });
+  components.forEach((c, i) => {
+    const type = c.ref.replace(/\d+/g,'');
+    html += `<tr>
+      <td>${i+1}</td>
+      <td><span class="bom-ref" style="color:${getCompColor(c.ref)}">${c.ref}</span></td>
+      <td>${COMP_NAMES[type] || type}</td>
+      <td class="bom-val">${c.value || '-'}</td>
+      <td class="bom-role">${roles[c.ref] || '-'}</td>
+    </tr>`;
   });
 
-  html += `</tbody><tfoot><tr>
-    <td colspan="4" style="color:#666;font-size:0.8rem;padding-top:8px">총 부품 수</td>
-    <td><strong>${components.length}</strong></td><td></td>
+  html += `</tbody><tfoot><tr class="bom-total">
+    <td colspan="4">총 부품 수</td>
+    <td><strong>${components.length}개</strong></td>
   </tr></tfoot></table>`;
 
   wrap.innerHTML = html;
   section.classList.remove("hidden");
 }
 
-// ─── 배선 가이드 렌더링 ─────────────────────────────────────────────────
+// ── 배선 가이드 ────────────────────────────────────────────────────────
 function renderGuide(guide) {
   const section = document.getElementById("guide-section");
   const content = document.getElementById("guide-content");
@@ -219,322 +259,218 @@ function renderGuide(guide) {
   section.classList.remove("hidden");
 }
 
-function showStatus(msg, type) {
-  const el = document.getElementById("status");
-  el.textContent = msg; el.className = `status ${type}`; el.classList.remove("hidden");
-}
-
-// ─── 회로 심볼 스키매틱 렌더러 ─────────────────────────────────────────
+// ── 회로 시각화 ────────────────────────────────────────────────────────
 const COLORS = {
-  wire: "#7c6af5", vcc: "#f57a7a", gnd: "#7ab8f5",
-  comp: "#1e2135", compBorder: "#3a3d5a",
-  text: "#e0e0e0", subtext: "#888", label: "#f5c26a",
-  R:"#f5c26a", C:"#7ab8f5", Q:"#5adf8a", D:"#f57a7a", L:"#c47af5", U:"#7c6af5",
+  wire:"#6c63ff", vcc:"#ff6b6b", gnd:"#5ba3f5",
+  comp:"#0e1220", text:"#e8eaf6", subtext:"#8892b0", label:"#ffd166",
+  R:"#ffd166", C:"#5ba3f5", Q:"#3ddc84", D:"#ff6b6b", L:"#c084fc", U:"#6c63ff",
 };
-const NET_COLORS = ["#7c6af5","#5adf8a","#f5c26a","#f57a7a","#7ab8f5","#c47af5","#f5a07a"];
+const NET_COLORS = ["#6c63ff","#3ddc84","#ffd166","#ff6b6b","#5ba3f5","#c084fc","#fb923c"];
 
-// 컴포넌트 타입별 핀 수 & 위치 정의 (상대좌표, 컴포넌트 중심 기준)
-// 각 핀: {id, x, y, side}
-const PIN_SPACING = 20;
+function getCompColor(ref) {
+  const map = {R:"#ffd166",C:"#5ba3f5",Q:"#3ddc84",D:"#ff6b6b",L:"#c084fc",U:"#6c63ff"};
+  return map[ref[0].toUpperCase()] || "#8892b0";
+}
 
 function getPinLayout(ref, pinCount) {
   const t = ref[0].toUpperCase();
-  if (t === 'Q') {
-    // 트랜지스터: B(왼쪽), C(위), E(아래)
-    return { w:60, h:70, pins: {1:{x:-30,y:0,side:'L'}, 2:{x:0,y:-35,side:'T'}, 3:{x:0,y:35,side:'B'}} };
-  }
-  if (pinCount <= 2) {
-    // 2핀 부품: 왼/오
-    return { w:60, h:40, pins: {1:{x:-30,y:0,side:'L'}, 2:{x:30,y:0,side:'R'}} };
-  }
-  // 멀티핀 IC: 좌우 분배
-  const leftCount = Math.ceil(pinCount/2), rightCount = Math.floor(pinCount/2);
-  const h = Math.max(60, Math.max(leftCount, rightCount) * PIN_SPACING + 20);
+  if (t === 'Q') return { w:64, h:72, pins:{1:{x:-32,y:0,side:'L'},2:{x:0,y:-36,side:'T'},3:{x:0,y:36,side:'B'}} };
+  if (pinCount <= 2) return { w:64, h:44, pins:{1:{x:-32,y:0,side:'L'},2:{x:32,y:0,side:'R'}} };
+  const left = Math.ceil(pinCount/2), right = Math.floor(pinCount/2);
+  const h = Math.max(64, Math.max(left,right)*20+24);
   const pins = {};
-  for (let i=0; i<leftCount; i++)  pins[i+1]          = {x:-40, y:-h/2+20+i*PIN_SPACING, side:'L'};
-  for (let i=0; i<rightCount; i++) pins[leftCount+i+1] = {x:40,  y:-h/2+20+i*PIN_SPACING, side:'R'};
-  return { w:80, h, pins };
-}
-
-// 각 컴포넌트의 심볼 그리기
-function drawSymbol(ctx, ref, value, cx, cy, layout) {
-  const t = ref[0].toUpperCase();
-  ctx.save();
-  ctx.translate(cx, cy);
-
-  // 외부 박스 (IC 제외한 단순 부품도 배경)
-  ctx.fillStyle = COLORS.comp;
-  ctx.strokeStyle = COLORS[t] || COLORS.compBorder;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(-layout.w/2, -layout.h/2, layout.w, layout.h, 6);
-  ctx.fill(); ctx.stroke();
-
-  // 심볼 그리기
-  ctx.strokeStyle = COLORS[t] || "#aaa";
-  ctx.lineWidth = 2;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-
-  if (t === 'R') drawResistor(ctx);
-  else if (t === 'C') drawCapacitor(ctx);
-  else if (t === 'D') drawDiode(ctx, ref.startsWith('D'));
-  else if (t === 'Q') drawTransistor(ctx);
-  else if (t === 'L') drawInductor(ctx);
-  else drawGenericIC(ctx, layout);
-
-  // 핀 연결 스텁
-  ctx.strokeStyle = "#555";
-  ctx.lineWidth = 1.5;
-  Object.values(layout.pins).forEach(p => {
-    const stubLen = 10;
-    ctx.beginPath();
-    if (p.side==='L') { ctx.moveTo(-layout.w/2, p.y); ctx.lineTo(-layout.w/2-stubLen, p.y); }
-    else if (p.side==='R') { ctx.moveTo(layout.w/2, p.y); ctx.lineTo(layout.w/2+stubLen, p.y); }
-    else if (p.side==='T') { ctx.moveTo(p.x, -layout.h/2); ctx.lineTo(p.x, -layout.h/2-stubLen); }
-    else if (p.side==='B') { ctx.moveTo(p.x, layout.h/2); ctx.lineTo(p.x, layout.h/2+stubLen); }
-    ctx.stroke();
-  });
-
-  // ref 텍스트
-  ctx.fillStyle = COLORS.text;
-  ctx.font = "bold 12px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText(ref, 0, -layout.h/2 - 14);
-  // value 텍스트
-  ctx.fillStyle = COLORS.subtext;
-  ctx.font = "11px monospace";
-  ctx.fillText(value, 0, layout.h/2 + 14);
-  ctx.restore();
-}
-
-function drawResistor(ctx) {
-  // 지그재그
-  const pts = [-20,-16,-12,0,12,16,20].map((x,i)=>({x, y: i===0||i===6?0:i%2===1?-8:8}));
-  // 왼쪽 리드
-  ctx.beginPath(); ctx.moveTo(-25,0); ctx.lineTo(-20,0); ctx.stroke();
-  // 지그재그
-  ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
-  pts.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke();
-  // 오른쪽 리드
-  ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(25,0); ctx.stroke();
-}
-
-function drawCapacitor(ctx) {
-  ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(-5,0); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-5,-14); ctx.lineTo(-5,14); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(5,-14); ctx.lineTo(5,14); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(5,0); ctx.lineTo(22,0); ctx.stroke();
-}
-
-function drawDiode(ctx, isLED) {
-  // 삼각형
-  ctx.beginPath();
-  ctx.moveTo(-12,0); ctx.lineTo(12,0); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(-10,10); ctx.lineTo(10,0); ctx.lineTo(-10,-10); ctx.closePath(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(10,-10); ctx.lineTo(10,10); ctx.stroke();
-  if (isLED) {
-    // 화살표 (빛)
-    ctx.beginPath(); ctx.moveTo(14,-10); ctx.lineTo(20,-16); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(18,-8); ctx.lineTo(24,-14); ctx.stroke();
-  }
-}
-
-function drawTransistor(ctx) {
-  // 베이스 수직선
-  ctx.beginPath(); ctx.moveTo(-10,-20); ctx.lineTo(-10,20); ctx.stroke();
-  // 베이스 연결
-  ctx.beginPath(); ctx.moveTo(-25,0); ctx.lineTo(-10,0); ctx.stroke();
-  // 컬렉터
-  ctx.beginPath(); ctx.moveTo(-10,-10); ctx.lineTo(0,-10); ctx.lineTo(0,-30); ctx.stroke();
-  // 이미터 (화살표)
-  ctx.beginPath(); ctx.moveTo(-10,10); ctx.lineTo(0,10); ctx.lineTo(0,30); ctx.stroke();
-  // 이미터 화살표
-  ctx.beginPath(); ctx.moveTo(-4,22); ctx.lineTo(0,30); ctx.lineTo(4,22); ctx.stroke();
-}
-
-function drawInductor(ctx) {
-  ctx.beginPath(); ctx.moveTo(-25,0); ctx.lineTo(-22,0);
-  for (let i=0;i<4;i++) {
-    const x = -20+i*10;
-    ctx.arc(x+5, 0, 5, Math.PI, 0, false);
-  }
-  ctx.lineTo(25,0); ctx.stroke();
-}
-
-function drawGenericIC(ctx, layout) {
-  // IC는 박스만 (이미 외부에서 그림)
-  ctx.fillStyle = "#333";
-  ctx.font = "10px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("IC", 0, 4);
-}
-
-// ─── 메인 스키매틱 그리기 ──────────────────────────────────────────────
-function drawSchematic(graph) {
-  const canvas = document.getElementById("circuit-canvas");
-  const ctx = canvas.getContext("2d");
-  const comps = graph.components || [];
-  const nets  = graph.nets  || [];
-  if (!comps.length) return;
-
-  // 각 컴포넌트의 레이아웃 계산
-  const layouts = {};
-  comps.forEach(c => {
-    const pinCount = getMaxPin(c.ref, nets);
-    layouts[c.ref] = getPinLayout(c.ref, pinCount);
-  });
-
-  // 그리드 배치
-  const cols = Math.min(Math.ceil(Math.sqrt(comps.length)), 4);
-  const HGAP = 100, VGAP = 100, MARGIN = 70;
-  const colWidths = Array(cols).fill(0);
-  const rowHeights = [];
-  comps.forEach((c, i) => {
-    const col = i % cols, row = Math.floor(i / cols);
-    colWidths[col] = Math.max(colWidths[col], layouts[c.ref].w + HGAP);
-    if (!rowHeights[row]) rowHeights[row] = 0;
-    rowHeights[row] = Math.max(rowHeights[row], layouts[c.ref].h + VGAP);
-  });
-
-  // 컴포넌트 중심 위치
-  const pos = {};
-  let cx = MARGIN;
-  for (let col = 0; col < cols; col++) {
-    let cy = MARGIN + 20;
-    const rowCount = Math.ceil(comps.length / cols);
-    for (let row = 0; row < rowCount; row++) {
-      const idx = row * cols + col;
-      if (idx >= comps.length) continue;
-      const c = comps[idx];
-      pos[c.ref] = { x: cx + colWidths[col]/2, y: cy + rowHeights[row]/2 };
-      cy += rowHeights[row];
-    }
-    cx += colWidths[col];
-  }
-
-  // 핀 절대좌표 계산
-  function pinAbs(ref, pinId) {
-    const p = pos[ref], layout = layouts[ref];
-    if (!p || !layout) return null;
-    const pin = layout.pins[pinId] || layout.pins[Object.keys(layout.pins)[0]];
-    const stubLen = 10;
-    if (pin.side==='L') return { x: p.x - layout.w/2 - stubLen, y: p.y + pin.y };
-    if (pin.side==='R') return { x: p.x + layout.w/2 + stubLen, y: p.y + pin.y };
-    if (pin.side==='T') return { x: p.x + pin.x, y: p.y - layout.h/2 - stubLen };
-    if (pin.side==='B') return { x: p.x + pin.x, y: p.y + layout.h/2 + stubLen };
-    return { x: p.x + pin.x, y: p.y + pin.y };
-  }
-
-  // 캔버스 크기
-  const totalW = cx + MARGIN;
-  const totalH = Object.values(pos).reduce((m,p) => Math.max(m, p.y), 0) + MARGIN + 60 + nets.length * 22;
-  canvas.width  = Math.max(totalW, 500);
-  canvas.height = Math.max(totalH, 300);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#0f1117";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // ── 와이어 그리기 ───────────────────────────────────────────────
-  nets.forEach((net, ni) => {
-    const isPwr = net.name === 'VCC' || net.name === 'GND';
-    const color = isPwr
-      ? (net.name === 'VCC' ? COLORS.vcc : COLORS.gnd)
-      : NET_COLORS[ni % NET_COLORS.length];
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = isPwr ? 2.5 : 1.8;
-    ctx.setLineDash([]);
-
-    // 모든 핀 끝점 수집
-    const pts = net.nodes
-      .map(n => pinAbs(n.ref, n.pin))
-      .filter(Boolean);
-
-    if (pts.length < 2) {
-      // 단일 핀이면 전원 심볼만
-      if (pts.length === 1) drawPowerSymbol(ctx, pts[0], net.name, color);
-      return;
-    }
-
-    // 첫 번째 노드 → 나머지 노드로 L자형 와이어
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[0], b = pts[i];
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(a.x, b.y);  // 수직
-      ctx.lineTo(b.x, b.y);  // 수평
-      ctx.stroke();
-
-      // 연결점 도트
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(a.x, b.y, 3, 0, Math.PI*2); ctx.fill();
-    }
-
-    // VCC/GND 심볼
-    if (net.name === 'VCC' || net.name === 'GND') {
-      pts.forEach(p => drawPowerSymbol(ctx, p, net.name, color));
-    }
-
-    // 네트 라벨 (중간 와이어 위에)
-    if (!isPwr && pts.length >= 2) {
-      const mx = (pts[0].x + pts[pts.length-1].x) / 2;
-      const my = (pts[0].y + pts[pts.length-1].y) / 2 - 8;
-      ctx.fillStyle = COLORS.label;
-      ctx.font = "10px monospace";
-      ctx.textAlign = "left";
-      ctx.fillText(net.name, mx + 4, my);
-    }
-  });
-
-  // ── 컴포넌트 심볼 그리기 ─────────────────────────────────────────
-  comps.forEach(c => {
-    drawSymbol(ctx, c.ref, c.value, pos[c.ref].x, pos[c.ref].y, layouts[c.ref]);
-  });
-
-  // ── 네트 범례 ───────────────────────────────────────────────────
-  const legendY = canvas.height - nets.length * 22 - 10;
-  ctx.fillStyle = "#444";
-  ctx.font = "11px monospace";
-  ctx.textAlign = "left";
-  ctx.fillText("── 네트 연결", MARGIN, legendY);
-  nets.forEach((net, ni) => {
-    const isPwr = net.name === 'VCC' || net.name === 'GND';
-    const color = isPwr
-      ? (net.name === 'VCC' ? COLORS.vcc : COLORS.gnd)
-      : NET_COLORS[ni % NET_COLORS.length];
-    const ly = legendY + 18 + ni * 20;
-    ctx.fillStyle = color;
-    ctx.fillRect(MARGIN, ly - 3, 18, 3);
-    ctx.fillStyle = "#bbb";
-    ctx.font = "11px monospace";
-    const refs = [...new Set(net.nodes.map(n=>n.ref))].join(", ");
-    ctx.fillText(`${net.name}  →  ${refs}`, MARGIN + 26, ly);
-  });
-}
-
-function drawPowerSymbol(ctx, pt, name, color) {
-  ctx.strokeStyle = color; ctx.fillStyle = color;
-  ctx.lineWidth = 2;
-  if (name === 'VCC') {
-    ctx.beginPath(); ctx.moveTo(pt.x, pt.y); ctx.lineTo(pt.x, pt.y - 16); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(pt.x-12, pt.y-16); ctx.lineTo(pt.x+12, pt.y-16); ctx.stroke();
-    ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
-    ctx.fillText("VCC", pt.x, pt.y - 22);
-  } else {
-    ctx.beginPath(); ctx.moveTo(pt.x, pt.y); ctx.lineTo(pt.x, pt.y + 10); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(pt.x-10, pt.y+10); ctx.lineTo(pt.x+10, pt.y+10); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(pt.x-6,  pt.y+15); ctx.lineTo(pt.x+6,  pt.y+15); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(pt.x-2,  pt.y+20); ctx.lineTo(pt.x+2,  pt.y+20); ctx.stroke();
-  }
+  for(let i=0;i<left;i++)  pins[i+1]      = {x:-42,y:-h/2+22+i*20,side:'L'};
+  for(let i=0;i<right;i++) pins[left+i+1] = {x:42, y:-h/2+22+i*20,side:'R'};
+  return {w:84,h,pins};
 }
 
 function getMaxPin(ref, nets) {
   let max = 2;
-  nets.forEach(net => net.nodes.forEach(n => {
-    if (n.ref === ref) max = Math.max(max, parseInt(n.pin) || 2);
-  }));
+  nets.forEach(n => n.nodes.forEach(nd => { if(nd.ref===ref) max=Math.max(max,parseInt(nd.pin)||2); }));
   return max;
+}
+
+function pinAbs(ref, pinId, pos, layouts) {
+  const p = pos[ref], layout = layouts[ref];
+  if(!p||!layout) return null;
+  const pin = layout.pins[pinId] || layout.pins[Object.keys(layout.pins)[0]];
+  const s = 10;
+  if(pin.side==='L') return {x:p.x-layout.w/2-s, y:p.y+pin.y};
+  if(pin.side==='R') return {x:p.x+layout.w/2+s, y:p.y+pin.y};
+  if(pin.side==='T') return {x:p.x+pin.x, y:p.y-layout.h/2-s};
+  if(pin.side==='B') return {x:p.x+pin.x, y:p.y+layout.h/2+s};
+  return {x:p.x+pin.x, y:p.y+pin.y};
+}
+
+function drawSchematic(graph) {
+  const canvas = document.getElementById("circuit-canvas");
+  const ctx = canvas.getContext("2d");
+  const comps = graph.components||[], nets = graph.nets||[];
+  if(!comps.length) return;
+
+  const layouts={};
+  comps.forEach(c => { layouts[c.ref]=getPinLayout(c.ref, getMaxPin(c.ref,nets)); });
+
+  const cols=Math.min(Math.ceil(Math.sqrt(comps.length)),4);
+  const HGAP=90, VGAP=90, MARGIN=70;
+  const colW=Array(cols).fill(0), rowH=[];
+  comps.forEach((c,i)=>{
+    const col=i%cols, row=Math.floor(i/cols);
+    colW[col]=Math.max(colW[col], layouts[c.ref].w+HGAP);
+    if(!rowH[row]) rowH[row]=0;
+    rowH[row]=Math.max(rowH[row], layouts[c.ref].h+VGAP);
+  });
+
+  const pos={};
+  let cx=MARGIN;
+  for(let col=0;col<cols;col++){
+    let cy=MARGIN+24;
+    for(let row=0;row<Math.ceil(comps.length/cols);row++){
+      const idx=row*cols+col; if(idx>=comps.length) continue;
+      pos[comps[idx].ref]={x:cx+colW[col]/2, y:cy+rowH[row]/2};
+      cy+=rowH[row];
+    }
+    cx+=colW[col];
+  }
+
+  const TW = cx+MARGIN;
+  const TH = Object.values(pos).reduce((m,p)=>Math.max(m,p.y),0)+MARGIN+60+nets.length*22;
+  canvas.width=Math.max(TW,500); canvas.height=Math.max(TH,320);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#080b14"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // 배경 그리드
+  ctx.strokeStyle="#1e2640"; ctx.lineWidth=0.5;
+  for(let x=0;x<canvas.width;x+=32){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+  for(let y=0;y<canvas.height;y+=32){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+
+  // 와이어
+  nets.forEach((net,ni)=>{
+    const isPwr = net.name==='VCC'||net.name==='GND';
+    const color = isPwr ? (net.name==='VCC'?COLORS.vcc:COLORS.gnd) : NET_COLORS[ni%NET_COLORS.length];
+    const pts = net.nodes.map(n=>pinAbs(n.ref,n.pin,pos,layouts)).filter(Boolean);
+    if(pts.length<2){ if(pts.length===1) drawPower(ctx,pts[0],net.name,color); return; }
+
+    ctx.strokeStyle=color+"bb"; ctx.lineWidth=1.8; ctx.setLineDash([]);
+    for(let i=1;i<pts.length;i++){
+      const a=pts[0], b=pts[i];
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(a.x,b.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.fillStyle=color;
+      ctx.beginPath(); ctx.arc(a.x,b.y,3,0,Math.PI*2); ctx.fill();
+    }
+    if(isPwr) pts.forEach(p=>drawPower(ctx,p,net.name,color));
+    if(!isPwr && pts.length>=2){
+      const mx=(pts[0].x+pts[pts.length-1].x)/2, my=(pts[0].y+pts[pts.length-1].y)/2-8;
+      ctx.fillStyle=COLORS.label; ctx.font=`600 10px 'JetBrains Mono',monospace`;
+      ctx.textAlign="left"; ctx.fillText(net.name, mx+4, my);
+    }
+  });
+
+  // 컴포넌트
+  comps.forEach(c => drawComp(ctx, c, pos[c.ref], layouts[c.ref]));
+
+  // 범례
+  const ly0 = canvas.height-nets.length*21-12;
+  ctx.fillStyle="#4a5278"; ctx.font="11px Inter,sans-serif"; ctx.textAlign="left";
+  ctx.fillText("NET", MARGIN, ly0);
+  nets.forEach((net,ni)=>{
+    const isPwr=net.name==='VCC'||net.name==='GND';
+    const color=isPwr?(net.name==='VCC'?COLORS.vcc:COLORS.gnd):NET_COLORS[ni%NET_COLORS.length];
+    const y=ly0+16+ni*21;
+    ctx.fillStyle=color; ctx.fillRect(MARGIN,y-3,16,3);
+    ctx.fillStyle="#8892b0"; ctx.font="11px Inter,sans-serif";
+    const refs=[...new Set(net.nodes.map(n=>n.ref))].join(", ");
+    ctx.fillText(`${net.name}  →  ${refs}`, MARGIN+24, y);
+  });
+}
+
+function drawComp(ctx, comp, p, layout) {
+  const {x,y}=p, t=comp.ref[0].toUpperCase();
+  const color = COLORS[t]||"#8892b0";
+  ctx.save(); ctx.translate(x,y);
+
+  // 핀 스텁
+  ctx.strokeStyle="#2a3356"; ctx.lineWidth=1.5;
+  Object.values(layout.pins).forEach(pin=>{
+    const s=10;
+    ctx.beginPath();
+    if(pin.side==='L'){ctx.moveTo(-layout.w/2,pin.y);ctx.lineTo(-layout.w/2-s,pin.y);}
+    else if(pin.side==='R'){ctx.moveTo(layout.w/2,pin.y);ctx.lineTo(layout.w/2+s,pin.y);}
+    else if(pin.side==='T'){ctx.moveTo(pin.x,-layout.h/2);ctx.lineTo(pin.x,-layout.h/2-s);}
+    else{ctx.moveTo(pin.x,layout.h/2);ctx.lineTo(pin.x,layout.h/2+s);}
+    ctx.stroke();
+  });
+
+  // 글로우
+  ctx.shadowColor=color+"44"; ctx.shadowBlur=16;
+  // 박스
+  ctx.fillStyle="#0e1220";
+  ctx.strokeStyle=color; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(-layout.w/2,-layout.h/2,layout.w,layout.h,8);
+  ctx.fill(); ctx.stroke();
+  ctx.shadowBlur=0;
+
+  // 심볼
+  ctx.strokeStyle=color; ctx.lineWidth=2; ctx.lineCap='round'; ctx.lineJoin='round';
+  if(t==='R') drawR(ctx);
+  else if(t==='C') drawC(ctx);
+  else if(t==='D') drawD(ctx, comp.ref);
+  else if(t==='Q') drawQ(ctx);
+  else if(t==='L') drawL(ctx);
+
+  // ref / value
+  ctx.shadowBlur=0;
+  ctx.fillStyle="#e8eaf6"; ctx.font=`600 12px 'JetBrains Mono',monospace`; ctx.textAlign="center";
+  ctx.fillText(comp.ref, 0, -layout.h/2-16);
+  ctx.fillStyle="#4a5278"; ctx.font=`11px Inter,sans-serif`;
+  ctx.fillText(comp.value||"", 0, layout.h/2+16);
+  ctx.restore();
+}
+
+function drawR(ctx){
+  ctx.beginPath();ctx.moveTo(-28,0);ctx.lineTo(-20,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-20,0);
+  [[-14,8],[-7,-8],[0,8],[7,-8],[14,8],[20,0]].forEach(([x,y])=>ctx.lineTo(x,y));
+  ctx.stroke();
+  ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(28,0);ctx.stroke();
+}
+function drawC(ctx){
+  ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(-5,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-5,-15);ctx.lineTo(-5,15);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(5,-15);ctx.lineTo(5,15);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(5,0);ctx.lineTo(24,0);ctx.stroke();
+}
+function drawD(ctx, ref){
+  ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(24,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(10,0);ctx.lineTo(-10,-10);ctx.closePath();ctx.stroke();
+  ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(10,10);ctx.stroke();
+  if(ref.startsWith('D')){ctx.beginPath();ctx.moveTo(14,-10);ctx.lineTo(20,-16);ctx.stroke();ctx.beginPath();ctx.moveTo(18,-6);ctx.lineTo(24,-12);ctx.stroke();}
+}
+function drawQ(ctx){
+  ctx.beginPath();ctx.moveTo(-10,-22);ctx.lineTo(-10,22);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-10,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(0,-10);ctx.lineTo(0,-32);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(0,10);ctx.lineTo(0,32);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-4,24);ctx.lineTo(0,32);ctx.lineTo(4,24);ctx.stroke();
+}
+function drawL(ctx){
+  ctx.beginPath();ctx.moveTo(-26,0);ctx.lineTo(-22,0);
+  for(let i=0;i<4;i++) ctx.arc(-20+i*10+5,0,5,Math.PI,0,false);
+  ctx.lineTo(26,0);ctx.stroke();
+}
+function drawPower(ctx,pt,name,color){
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+  if(name==='VCC'){
+    ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y-18);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(pt.x-13,pt.y-18);ctx.lineTo(pt.x+13,pt.y-18);ctx.stroke();
+    ctx.font=`bold 10px Inter,sans-serif`;ctx.textAlign="center";
+    ctx.fillText("VCC",pt.x,pt.y-24);
+  } else {
+    ctx.beginPath();ctx.moveTo(pt.x,pt.y);ctx.lineTo(pt.x,pt.y+10);ctx.stroke();
+    [[11,10],[7,15],[3,20]].forEach(([w,dy])=>{
+      ctx.beginPath();ctx.moveTo(pt.x-w/2,pt.y+dy);ctx.lineTo(pt.x+w/2,pt.y+dy);ctx.stroke();
+    });
+  }
 }
 </script>
 </body>
