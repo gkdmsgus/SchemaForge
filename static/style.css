@@ -727,40 +727,64 @@ textarea::placeholder { color: var(--text3); }
   border-radius: 10px;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   font-family: 'Inter', sans-serif;
-  gap: 2px;
-  padding: 9px 14px;
+  padding: 10px 14px;
   transition: all 0.15s;
   text-align: left;
+  width: 100%;
 }
 .qa-opt:hover:not(:disabled) {
   border-color: var(--cyan);
-  background: rgba(34,211,238,0.06);
+  background: rgba(34,211,238,0.05);
 }
 .qa-opt.selected {
   border-color: var(--cyan);
   background: rgba(34,211,238,0.12);
-  color: var(--cyan);
 }
 .qa-opt:disabled { opacity: 0.45; cursor: not-allowed; }
-.qa-opt-txt { font-size: 0.85rem; font-weight: 600; color: inherit; }
-.qa-opt-sub { font-size: 0.72rem; color: var(--text3); }
-.qa-opt.selected .qa-opt-sub { color: rgba(34,211,238,0.6); }
 
-.qa-opt-custom { border-style: dashed; color: var(--text2); }
-.qa-opt-custom:hover:not(:disabled) { border-color: var(--amber); background: rgba(251,191,36,0.06); }
-
-/* 비교 힌트 */
-.qa-opt-hint {
-  font-size: 0.68rem;
-  color: var(--text3);
-  margin-top: 4px;
-  letter-spacing: 0.3px;
-  transition: color 0.15s;
+.qa-opt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
 }
-.qa-opt:hover .qa-opt-hint { color: var(--cyan); }
+.qa-opt-txt { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+.qa-opt-sub { font-size: 0.74rem; color: var(--text3); }
+.qa-opt.selected .qa-opt-txt { color: var(--cyan); }
+.qa-opt.selected .qa-opt-sub { color: rgba(34,211,238,0.55); }
+
+/* 비교 보기 버튼 */
+.qa-info-toggle {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text3);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+.qa-info-toggle:hover, .qa-info-toggle.active {
+  color: var(--cyan);
+  border-color: rgba(34,211,238,0.4);
+  background: rgba(34,211,238,0.08);
+}
+
+.qa-opt-custom {
+  border-style: dashed;
+  justify-content: flex-start;
+}
+.qa-opt-custom .qa-opt-txt { color: var(--text2); font-weight: 500; }
+.qa-opt-custom:hover:not(:disabled) { border-color: var(--amber); background: rgba(251,191,36,0.04); }
+.qa-opt-custom:hover .qa-opt-txt { color: var(--amber); }
 
 /* 옵션 정보 패널 */
 .opt-info-panel {
@@ -777,25 +801,24 @@ textarea::placeholder { color: var(--text3); }
 .opt-info-panel.visible { display: flex; flex-direction: column; gap: 10px; }
 
 .oip-header {
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 .oip-desc {
-  font-size: 0.82rem;
+  font-size: 0.83rem;
   color: var(--text2);
-  line-height: 1.55;
+  line-height: 1.6;
 }
 .oip-specs {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 5px 14px;
-  background: rgba(15,23,42,0.6);
+  gap: 5px 16px;
+  background: rgba(15,23,42,0.5);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 10px 14px;
 }
 .oip-k {
   font-size: 0.74rem;
@@ -807,25 +830,35 @@ textarea::placeholder { color: var(--text3); }
   color: var(--text);
   font-family: var(--mono);
 }
-.oip-pros {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.oip-section { display: flex; flex-direction: column; gap: 4px; }
+.oip-section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
 }
 .oip-pro {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--green);
+  padding-left: 10px;
+  position: relative;
 }
+.oip-pro::before { content: '—'; position: absolute; left: 0; color: var(--green); opacity: 0.5; }
 .oip-con {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--amber);
+  padding-left: 10px;
+  position: relative;
 }
+.oip-con::before { content: '—'; position: absolute; left: 0; color: var(--amber); opacity: 0.5; }
 .oip-best {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--cyan2);
-  padding-top: 2px;
-  border-top: 1px solid var(--border);
+  padding-left: 10px;
+  position: relative;
 }
+.oip-best::before { content: '—'; position: absolute; left: 0; color: var(--cyan); opacity: 0.5; }
 
 .qa-custom-input {
   width: 100%;

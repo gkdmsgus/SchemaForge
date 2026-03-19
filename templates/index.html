@@ -488,10 +488,10 @@ const QA_TREES = {
         id: 'led_mode',
         ask: 'LED를 어떻게 동작시킬까요?',
         opts: [
-          { txt: '💫 규칙적으로 깜빡이게', sub: 'NE555 타이머 활용', val: 'NE555 astable LED blinker' },
-          { txt: '🌙 밝기 조절 (디머)', sub: '가변저항으로 0~100% 조절', val: 'LED PWM dimmer with MOSFET' },
-          { txt: '🌈 RGB 색상 제어', sub: 'R, G, B 각각 조절', val: 'RGB LED color controller' },
-          { txt: '🌑 어두워지면 자동 켜짐', sub: '빛 감지 자동 조명', val: 'automatic night light LDR sensor' },
+          { txt: 'LED 점멸', sub: 'NE555 타이머로 규칙적으로 깜빡임', val: 'NE555 astable LED blinker' },
+          { txt: '밝기 조절 (디머)', sub: '가변저항으로 0~100% 연속 조절', val: 'LED PWM dimmer with MOSFET' },
+          { txt: 'RGB 색상 제어', sub: '빨강·초록·파랑 각각 조절', val: 'RGB LED color controller' },
+          { txt: '자동 야간 조명', sub: '어두워지면 자동으로 켜짐', val: 'automatic night light LDR sensor' },
         ]
       },
       {
@@ -514,10 +514,10 @@ const QA_TREES = {
         id: 'pwr_type',
         ask: '어떤 전원 회로인가요?',
         opts: [
-          { txt: '🔋 리튬 배터리 충전기', sub: 'USB로 18650 충전', val: 'TP4056 lithium battery charger 1A USB input' },
-          { txt: '⬇️ 전압 낮추기 (강압)', sub: '예: 12V → 5V 안정화', val: 'LM7805 linear voltage regulator 5V 1A' },
-          { txt: '⬆️ 전압 높이기 (승압)', sub: '예: 3.7V → 5V 부스트', val: 'MT3608 boost converter 3.7V to 5V' },
-          { txt: '🔧 가변 전압 조절기', sub: '1.25V~30V 자유 설정', val: 'LM317 adjustable voltage regulator' },
+          { txt: '리튬 배터리 충전기', sub: 'USB 5V로 18650 배터리 충전', val: 'TP4056 lithium battery charger 1A USB input' },
+          { txt: '전압 낮추기 (강압)', sub: '예: 12V → 5V 안정화 출력', val: 'LM7805 linear voltage regulator 5V 1A' },
+          { txt: '전압 높이기 (승압)', sub: '예: 3.7V → 5V 부스트 변환', val: 'MT3608 boost converter 3.7V to 5V' },
+          { txt: '가변 전압 조절기', sub: '1.25V~30V 원하는 전압 설정', val: 'LM317 adjustable voltage regulator' },
         ]
       },
       {
@@ -568,9 +568,9 @@ const QA_TREES = {
         id: 'timer_type',
         ask: '타이머를 어떻게 사용할 건가요?',
         opts: [
-          { txt: '⏰ 일정 시간 후 OFF', sub: '버튼 누르면 N초 뒤 꺼짐', val: 'NE555 monostable timer delay off circuit' },
-          { txt: '🔁 주기적으로 ON/OFF 반복', sub: '자동 반복 동작', val: 'NE555 astable repeating timer circuit' },
-          { txt: '🎵 소리/신호 발생', sub: '오디오 주파수 발진기', val: 'NE555 astable oscillator audio tone 1kHz' },
+          { txt: '지연 타이머', sub: '버튼 누르면 N초 뒤 자동 OFF', val: 'NE555 monostable timer delay off circuit' },
+          { txt: '반복 타이머', sub: '일정 주기로 ON/OFF 자동 반복', val: 'NE555 astable repeating timer circuit' },
+          { txt: '발진기 (소리 발생)', sub: '오디오 주파수 신호 출력', val: 'NE555 astable oscillator audio tone 1kHz' },
         ]
       },
       {
@@ -834,16 +834,17 @@ function appendBotQuestion(q) {
     return `
       <button class="qa-opt${info ? ' has-info' : ''}"
         data-val="${dataVal}"
-        ${info ? `onmouseenter="showOptInfo(this)"` : ''}
         onclick="selectQAOption(this, '${q.id}', '${safeVal}', '${safeTxt}')">
-        <span class="qa-opt-txt">${o.txt}</span>
-        ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
-        ${info ? `<span class="qa-opt-hint">ℹ 비교 보기</span>` : ''}
+        <div class="qa-opt-main">
+          <span class="qa-opt-txt">${o.txt}</span>
+          ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
+        </div>
+        ${info ? `<span class="qa-info-toggle" data-val="${dataVal}" onclick="event.stopPropagation(); toggleOptInfo(this)">비교 보기</span>` : ''}
       </button>
     `;
   }).join('') + `
     <button class="qa-opt qa-opt-custom" onclick="selectQAOption(this, '${q.id}', '__custom__', '직접 입력')">
-      <span class="qa-opt-txt">✏️ 직접 입력</span>
+      <span class="qa-opt-main"><span class="qa-opt-txt">직접 입력</span></span>
     </button>
     <div class="qa-custom-input" style="display:none">
       <input type="text" placeholder="직접 입력해 주세요..." onkeydown="if(event.key==='Enter') submitCustom('${q.id}', this)" />
@@ -851,33 +852,45 @@ function appendBotQuestion(q) {
     </div>
     ${hasInfo ? '<div class="opt-info-panel"></div>' : ''}
   `;
-  // 컨테이너 벗어날 때만 패널 닫기
-  opts.addEventListener('mouseleave', () => {
-    const panel = opts.querySelector('.opt-info-panel');
-    if (panel) panel.classList.remove('visible');
-  });
 
   thread.appendChild(opts);
   thread.scrollTop = thread.scrollHeight;
 }
 
-function showOptInfo(btn) {
-  const val = btn.dataset.val;
+function toggleOptInfo(toggleBtn) {
+  const val = toggleBtn.dataset.val;
   const info = OPT_INFO[val];
   if (!info) return;
-  const panel = btn.closest('.bot-options').querySelector('.opt-info-panel');
+
+  const container = toggleBtn.closest('.bot-options');
+  const panel = container.querySelector('.opt-info-panel');
   if (!panel) return;
+
+  const isOpen = panel.classList.contains('visible') && panel.dataset.activeVal === val;
+
+  // 모든 토글 초기화
+  container.querySelectorAll('.qa-info-toggle').forEach(b => b.classList.remove('active'));
+
+  if (isOpen) {
+    panel.classList.remove('visible');
+    panel.dataset.activeVal = '';
+    return;
+  }
+
+  toggleBtn.classList.add('active');
+  panel.dataset.activeVal = val;
   panel.innerHTML = `
-    <div class="oip-header">${info.emoji || ''} <strong>${info.name}</strong></div>
+    <div class="oip-header"><strong>${info.name}</strong></div>
     <p class="oip-desc">${info.desc}</p>
     <div class="oip-specs">
       ${(info.specs || []).map(s => `<div class="oip-row"><span class="oip-k">${s.k}</span><span class="oip-v">${s.v}</span></div>`).join('')}
     </div>
-    ${info.pros?.length ? `<div class="oip-pros">${info.pros.map(p => `<span class="oip-pro">✓ ${p}</span>`).join('')}</div>` : ''}
-    ${info.con ? `<div class="oip-con">△ ${info.con}</div>` : ''}
-    ${info.best ? `<div class="oip-best">🎯 ${info.best}</div>` : ''}
+    ${info.pros?.length ? `<div class="oip-section"><div class="oip-section-label">장점</div>${info.pros.map(p => `<div class="oip-pro">${p}</div>`).join('')}</div>` : ''}
+    ${info.con ? `<div class="oip-section"><div class="oip-section-label">주의</div><div class="oip-con">${info.con}</div></div>` : ''}
+    ${info.best ? `<div class="oip-section"><div class="oip-section-label">추천 상황</div><div class="oip-best">${info.best}</div></div>` : ''}
   `;
   panel.classList.add('visible');
+  setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
 }
 
 
