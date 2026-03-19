@@ -25,7 +25,7 @@
           <button class="example-btn" onclick="setExample(this)">베이스 앰프 회로</button>
           <button class="example-btn" onclick="setExample(this)">USB-C 배터리 충전</button>
         </div>
-        <button id="generate-btn" onclick="generate()">스키매틱 생성</button>
+        <button id="generate-btn" onclick="generate()">스키매틱 생성 <span class="shortcut">Ctrl+Enter</span></button>
       </div>
 
       <div id="status" class="status hidden"></div>
@@ -37,6 +37,12 @@
         </div>
         <div class="canvas-wrap">
           <canvas id="circuit-canvas"></canvas>
+        </div>
+
+        <!-- BOM 테이블 -->
+        <div id="bom-section" class="bom-section hidden">
+          <h2>필요한 부품 (BOM)</h2>
+          <div id="bom-table-wrap"></div>
         </div>
 
         <div id="guide-section" class="guide-section hidden">
@@ -54,6 +60,12 @@
 
 <script>
 let currentFilename = null;
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("description").addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) generate();
+  });
+});
 
 function setExample(btn) { document.getElementById("description").value = btn.textContent; }
 
@@ -83,6 +95,7 @@ async function generate() {
     document.getElementById("result-section").classList.remove("hidden");
     showStatus("✅ 생성 완료!", "success");
     drawSchematic(data.graph);
+    renderBOM(data.graph.components, data.guide);
     renderGuide(data.guide);
   } catch(e) {
     showStatus(`❌ 네트워크 오류: ${e.message}`, "error");
@@ -92,6 +105,65 @@ async function generate() {
 }
 
 function downloadNet() { if (currentFilename) window.location.href = `/download/${currentFilename}`; }
+
+// ─── BOM 테이블 ─────────────────────────────────────────────────────────
+const COMP_NAMES = {
+  R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED',
+  L:'인덕터', U:'IC/칩', Y:'크리스탈', SW:'스위치', J:'커넥터',
+};
+const COMP_UNITS = { R:'Ω', C:'F', L:'H' };
+
+function renderBOM(components, guide) {
+  const section = document.getElementById("bom-section");
+  const wrap    = document.getElementById("bom-table-wrap");
+  if (!components || !components.length) { section.classList.add("hidden"); return; }
+
+  // 가이드에서 각 부품 역할 추출 (예: "R1 - 저항 10kΩ: 바이어스 역할")
+  const roles = {};
+  if (guide) {
+    guide.split('\n').forEach(line => {
+      const m = line.match(/^-\s+([A-Z]\d+)[^:]*:\s*(.+)/);
+      if (m) roles[m[1]] = m[2].trim();
+    });
+  }
+
+  // 타입별 그룹화 & 카운트
+  const groups = {};
+  components.forEach(c => {
+    const type = c.ref.replace(/\d+/g,'');
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(c);
+  });
+
+  let html = `<table class="bom-table">
+    <thead><tr>
+      <th>#</th><th>부품번호</th><th>종류</th><th>값</th><th>수량</th><th>역할</th>
+    </tr></thead><tbody>`;
+
+  let idx = 1;
+  Object.entries(groups).forEach(([type, items]) => {
+    items.forEach(c => {
+      const name = COMP_NAMES[type] || type;
+      const role = roles[c.ref] || '-';
+      html += `<tr>
+        <td>${idx++}</td>
+        <td><span class="bom-ref" style="color:${getCompColor(c.ref)}">${c.ref}</span></td>
+        <td>${name}</td>
+        <td class="bom-val">${c.value || '-'}</td>
+        <td>1</td>
+        <td class="bom-role">${role}</td>
+      </tr>`;
+    });
+  });
+
+  html += `</tbody><tfoot><tr>
+    <td colspan="4" style="color:#666;font-size:0.8rem;padding-top:8px">총 부품 수</td>
+    <td><strong>${components.length}</strong></td><td></td>
+  </tr></tfoot></table>`;
+
+  wrap.innerHTML = html;
+  section.classList.remove("hidden");
+}
 
 // ─── 배선 가이드 렌더링 ─────────────────────────────────────────────────
 function renderGuide(guide) {

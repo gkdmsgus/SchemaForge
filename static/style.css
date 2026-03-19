@@ -121,6 +121,12 @@ textarea::placeholder {
   background: #6a58e0;
 }
 
+.shortcut {
+  font-size: 0.72rem;
+  opacity: 0.6;
+  margin-left: 8px;
+}
+
 #generate-btn:disabled {
   background: #3a3a5a;
   cursor: not-allowed;
@@ -202,6 +208,51 @@ textarea::placeholder {
   max-width: 100%;
   width: 100%;
 }
+
+.bom-section {
+  margin-top: 24px;
+  border-top: 1px solid #2a2d40;
+  padding-top: 20px;
+}
+.bom-section.hidden { display: none; }
+.bom-section h2 {
+  color: #aaa;
+  font-size: 0.9rem;
+  letter-spacing: 0.5px;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+}
+.bom-table {
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  width: 100%;
+}
+.bom-table th {
+  background: #0f1117;
+  color: #666;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 8px 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
+.bom-table td {
+  border-bottom: 1px solid #1e2135;
+  color: #ccc;
+  padding: 9px 12px;
+  vertical-align: middle;
+}
+.bom-table tr:hover td { background: #1a1d2e; }
+.bom-ref {
+  font-family: monospace;
+  font-weight: 700;
+}
+.bom-val {
+  color: #e0e0e0;
+  font-family: monospace;
+}
+.bom-role { color: #888; font-size: 0.84rem; }
 
 .guide-section {
   margin-top: 24px;
