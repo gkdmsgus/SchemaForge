@@ -834,7 +834,7 @@ function appendBotQuestion(q) {
     return `
       <button class="qa-opt${info ? ' has-info' : ''}"
         data-val="${dataVal}"
-        ${info ? `onmouseenter="showOptInfo(this)" onmouseleave="hideOptInfo(this)"` : ''}
+        ${info ? `onmouseenter="showOptInfo(this)"` : ''}
         onclick="selectQAOption(this, '${q.id}', '${safeVal}', '${safeTxt}')">
         <span class="qa-opt-txt">${o.txt}</span>
         ${o.sub ? `<span class="qa-opt-sub">${o.sub}</span>` : ''}
@@ -851,6 +851,12 @@ function appendBotQuestion(q) {
     </div>
     ${hasInfo ? '<div class="opt-info-panel"></div>' : ''}
   `;
+  // 컨테이너 벗어날 때만 패널 닫기
+  opts.addEventListener('mouseleave', () => {
+    const panel = opts.querySelector('.opt-info-panel');
+    if (panel) panel.classList.remove('visible');
+  });
+
   thread.appendChild(opts);
   thread.scrollTop = thread.scrollHeight;
 }
@@ -874,10 +880,6 @@ function showOptInfo(btn) {
   panel.classList.add('visible');
 }
 
-function hideOptInfo(btn) {
-  const panel = btn.closest('.bot-options').querySelector('.opt-info-panel');
-  if (panel) panel.classList.remove('visible');
-}
 
 // ── 생성 함수 ─────────────────────────────────────────────────────
 async function generate() {
