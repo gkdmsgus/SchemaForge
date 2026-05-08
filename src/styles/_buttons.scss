@@ -1,0 +1,124 @@
+// ── Generate button (pixel) ─────────────────────────────────
+.generate-btn {
+  width: 100%;
+  position: relative;
+  background: var(--cyan);
+  border: 3px solid #00cccc;
+  border-radius: 0;
+  color: #000;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all .1s;
+  overflow: hidden;
+  text-shadow: none;
+  letter-spacing: 3px;
+  box-shadow: 4px 4px 0px rgba(0,0,0,.8);
+
+  // 상단 하이라이트 바
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: rgba(255,255,255,.4);
+  }
+
+  // 하단 다크 바 (눌린 느낌)
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: rgba(0,0,0,.2);
+  }
+
+  &:hover:not(:disabled) {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px rgba(0,0,0,.8);
+    background: #33ffff;
+  }
+
+  &:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 0px 0px 0px rgba(0,0,0,.8);
+
+    &::before { height: 0; }
+    &::after { height: 4px; }
+  }
+
+  &:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    transform: none;
+  }
+}
+
+// ── Home button ──
+.home-btn {
+  display: block;
+  margin: 0 auto 16px;
+  @include pixel-btn;
+  border-width: 3px;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 24px;
+  letter-spacing: 1px;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: rgba(255,255,255,.06);
+  }
+
+  &:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: var(--glow-cyan);
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0px rgba(0,0,0,.8);
+  }
+
+  &:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0px rgba(0,0,0,.8);
+  }
+}
+
+// ── Spinner ──
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.spinner {
+  width: 16px; height: 16px;
+  border: 3px solid rgba(0,0,0,.3);
+  border-top-color: #000;
+  border-radius: 0;
+  animation: spin .5s steps(8) infinite;
+  display: inline-block;
+}
+
+// ── Theme toggle ──
+.theme-toggle {
+  cursor: pointer;
+  transition: all .15s;
+
+  &:hover {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: rgba(255,170,0,.08);
+  }
+}

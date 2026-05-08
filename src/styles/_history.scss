@@ -1,0 +1,117 @@
+// ── History ──────────────────────────────────────────────────
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.clear-btn {
+  @include pixel-btn;
+  border-width: 3px;
+  color: var(--text3);
+  padding: 5px 14px;
+  font-size: 12px;
+  letter-spacing: 1px;
+
+  &:hover {
+    color: var(--red);
+    border-color: var(--red);
+    background: rgba(255,68,68,.1);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px rgba(0,0,0,.8);
+  }
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 3px dashed var(--border);
+
+  &:last-child { border-bottom: none; }
+}
+
+.hi-info { flex: 1; min-width: 0; }
+
+.hi-name {
+  font-size: 13px;
+  color: var(--text1);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hi-rename {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+
+  .history-item:hover & { opacity: 1; }
+  &:hover { color: var(--cyan); }
+}
+
+.hi-edit-input {
+  width: 100%;
+  background: var(--bg);
+  border: 2px solid var(--cyan);
+  color: var(--text1);
+  font-size: 13px;
+  padding: 4px 8px;
+  outline: none;
+  margin-bottom: 3px;
+}
+
+.hi-time { font-size: 11px; color: var(--text3); }
+
+.hi-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.hi-btn {
+  @include pixel-btn;
+  border-width: 3px;
+  color: var(--text2);
+  padding: 6px 14px;
+  font-size: 12px;
+  letter-spacing: 1px;
+
+  &:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: var(--glow-cyan);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px rgba(0,0,0,.8);
+  }
+}
+
+.hi-del {
+  background: none;
+  border: 2px solid var(--border2);
+  color: var(--text3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 7px;
+  transition: all .15s;
+
+  &:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(255,68,68,.1);
+  }
+}

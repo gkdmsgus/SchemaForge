@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none">
+  
+
+  
+  <ellipse cx="80" cy="134" rx="44" ry="4" fill="#ffb547" opacity="0.12"></ellipse>
+
+  
+  <path d="M 10 112 Q 30 112 40 96 T 80 70" stroke="#7ce3d4" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.55"></path>
+  <circle cx="10" cy="112" r="2.5" fill="#7ce3d4"></circle>
+
+  
+  <rect x="36" y="44" width="88" height="80" rx="12" fill="#1a1e22" stroke="#2d343a" stroke-width="1.5"></rect>
+
+  
+  <rect x="48" y="56" width="64" height="56" rx="6" fill="#ffb547"></rect>
+  
+  <rect x="48" y="56" width="64" height="24" rx="6" fill="url(#dieGloss)"></rect>
+
+  
+  <rect x="48" y="38" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="62" y="38" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="76" y="38" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="90" y="38" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="104" y="38" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  
+  <rect x="48" y="122" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="62" y="122" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="76" y="122" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="90" y="122" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  <rect x="104" y="122" width="6" height="8" rx="1.5" fill="#2d343a"></rect>
+  
+  <rect x="28" y="54" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="28" y="70" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="28" y="86" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="28" y="102" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  
+  <rect x="122" y="54" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="122" y="70" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="122" y="86" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+  <rect x="122" y="102" width="10" height="6" rx="1.5" fill="#2d343a"></rect>
+
+  
+  <circle cx="44" cy="52" r="2.5" fill="#11140f" opacity="0.35"></circle>
+
+  
+  <ellipse cx="68" cy="84" rx="5" ry="6" fill="#11140f"></ellipse>
+  <ellipse cx="92" cy="84" rx="5" ry="6" fill="#11140f"></ellipse>
+  
+  <circle cx="70" cy="82" r="1.4" fill="#fff2d6"></circle>
+  <circle cx="94" cy="82" r="1.4" fill="#fff2d6"></circle>
+
+  
+  <path d="M 72 98 Q 80 103 88 98" stroke="#11140f" stroke-width="2" stroke-linecap="round" fill="none"></path>
+
+  
+  <path d="M 118 44 Q 134 44 140 30" stroke="#7ce3d4" stroke-width="2.2" stroke-linecap="round" fill="none"></path>
+  <circle cx="140" cy="30" r="3" fill="#7ce3d4"></circle>
+  <circle cx="140" cy="30" r="6" fill="#7ce3d4" opacity="0.25"></circle>
+
+  <defs>
+    <linearGradient id="dieGloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"></stop>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"></stop>
+    </linearGradient>
+  </defs>
+</svg>

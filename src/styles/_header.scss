@@ -1,0 +1,94 @@
+// ── Header ──────────────────────────────────────────────────
+.header {
+  text-align: center;
+  padding: 48px 0 32px;
+  margin-bottom: 28px;
+
+  &-tag {
+    display: inline-block;
+    background: var(--bg3);
+    color: var(--cyan);
+    border: 2px solid var(--cyan);
+    border-radius: 0;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+    box-shadow: var(--pixel-shadow-sm);
+  }
+
+  &-deco-left,
+  &-deco-right {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  &-deco-left { left: -60px; }
+  &-deco-right { right: -60px; }
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  &-icon {
+    font-size: 32px;
+    filter: none;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: var(--cyan);
+    text-shadow: 3px 3px 0px var(--violet), -1px -1px 0px var(--green);
+    background: none;
+    -webkit-background-clip: unset;
+    -webkit-text-fill-color: unset;
+    background-clip: unset;
+  }
+}
+
+.subtitle {
+  color: var(--text2);
+  font-size: 14px;
+  margin-bottom: 18px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.badge {
+  @include pixel-btn;
+  color: var(--text2);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+
+  @include pixel-hover-sm(var(--text2));
+
+  &:hover {
+    background: var(--bg3);
+  }
+
+  &.react {
+    background: var(--glow-cyan);
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+}

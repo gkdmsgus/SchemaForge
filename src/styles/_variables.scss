@@ -1,0 +1,65 @@
+// ── CSS Variables & Theme ───────────────────────────────────
+:root {
+  --bg:      #0a0a12;
+  --bg2:     #12121e;
+  --bg3:     #1a1a2e;
+  --border:  #2a2a4a;
+  --border2: #3a3a5a;
+  --cyan:    #00ffff;
+  --violet:  #b040ff;
+  --amber:   #ffaa00;
+  --green:   #00ff88;
+  --red:     #ff4444;
+  --blue:    #4488ff;
+  --text1:   #eeeeff;
+  --text2:   #9999bb;
+  --text3:   #555577;
+  --glow-cyan:   rgba(0,255,255,.1);
+  --glow-violet: rgba(176,64,255,.1);
+  --glow-green:  rgba(0,255,136,.1);
+  --pixel-shadow: 2px 2px 0px rgba(0,0,0,.8);
+  --pixel-shadow-sm: 1px 1px 0px rgba(0,0,0,.6);
+}
+
+// ── Mixin: 라이트 테마 오버라이드 ──
+@mixin light {
+  [data-theme="light"] & {
+    @content;
+  }
+}
+
+// root-level light override (body, html 등)
+@mixin light-root {
+  [data-theme="light"] {
+    @content;
+  }
+}
+
+// ── Mixin: 픽셀 박스 hover ──
+@mixin pixel-hover($color: var(--cyan)) {
+  &:hover {
+    border-color: $color;
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px rgba(0,0,0,.8);
+  }
+}
+
+// ── Mixin: 픽셀 박스 hover (작은) ──
+@mixin pixel-hover-sm($color: var(--cyan)) {
+  &:hover {
+    border-color: $color;
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px rgba(0,0,0,.8);
+  }
+}
+
+// ── Mixin: 픽셀 버튼 기본 ──
+@mixin pixel-btn {
+  background: var(--bg3);
+  border: 2px solid var(--border2);
+  border-radius: 0;
+  cursor: pointer;
+  transition: all .15s;
+  font-family: inherit;
+  box-shadow: var(--pixel-shadow-sm);
+}

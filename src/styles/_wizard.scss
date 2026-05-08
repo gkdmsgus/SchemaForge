@@ -1,0 +1,388 @@
+// ── Category grid (wizard step 1) ──────────────────────────
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+// 카테고리별 색상
+$cat-colors: (
+  1: var(--cyan),
+  2: var(--amber),
+  3: var(--green),
+  4: var(--violet),
+  5: var(--red),
+  6: var(--blue),
+);
+
+.cat-card {
+  background: var(--bg3);
+  border: 3px solid var(--border2);
+  border-radius: 0;
+  padding: 0;
+  text-align: center;
+  cursor: pointer;
+  transition: all .1s;
+  box-shadow: var(--pixel-shadow);
+  position: relative;
+  overflow: hidden;
+
+  // 상단 색상 바 (도트 패턴)
+  &::before {
+    content: '';
+    display: block;
+    height: 4px;
+    background: var(--cyan);
+    // 도트 패턴 바
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent 0px, transparent 2px,
+      rgba(0,0,0,.3) 2px, rgba(0,0,0,.3) 4px
+    );
+  }
+
+  // 코너 픽셀 장식
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    opacity: 0.3;
+    background:
+      linear-gradient(to right, var(--cyan) 4px, transparent 4px) 0 0 / 4px 4px,
+      linear-gradient(to right, transparent 4px, var(--cyan) 4px) 0 4px / 8px 4px;
+    background-repeat: no-repeat;
+    transition: opacity .15s;
+  }
+
+  &:hover {
+    border-color: var(--cyan);
+    background: var(--glow-cyan);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px rgba(0,0,0,.8);
+
+    &::after { opacity: 0.7; }
+
+    .cat-icon { transform: scale(1.15); }
+  }
+
+  &:active {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0px rgba(0,0,0,.8);
+  }
+
+  // 카테고리별 고유 색상
+  @for $i from 1 through 6 {
+    &:nth-child(#{$i}) {
+      &::before {
+        background-color: map-get($cat-colors, $i);
+        background-image: repeating-linear-gradient(
+          90deg,
+          transparent 0px, transparent 2px,
+          rgba(0,0,0,.3) 2px, rgba(0,0,0,.3) 4px
+        );
+      }
+      &::after {
+        background:
+          linear-gradient(to right, map-get($cat-colors, $i) 4px, transparent 4px) 0 0 / 4px 4px,
+          linear-gradient(to right, transparent 4px, map-get($cat-colors, $i) 4px) 0 4px / 8px 4px;
+        background-repeat: no-repeat;
+      }
+      &:hover {
+        border-color: map-get($cat-colors, $i);
+        background: rgba(0,0,0,0);
+
+        .cat-name { color: map-get($cat-colors, $i); }
+      }
+    }
+  }
+}
+
+.cat-inner {
+  padding: 14px 10px 16px;
+}
+
+.cat-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  display: block;
+  transition: transform .1s;
+  // 픽셀 느낌 텍스트 섀도
+  filter: drop-shadow(1px 1px 0px rgba(0,0,0,.5));
+}
+
+.cat-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text1);
+  margin-bottom: 4px;
+  text-shadow: var(--pixel-shadow-sm);
+  letter-spacing: 1px;
+  transition: color .15s;
+}
+
+.cat-desc {
+  font-size: 10px;
+  color: var(--text3);
+  letter-spacing: 0.5px;
+}
+
+.manual-btn {
+  width: 100%;
+  background: var(--bg3);
+  border: 3px dashed var(--violet);
+  border-radius: 0;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 14px;
+  cursor: pointer;
+  transition: all .15s;
+  box-shadow: var(--pixel-shadow-sm);
+  position: relative;
+  letter-spacing: 1px;
+
+  // 좌측 픽셀 바
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--violet);
+    background-image: repeating-linear-gradient(
+      180deg,
+      transparent 0px, transparent 2px,
+      rgba(0,0,0,.3) 2px, rgba(0,0,0,.3) 4px
+    );
+  }
+
+  &:hover {
+    border-color: var(--violet);
+    color: var(--violet);
+    background: var(--glow-violet);
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0px rgba(0,0,0,.8);
+  }
+
+  &:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0px rgba(0,0,0,.8);
+  }
+}
+
+// ── Wizard nav / breadcrumb ──
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.back-btn {
+  @include pixel-btn;
+  color: var(--text2);
+  padding: 6px 16px;
+  font-size: 12px;
+  border-width: 3px;
+  position: relative;
+  letter-spacing: 1px;
+
+  // 픽셀 화살표 효과
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-left: 3px solid var(--text2);
+    border-bottom: 3px solid var(--text2);
+    transform: rotate(45deg);
+    margin-right: 4px;
+    transition: border-color .15s;
+  }
+
+  &:hover {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0px rgba(0,0,0,.8);
+
+    &::before { border-color: var(--cyan); }
+  }
+
+  &:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0px rgba(0,0,0,.8);
+  }
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.bc-arrow { color: var(--text3); }
+.bc-current { color: var(--cyan); font-weight: 600; }
+
+// ── Circuit list (wizard step 2) ──
+.circuit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.circuit-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg3);
+  border: 3px solid var(--border2);
+  border-radius: 0;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all .1s;
+  text-align: left;
+  width: 100%;
+  box-shadow: var(--pixel-shadow);
+  position: relative;
+
+  // 좌측 색상 바
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--cyan);
+    background-image: repeating-linear-gradient(
+      180deg,
+      transparent 0px, transparent 3px,
+      rgba(0,0,0,.3) 3px, rgba(0,0,0,.3) 6px
+    );
+    opacity: 0;
+    transition: opacity .15s;
+  }
+
+  &:hover {
+    border-color: var(--cyan);
+    background: var(--glow-cyan);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px rgba(0,0,0,.8);
+
+    &::before { opacity: 1; }
+    .ci-arrow { transform: translateX(3px); }
+  }
+
+  &:active {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0px rgba(0,0,0,.8);
+  }
+}
+
+.ci-left { flex: 1; min-width: 0; }
+.ci-name { font-size: 14px; font-weight: 700; color: var(--text1); margin-bottom: 4px; letter-spacing: 0.5px; }
+.ci-desc { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+.ci-parts { font-size: 11px; color: var(--text3); }
+.ci-arrow {
+  font-size: 20px;
+  color: var(--cyan);
+  flex-shrink: 0;
+  margin-left: 12px;
+  transition: transform .15s;
+  text-shadow: var(--pixel-shadow-sm);
+}
+
+// ── Preview box (wizard step 3) ──
+.preview-box {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg3);
+  border: 3px solid var(--border2);
+  border-radius: 0;
+  padding: 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--pixel-shadow);
+  position: relative;
+
+  // 상단 도트 패턴 바
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: var(--green);
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent 0px, transparent 2px,
+      rgba(0,0,0,.3) 2px, rgba(0,0,0,.3) 4px
+    );
+  }
+}
+
+.preview-icon {
+  font-size: 44px;
+  flex-shrink: 0;
+  filter: drop-shadow(2px 2px 0px rgba(0,0,0,.5));
+}
+
+.preview-name { font-size: 16px; font-weight: 700; color: var(--text1); margin-bottom: 4px; text-shadow: var(--pixel-shadow-sm); }
+.preview-desc { font-size: 13px; color: var(--text2); margin-bottom: 6px; }
+.preview-parts { font-size: 12px; color: var(--text3); }
+
+.kicad-tip {
+  background: rgba(0,255,255,.05);
+  border: 3px solid rgba(0,255,255,.3);
+  border-radius: 0;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 14px;
+  position: relative;
+
+  // 좌측 도트 바
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--cyan);
+  }
+}
+
+// ── Input ──
+textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 3px solid var(--border2);
+  border-radius: 0;
+  color: var(--text1);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 12px;
+  resize: vertical;
+  outline: none;
+  transition: border-color .15s;
+  margin-bottom: 14px;
+  box-shadow: inset 2px 2px 0px rgba(0,0,0,.4);
+
+  &:focus {
+    border-color: var(--cyan);
+    box-shadow: inset 2px 2px 0px rgba(0,0,0,.4), 0 0 0 1px var(--cyan);
+  }
+
+  &::placeholder { color: var(--text3); }
+}

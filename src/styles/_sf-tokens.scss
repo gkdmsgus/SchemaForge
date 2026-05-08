@@ -1,0 +1,207 @@
+// ============================================================================
+// SchemaForge — Design Tokens
+// ----------------------------------------------------------------------------
+//   Dark PCB aesthetic · Amber + Cyan + Violet accents
+//   Space Grotesk + IBM Plex Mono
+// ============================================================================
+
+// ── Raw values (Sass-side) ───────────────────────────────────────────────────
+$sf-bg:           #07080a;
+$sf-bg-1:         #0c0e11;
+$sf-bg-2:         #131619;
+$sf-bg-3:         #1a1e22;
+$sf-bg-4:         #23272c;
+
+$sf-fg:           #eaf0ee;
+$sf-fg-muted:     #9aa4a6;
+$sf-fg-dim:       #6b7378;
+$sf-fg-faint:     #434a4f;
+
+$sf-amber:        #ffb547;
+$sf-amber-deep:   #e0961f;
+$sf-cyan:         #7ce3d4;
+$sf-cyan-deep:    #3fb8a7;
+
+$sf-violet:       #b08bff;
+$sf-violet-deep:  #8a5dd8;
+
+$sf-line:         #20252a;
+$sf-line-soft:    #191d21;
+$sf-line-strong:  #2d343a;
+$sf-line-trace:   #2a3138;
+
+$sf-danger:       #ff6a5b;
+
+$sf-font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+$sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+// ── Webfonts ─────────────────────────────────────────────────────────────────
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+// ── CSS custom properties ────────────────────────────────────────────────────
+:root {
+  // Surfaces
+  --sf-bg:           #{$sf-bg};
+  --sf-bg-1:         #{$sf-bg-1};
+  --sf-bg-2:         #{$sf-bg-2};
+  --sf-bg-3:         #{$sf-bg-3};
+  --sf-bg-4:         #{$sf-bg-4};
+  --sf-bg-inverse:   #f4f1ea;
+
+  // Lines
+  --sf-line:         #{$sf-line};
+  --sf-line-soft:    #{$sf-line-soft};
+  --sf-line-strong:  #{$sf-line-strong};
+  --sf-line-trace:   #{$sf-line-trace};
+
+  // Text
+  --sf-fg:           #{$sf-fg};
+  --sf-fg-muted:     #{$sf-fg-muted};
+  --sf-fg-dim:       #{$sf-fg-dim};
+  --sf-fg-faint:     #{$sf-fg-faint};
+  --sf-fg-inverse:   #11140f;
+
+  // Accents — Amber
+  --sf-amber:        #{$sf-amber};
+  --sf-amber-deep:   #{$sf-amber-deep};
+  --sf-amber-soft:   rgba(255, 181, 71, 0.14);
+  --sf-amber-line:   rgba(255, 181, 71, 0.32);
+
+  // Accents — Cyan
+  --sf-cyan:         #{$sf-cyan};
+  --sf-cyan-deep:    #{$sf-cyan-deep};
+  --sf-cyan-soft:    rgba(124, 227, 212, 0.12);
+  --sf-cyan-line:    rgba(124, 227, 212, 0.28);
+
+  // Accents — Violet (AI / agent)
+  --sf-violet:       #{$sf-violet};
+  --sf-violet-deep:  #{$sf-violet-deep};
+  --sf-violet-soft:  rgba(176, 139, 255, 0.14);
+  --sf-violet-line:  rgba(176, 139, 255, 0.36);
+
+  // Semantic
+  --sf-success:      #{$sf-cyan};
+  --sf-warn:         #{$sf-amber};
+  --sf-danger:       #{$sf-danger};
+  --sf-info:         #{$sf-fg-muted};
+
+  // Shadows & glows
+  --sf-shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.4);
+  --sf-shadow-md:    0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sf-shadow-lg:    0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+  --sf-glow-amber:   0 0 32px rgba(255, 181, 71, 0.25);
+  --sf-glow-cyan:    0 0 32px rgba(124, 227, 212, 0.2);
+  --sf-glow-violet:  0 0 32px rgba(176, 139, 255, 0.28);
+
+  // Radii
+  --sf-r-xs:    4px;
+  --sf-r-sm:    8px;
+  --sf-r-md:    12px;
+  --sf-r-lg:    18px;
+  --sf-r-xl:    28px;
+  --sf-r-pill:  999px;
+
+  // Spacing (4/8 grid)
+  --sf-s-1:  2px;
+  --sf-s-2:  4px;
+  --sf-s-3:  8px;
+  --sf-s-4:  12px;
+  --sf-s-5:  16px;
+  --sf-s-6:  20px;
+  --sf-s-7:  24px;
+  --sf-s-8:  32px;
+  --sf-s-9:  48px;
+  --sf-s-10: 64px;
+  --sf-s-11: 96px;
+  --sf-s-12: 128px;
+
+  // Motion
+  --sf-ease:        cubic-bezier(0.2, 0.8, 0.2, 1);
+  --sf-ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --sf-dur-fast:    120ms;
+  --sf-dur:         220ms;
+  --sf-dur-slow:    520ms;
+
+  // Type
+  --sf-font-sans: #{$sf-font-sans};
+  --sf-font-mono: #{$sf-font-mono};
+}
+
+// ── Base resets ───────────────────────────────────────────────────────────────
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--sf-bg);
+  color: var(--sf-fg);
+  font-family: var(--sf-font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01', 'cv11';
+}
+
+::selection { background: var(--sf-amber-soft); color: var(--sf-amber); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sf-bg-3);
+  border-radius: 5px;
+  border: 2px solid var(--sf-bg-1);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sf-bg-4); }
+
+// ── Type roles ────────────────────────────────────────────────────────────────
+.sf-display-xl,
+.sf-display-l,
+.sf-display-m,
+.sf-heading-l,
+.sf-heading-m,
+.sf-heading-s {
+  font-family: var(--sf-font-sans);
+  color: var(--sf-fg);
+  margin: 0;
+}
+.sf-display-xl { font-size: clamp(56px, 8vw,  96px); font-weight: 600; line-height: 0.98; letter-spacing: -0.030em; }
+.sf-display-l  { font-size: clamp(40px, 5.5vw, 64px); font-weight: 600; line-height: 1.04; letter-spacing: -0.025em; }
+.sf-display-m  { font-size: clamp(32px, 4vw,   44px); font-weight: 500; line-height: 1.08; letter-spacing: -0.020em; }
+.sf-heading-l  { font-size: 28px; font-weight: 600; line-height: 1.14; letter-spacing: -0.015em; }
+.sf-heading-m  { font-size: 20px; font-weight: 600; line-height: 1.25; letter-spacing: -0.010em; }
+.sf-heading-s  { font-size: 16px; font-weight: 600; line-height: 1.30; letter-spacing: -0.005em; }
+
+.sf-body-l  { font-size: 18px; line-height: 1.55; color: var(--sf-fg-muted); font-weight: 400; }
+.sf-body    { font-size: 15px; line-height: 1.55; color: var(--sf-fg-muted); font-weight: 400; }
+.sf-body-s  { font-size: 13px; line-height: 1.50; color: var(--sf-fg-muted); font-weight: 400; }
+.sf-caption { font-size: 12px; line-height: 1.40; color: var(--sf-fg-dim);   font-weight: 500; letter-spacing: 0.02em; }
+
+.sf-mono, .sf-eyebrow, .sf-code { font-family: var(--sf-font-mono); }
+.sf-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sf-fg-dim);
+}
+.sf-mono { font-size: 13px; color: var(--sf-fg-muted); }
+.sf-code {
+  font-size: 13px;
+  background: var(--sf-bg-3);
+  color: var(--sf-cyan);
+  padding: 2px 6px;
+  border-radius: var(--sf-r-xs);
+  border: 1px solid var(--sf-line);
+}
+
+// ── Shared keyframes ──────────────────────────────────────────────────────────
+@keyframes sf-spin       { to { transform: rotate(360deg); } }
+@keyframes sf-pulse      { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes sf-trace-draw { to { stroke-dashoffset: 0; } }
+@keyframes sf-fade-up    { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes sf-node-pulse { 0% { r: 10; opacity: 0.5; } 100% { r: 20; opacity: 0; } }
+@keyframes sf-bubble-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}

@@ -1,0 +1,64 @@
+// ── Mobile ──────────────────────────────────────────────────
+@media (max-width: 800px) {
+  .header-deco-left,
+  .header-deco-right { display: none; }
+}
+
+@media (max-width: 600px) {
+  .wrap { padding: 0 12px 80px; }
+
+  .header { padding: 28px 0 20px; }
+
+  .logo {
+    h1 { font-size: 20px; }
+    &-icon { font-size: 24px; }
+  }
+
+  .subtitle { font-size: 12px; }
+  .badges { gap: 5px; }
+  .badge { font-size: 10px; padding: 3px 8px; }
+
+  .card { padding: 14px; }
+  .card-heading { font-size: 15px; }
+
+  .cat-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cat-icon { font-size: 22px; }
+  .cat-name { font-size: 12px; }
+  .cat-desc { font-size: 10px; }
+
+  .circuit-item { padding: 12px; }
+  .ci-name { font-size: 13px; }
+
+  .step-connector { max-width: 20px; }
+  .step-dot { width: 26px; height: 26px; font-size: 10px; }
+  .step-label { font-size: 10px; }
+
+  .result-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .result-actions { flex-wrap: wrap; width: 100%; }
+  .action-btn { flex: 1; min-width: 0; text-align: center; font-size: 11px; padding: 8px; }
+
+  .result-grid { grid-template-columns: 1fr; }
+
+  .bom-table { font-size: 12px; }
+  .bom-table th, .bom-table td { padding: 8px 6px; }
+
+  .qa-opt { padding: 10px 12px; }
+  .qa-opt-txt { font-size: 12px; }
+
+  .chat-thread { max-height: 50vh; }
+
+  .generate-btn { font-size: 13px; padding: 12px; }
+
+  .zoom-controls { gap: 4px; }
+  .zoom-btn { padding: 4px 8px; font-size: 11px; }
+
+  .fav-list { gap: 6px; }
+  .fav-chip { font-size: 11px; padding: 4px 10px; }
+}
+
+@media (max-width: 400px) {
+  .cat-grid { grid-template-columns: 1fr 1fr; }
+  .badges { justify-content: flex-start; }
+  .result-actions { gap: 6px; }
+  .steps { gap: 2px; }
+}
