@@ -40,6 +40,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
   const lastPrompt = useRef('')
+  const abortRef = useRef(null)
   const [settings, setSettings] = useState(getSettings)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [clarify, setClarify] = useState(null)
@@ -49,6 +50,7 @@ export default function App() {
   const [sideDrawerOpen, setSideDrawerOpen] = useState(false)
   const [initialChatSession, setInitialChatSession] = useState(null)
   const [resultKey, setResultKey] = useState(0)
+  const [pendingCached, setPendingCached] = useState(null)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', 'dark')
@@ -114,20 +116,19 @@ export default function App() {
   }
 
   function handleCancel() {
+    abortRef.current?.abort()
+    abortRef.current = null
     goHome()
     setLoading(false)
   }
 
-  async function runGenerate(p, typeKey) {
+  async function runGenerate(p, typeKey, skipCache = false) {
     if (!p.trim() || loading) return
 
-    const cached = getSavedResults().find(s => s.prompt === p)
-    if (cached) {
-      const use = confirm('이미 저장된 결과가 있어요! 불러올까요?\n(취소를 누르면 새로 생성합니다)')
-      if (use) {
-        lastPrompt.current = p
-        setResult(cached.result)
-        setInitialChatSession({ messages: cached.messages || [], graph: cached.result?.graph || null })
+    if (!skipCache) {
+      const cached = getSavedResults().find(s => s.prompt === p)
+      if (cached) {
+        setPendingCached({ prompt: p, typeKey, cached })
         return
       }
     }
@@ -156,6 +157,7 @@ export default function App() {
   async function executeGenerate(p) {
     setClarify(null)
     setPlan(null)
+    setPendingCached(null)
     lastPrompt.current = p
     setLoading(true)
     setError(null)
@@ -163,11 +165,15 @@ export default function App() {
     setProgress({ msg: '준비 중...', step: 0 })
     setLogLines([{ ts: nowTs(), kind: 'info', msg: `forge generate "${p.slice(0, 60)}"` }])
 
+    const abort = new AbortController()
+    abortRef.current = abort
+
     try {
       const res = await fetch(`${API}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: p }),
+        signal: abort.signal,
       })
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -231,10 +237,12 @@ export default function App() {
         }
       }
     } catch (e) {
+      if (e.name === 'AbortError') return
       setError(`네트워크 오류: ${e.message}`)
       setProgress(null)
     } finally {
       setLoading(false)
+      abortRef.current = null
     }
   }
 
@@ -269,6 +277,36 @@ export default function App() {
         settings={settings}
         setSettings={setSettings}
       />
+
+      {pendingCached && !result && !loading && (
+        <div style={{ maxWidth: 760, margin: '24px auto 0', padding: '0 24px' }}>
+          <div style={{
+            background: 'var(--sf-bg-2)',
+            border: '1px solid var(--sf-amber-line)',
+            borderRadius: 'var(--sf-r-md)',
+            padding: '14px 18px',
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+          }}>
+            <span style={{ flex: 1, minWidth: 200, fontSize: 13.5, color: 'var(--sf-fg)' }}>
+              이 회로의 저장된 결과가 있어요. 불러올까요?
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => {
+              const { prompt, cached } = pendingCached
+              lastPrompt.current = prompt
+              setResult(cached.result)
+              setInitialChatSession({ messages: cached.messages || [], graph: cached.result?.graph || null })
+              setResultKey(k => k + 1)
+              setPendingCached(null)
+            }}>불러오기</Button>
+            <Button variant="primary" size="sm" onClick={() => {
+              const { prompt, typeKey } = pendingCached
+              setPendingCached(null)
+              runGenerate(prompt, typeKey, true)
+            }}>새로 생성</Button>
+            <Button variant="ghost" size="sm" onClick={() => setPendingCached(null)}>취소</Button>
+          </div>
+        </div>
+      )}
 
       {!result && !error && clarify && (
         <ClarifyPanel

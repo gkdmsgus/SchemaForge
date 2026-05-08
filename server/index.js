@@ -382,8 +382,12 @@ app.post('/generate', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders(); // flush immediately — key for SSE!
 
+  const abort = new AbortController();
+  req.on('close', () => abort.abort());
+
   try {
     // Step 1 — Tavily web search
+    if (abort.signal.aborted) return res.end();
     res.write(sse('status', '🔍 Searching for circuit references...'));
     let context = '', sourceUrls = [];
     try {
@@ -402,6 +406,7 @@ app.post('/generate', async (req, res) => {
     }
 
     // Step 2 — GPT-4o code generation
+    if (abort.signal.aborted) return res.end();
     res.write(sse('status', '🤖 GPT-4o is analysing and generating the circuit...'));
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const userMsg =
@@ -417,19 +422,24 @@ app.post('/generate', async (req, res) => {
       { role: 'user', content: userMsg },
     ];
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages,
-        temperature: 0.1,
-        max_tokens: 2500,
-      });
-      raw = response.choices[0].message.content.trim();
-      if (raw.startsWith('from skidl')) break;
-      if (attempt === 0) {
-        messages.push({ role: 'assistant', content: raw });
-        messages.push({ role: 'user', content: "Output only skidl Python code starting with 'from skidl import *'. Generate now." });
+    const genTimeout = setTimeout(() => abort.abort(), 45000);
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages,
+          temperature: 0.1,
+          max_tokens: 2500,
+        }, { signal: abort.signal });
+        raw = response.choices[0].message.content.trim();
+        if (raw.startsWith('from skidl')) break;
+        if (attempt === 0) {
+          messages.push({ role: 'assistant', content: raw });
+          messages.push({ role: 'user', content: "Output only skidl Python code starting with 'from skidl import *'. Generate now." });
+        }
       }
+    } finally {
+      clearTimeout(genTimeout);
     }
 
     let [skidlCode, guide] = raw.includes('---GUIDE---')
@@ -441,11 +451,13 @@ app.post('/generate', async (req, res) => {
     }
 
     // Step 3 — run skidl (with 1 auto-retry on error)
+    if (abort.signal.aborted) return res.end();
     res.write(sse('status', '⚙️ Generating netlist...'));
     let outputPath;
     try {
       outputPath = await runSkidl(skidlCode);
     } catch (firstErr) {
+      if (abort.signal.aborted) return res.end();
       // Auto-retry: send error back to GPT for self-correction
       res.write(sse('status', '🔧 Fixing code and retrying...'));
       try {
@@ -455,9 +467,15 @@ app.post('/generate', async (req, res) => {
           { role: 'assistant', content: raw },
           { role: 'user', content: `The code above failed with this error:\n${firstErr.message}\n\nFix the code. Output ONLY the corrected skidl Python code (from skidl import * ... generate_netlist()) followed by ---GUIDE--- and the Korean guide.` },
         ];
-        const fixResp = await openai.chat.completions.create({
-          model: 'gpt-4o', messages: fixMessages, temperature: 0.05, max_tokens: 2500,
-        });
+        const retryTimeout = setTimeout(() => abort.abort(), 45000);
+        let fixResp;
+        try {
+          fixResp = await openai.chat.completions.create({
+            model: 'gpt-4o', messages: fixMessages, temperature: 0.05, max_tokens: 2500,
+          }, { signal: abort.signal });
+        } finally {
+          clearTimeout(retryTimeout);
+        }
         let fixRaw = fixResp.choices[0].message.content.trim();
         let [fixCode, fixGuide] = fixRaw.includes('---GUIDE---')
           ? fixRaw.split('---GUIDE---', 2).map(s => s.trim())
@@ -493,7 +511,9 @@ app.post('/generate', async (req, res) => {
       graph,
     })));
   } catch (e) {
-    res.write(sse('error', `Server error: ${e.message}`));
+    if (!abort.signal.aborted) {
+      res.write(sse('error', `Server error: ${e.message}`));
+    }
   }
 
   res.end();
