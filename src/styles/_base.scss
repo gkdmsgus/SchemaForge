@@ -6,6 +6,14 @@ button, input, select, textarea {
   font-size: inherit;
 }
 
+textarea {
+  outline: none;
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
+  &:focus { outline: none; box-shadow: none; }
+}
+
 body {
   background: var(--sf-bg);
   color: var(--sf-fg);
