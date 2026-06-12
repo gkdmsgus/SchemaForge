@@ -59,7 +59,11 @@ app.use(cors({
 app.use(express.json())
 
 // Production: serve built React files
-const distPath = join(process.cwd(), 'dist')
+// Dockerfile에서 WORKDIR은 /app/server, dist는 /app/dist에 복사됨
+const distPath = existsSync(join(process.cwd(), 'dist'))
+  ? join(process.cwd(), 'dist')
+  : join(process.cwd(), '..', 'dist')
+
 if (existsSync(distPath)) {
   app.use(express.static(distPath))
 }
