@@ -762,7 +762,7 @@ app.post('/generate_pcb', async (req: Request, res: Response) => {
   const pcbPath = join(OUTPUTS_DIR, pcbFilename)
 
   try {
-    const proc = spawn('python', [join(process.cwd(), 'server', 'pcb_generator.py'), netPath, pcbPath])
+    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath])
     let stderr = ''
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     await new Promise<void>((resolve, reject) => {
@@ -793,7 +793,7 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
 
   try {
     writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
-    const proc = spawn('python', [join(process.cwd(), 'server', 'pcb_generator.py'), netPath, pcbPath])
+    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath])
     let stderr = ''
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     await new Promise<void>((resolve, reject) => {
