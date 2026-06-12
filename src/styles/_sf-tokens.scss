@@ -1,44 +1,55 @@
 // ============================================================================
-// SchemaForge — Design Tokens
+// _sf-tokens.scss — FULL REPLACEMENT (beige · warm paper)
 // ----------------------------------------------------------------------------
-//   Dark PCB aesthetic · Amber + Cyan + Violet accents
-//   Space Grotesk + IBM Plex Mono
+//   Replace src/styles/_sf-tokens.scss with this file wholesale.
+//   It commits the BEIGE palette (chosen from Palette comparison.html) as
+//   the canonical token set: coral amber, moss cyan, aubergine violet, warm
+//   paper surfaces, ink-on-amber = light cream.
+//
+//   What changed vs the previous dark token file:
+//     • bg/bg-* now warm cream values (was near-black)
+//     • fg/fg-* now warm dark values (was off-white)
+//     • amber #ffb547 → #c87515 (coral, readable on cream)
+//     • cyan  #7ce3d4 → #1d7a6a (moss, readable on cream)
+//     • violet #b08bff → #6a4cb5 (aubergine, readable on cream)
+//     • NEW: --sf-ink-on-amber = #fbf7ec (button text on coral)
+//     • bg-inverse swapped: now points at warm-dark for code/log blocks
+//     • shadows: warm-tinted (rgba 74,52,18) instead of black
 // ============================================================================
 
-// ── Raw values (Sass-side) ───────────────────────────────────────────────────
-$sf-bg:           #07080a;
-$sf-bg-1:         #0c0e11;
-$sf-bg-2:         #131619;
-$sf-bg-3:         #1a1e22;
-$sf-bg-4:         #23272c;
+// ── Raw values (Sass-side) ──────────────────────────────────────────────────
+$sf-bg:           #f1ece0;
+$sf-bg-1:         #e8e1d1;
+$sf-bg-2:         #fbf7ec;
+$sf-bg-3:         #f6f0e0;
+$sf-bg-4:         #ede5d0;
 
-$sf-fg:           #eaf0ee;
-$sf-fg-muted:     #9aa4a6;
-$sf-fg-dim:       #6b7378;
-$sf-fg-faint:     #434a4f;
+$sf-fg:           #1a1611;
+$sf-fg-muted:     #5c5444;
+$sf-fg-dim:       #8a8270;
+$sf-fg-faint:     #b0a895;
 
-$sf-amber:        #ffb547;
-$sf-amber-deep:   #e0961f;
-$sf-cyan:         #7ce3d4;
-$sf-cyan-deep:    #3fb8a7;
+$sf-amber:        #c87515;
+$sf-amber-deep:   #a14a2c;
+$sf-cyan:         #1d7a6a;
+$sf-cyan-deep:    #145e51;
+$sf-violet:       #6a4cb5;
+$sf-violet-deep:  #4f368b;
 
-$sf-violet:       #b08bff;
-$sf-violet-deep:  #8a5dd8;
+$sf-line:         #bfb49a;
+$sf-line-soft:    #d6cdb6;
+$sf-line-strong:  #8e7f62;
+$sf-line-trace:   #b0a484;
 
-$sf-line:         #20252a;
-$sf-line-soft:    #191d21;
-$sf-line-strong:  #2d343a;
-$sf-line-trace:   #2a3138;
-
-$sf-danger:       #ff6a5b;
+$sf-danger:       #b04826;
 
 $sf-font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-// ── Webfonts ─────────────────────────────────────────────────────────────────
+// ── Webfonts ────────────────────────────────────────────────────────────────
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
-// ── CSS custom properties ────────────────────────────────────────────────────
+// ── CSS custom properties (consumed by JSX components) ──────────────────────
 :root {
   // Surfaces
   --sf-bg:           #{$sf-bg};
@@ -46,7 +57,7 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   --sf-bg-2:         #{$sf-bg-2};
   --sf-bg-3:         #{$sf-bg-3};
   --sf-bg-4:         #{$sf-bg-4};
-  --sf-bg-inverse:   #f4f1ea;
+  --sf-bg-inverse:   #2a1f15;   /* warm dark — for code, log, terminal blocks */
 
   // Lines
   --sf-line:         #{$sf-line};
@@ -59,25 +70,27 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   --sf-fg-muted:     #{$sf-fg-muted};
   --sf-fg-dim:       #{$sf-fg-dim};
   --sf-fg-faint:     #{$sf-fg-faint};
-  --sf-fg-inverse:   #11140f;
+  --sf-fg-inverse:   #f5efe1;   /* on inverted (dark) surfaces */
 
-  // Accents — Amber
+  // Accents
   --sf-amber:        #{$sf-amber};
   --sf-amber-deep:   #{$sf-amber-deep};
-  --sf-amber-soft:   rgba(255, 181, 71, 0.14);
-  --sf-amber-line:   rgba(255, 181, 71, 0.32);
+  --sf-amber-soft:   rgba(200, 117, 21, 0.10);
+  --sf-amber-line:   rgba(200, 117, 21, 0.36);
 
-  // Accents — Cyan
   --sf-cyan:         #{$sf-cyan};
   --sf-cyan-deep:    #{$sf-cyan-deep};
-  --sf-cyan-soft:    rgba(124, 227, 212, 0.12);
-  --sf-cyan-line:    rgba(124, 227, 212, 0.28);
+  --sf-cyan-soft:    rgba(29, 122, 106, 0.10);
+  --sf-cyan-line:    rgba(29, 122, 106, 0.32);
 
-  // Accents — Violet (AI / agent)
   --sf-violet:       #{$sf-violet};
   --sf-violet-deep:  #{$sf-violet-deep};
-  --sf-violet-soft:  rgba(176, 139, 255, 0.14);
-  --sf-violet-line:  rgba(176, 139, 255, 0.36);
+  --sf-violet-soft:  rgba(106, 76, 181, 0.10);
+  --sf-violet-line:  rgba(106, 76, 181, 0.36);
+
+  // Ink-on-amber: cream text for coral CTAs. Use this everywhere you wrote
+  // color:'#11140f' on an amber button — replace with var(--sf-ink-on-amber).
+  --sf-ink-on-amber: #fbf7ec;
 
   // Semantic
   --sf-success:      #{$sf-cyan};
@@ -85,85 +98,54 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   --sf-danger:       #{$sf-danger};
   --sf-info:         #{$sf-fg-muted};
 
-  // Shadows & glows
-  --sf-shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.4);
-  --sf-shadow-md:    0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
-  --sf-shadow-lg:    0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
-  --sf-glow-amber:   0 0 32px rgba(255, 181, 71, 0.25);
-  --sf-glow-cyan:    0 0 32px rgba(124, 227, 212, 0.2);
-  --sf-glow-violet:  0 0 32px rgba(176, 139, 255, 0.28);
+  // Shadows (warm-tinted, not black)
+  --sf-shadow-sm:    0 1px 2px rgba(74, 52, 18, 0.06);
+  --sf-shadow-md:    0 6px 18px rgba(74, 52, 18, 0.10), 0 1px 2px rgba(74, 52, 18, 0.08);
+  --sf-shadow-lg:    0 18px 48px rgba(74, 52, 18, 0.14), 0 2px 4px rgba(74, 52, 18, 0.08);
+  --sf-glow-amber:   0 0 24px rgba(200, 117, 21, 0.18);
+  --sf-glow-cyan:    0 0 24px rgba(29, 122, 106, 0.16);
+  --sf-glow-violet:  0 0 24px rgba(106, 76, 181, 0.18);
 
-  // Radii
-  --sf-r-xs:    4px;
-  --sf-r-sm:    8px;
-  --sf-r-md:    12px;
-  --sf-r-lg:    18px;
-  --sf-r-xl:    28px;
-  --sf-r-pill:  999px;
+  // Radii / Spacing / Motion / Type — unchanged from previous file
+  --sf-r-xs: 4px;  --sf-r-sm: 8px;  --sf-r-md: 12px;
+  --sf-r-lg: 18px; --sf-r-xl: 28px; --sf-r-pill: 999px;
 
-  // Spacing (4/8 grid)
-  --sf-s-1:  2px;
-  --sf-s-2:  4px;
-  --sf-s-3:  8px;
-  --sf-s-4:  12px;
-  --sf-s-5:  16px;
-  --sf-s-6:  20px;
-  --sf-s-7:  24px;
-  --sf-s-8:  32px;
-  --sf-s-9:  48px;
-  --sf-s-10: 64px;
-  --sf-s-11: 96px;
-  --sf-s-12: 128px;
+  --sf-s-1:  2px;  --sf-s-2:  4px;  --sf-s-3:  8px;  --sf-s-4: 12px;
+  --sf-s-5: 16px;  --sf-s-6: 20px;  --sf-s-7: 24px;  --sf-s-8: 32px;
+  --sf-s-9: 48px;  --sf-s-10: 64px; --sf-s-11: 96px; --sf-s-12: 128px;
 
-  // Motion
   --sf-ease:        cubic-bezier(0.2, 0.8, 0.2, 1);
   --sf-ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
   --sf-dur-fast:    120ms;
   --sf-dur:         220ms;
   --sf-dur-slow:    520ms;
 
-  // Type
   --sf-font-sans: #{$sf-font-sans};
   --sf-font-mono: #{$sf-font-mono};
 }
 
-// ── Base resets ───────────────────────────────────────────────────────────────
+// ── Base resets ─────────────────────────────────────────────────────────────
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
-  margin: 0;
-  padding: 0;
-  background: var(--sf-bg);
-  color: var(--sf-fg);
-  font-family: var(--sf-font-sans);
-  font-size: 16px;
-  line-height: 1.5;
+  margin: 0; padding: 0;
+  background: var(--sf-bg); color: var(--sf-fg);
+  font-family: var(--sf-font-sans); font-size: 16px; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'ss01', 'cv11';
 }
 
 ::selection { background: var(--sf-amber-soft); color: var(--sf-amber); }
-
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--sf-bg-3);
-  border-radius: 5px;
-  border: 2px solid var(--sf-bg-1);
-}
-::-webkit-scrollbar-thumb:hover { background: var(--sf-bg-4); }
+::-webkit-scrollbar-thumb { background: var(--sf-line-strong); border-radius: 5px; border: 2px solid var(--sf-bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--sf-fg-dim); }
 
-// ── Type roles ────────────────────────────────────────────────────────────────
-.sf-display-xl,
-.sf-display-l,
-.sf-display-m,
-.sf-heading-l,
-.sf-heading-m,
-.sf-heading-s {
-  font-family: var(--sf-font-sans);
-  color: var(--sf-fg);
-  margin: 0;
+// ── Type roles ──────────────────────────────────────────────────────────────
+.sf-display-xl, .sf-display-l, .sf-display-m,
+.sf-heading-l, .sf-heading-m, .sf-heading-s {
+  font-family: var(--sf-font-sans); color: var(--sf-fg); margin: 0;
 }
 .sf-display-xl { font-size: clamp(56px, 8vw,  96px); font-weight: 600; line-height: 0.98; letter-spacing: -0.030em; }
 .sf-display-l  { font-size: clamp(40px, 5.5vw, 64px); font-weight: 600; line-height: 1.04; letter-spacing: -0.025em; }
@@ -179,29 +161,18 @@ html, body {
 
 .sf-mono, .sf-eyebrow, .sf-code { font-family: var(--sf-font-mono); }
 .sf-eyebrow {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--sf-fg-dim);
 }
 .sf-mono { font-size: 13px; color: var(--sf-fg-muted); }
 .sf-code {
-  font-size: 13px;
-  background: var(--sf-bg-3);
-  color: var(--sf-cyan);
-  padding: 2px 6px;
-  border-radius: var(--sf-r-xs);
-  border: 1px solid var(--sf-line);
+  font-size: 13px; background: var(--sf-bg-3); color: var(--sf-amber-deep);
+  padding: 2px 6px; border-radius: var(--sf-r-xs); border: 1px solid var(--sf-line);
 }
 
-// ── Shared keyframes ──────────────────────────────────────────────────────────
+// ── Shared keyframes ────────────────────────────────────────────────────────
 @keyframes sf-spin       { to { transform: rotate(360deg); } }
 @keyframes sf-pulse      { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes sf-trace-draw { to { stroke-dashoffset: 0; } }
 @keyframes sf-fade-up    { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes sf-node-pulse { 0% { r: 10; opacity: 0.5; } 100% { r: 20; opacity: 0; } }
-@keyframes sf-bubble-in {
-  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}

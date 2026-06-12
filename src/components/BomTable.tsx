@@ -1,12 +1,13 @@
 import { useState } from 'react'
+import type { ComponentEntry } from '../types'
 
-const COMP_NAMES = { R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED', L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터', K:'릴레이', LS:'스피커/버저', BT:'배터리' }
+const COMP_NAMES: Record<string, string> = { R:'저항', C:'캐패시터', Q:'트랜지스터', D:'다이오드/LED', L:'인덕터', U:'IC', Y:'크리스탈', SW:'스위치', J:'커넥터', K:'릴레이', LS:'스피커/버저', BT:'배터리' }
 
-function getCompColor(ref) {
-  return ({ R:'#fbbf24', C:'#60a5fa', Q:'#34d399', D:'#f87171', L:'#a78bfa', U:'#22d3ee', K:'#fb923c', LS:'#e879f9', BT:'#4ade80' })[ref.replace(/\d+/g, '')] || '#94a3b8'
+function getCompColor(ref: string): string {
+  return (({ R:'#fbbf24', C:'#60a5fa', Q:'#34d399', D:'#f87171', L:'#a78bfa', U:'#22d3ee', K:'#fb923c', LS:'#e879f9', BT:'#4ade80' } as Record<string, string>)[ref.replace(/\d+/g, '')]) || '#94a3b8'
 }
 
-function shopLink(value, ref) {
+function shopLink(value: string, ref: string) {
   if (!value || value === '-') return null
   const q = encodeURIComponent(value)
   return (
@@ -14,15 +15,30 @@ function shopLink(value, ref) {
   )
 }
 
-export default function BomTable({ components, guide }) {
+interface MouserPart {
+  ref: string
+  mouserPart?: string
+  mfgPart?: string
+  url?: string
+  price?: string
+  priceNum?: number
+  stock?: string | number
+}
+
+interface BomTableProps {
+  components: ComponentEntry[]
+  guide?: string
+}
+
+export default function BomTable({ components, guide }: BomTableProps) {
   if (!components?.length) return null
-  const [mouserData, setMouserData] = useState(null)   // API 검색 결과
+  const [mouserData, setMouserData] = useState<Record<string, MouserPart> | null>(null)
   const [loading, setLoading] = useState(false)
-  const [cartUrl, setCartUrl] = useState(null)
+  const [cartUrl, setCartUrl] = useState<string | null>(null)
   const [cartLoading, setCartLoading] = useState(false)
   const [mockMode, setMockMode] = useState(false)
 
-  const roles = {}
+  const roles: Record<string, string> = {}
   if (guide) {
     guide.split('\n').forEach(line => {
       const m = line.match(/^-\s+([A-Z]+\d+)[^:]*:\s*(.+)/)
@@ -41,15 +57,14 @@ export default function BomTable({ components, guide }) {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
 
-      // ref → mouser 결과 매핑
-      const map = {}
-      data.results.forEach(r => { map[r.ref] = r })
+      const map: Record<string, MouserPart> = {}
+      data.results.forEach((r: MouserPart) => { map[r.ref] = r })
       setMouserData(map)
       setCartUrl(data.cartUrl)
       setMockMode(!!data.mockMode)
     } catch (e) {
       console.error('Mouser search failed:', e)
-      alert('Mouser 검색 실패: ' + e.message)
+      alert('Mouser 검색 실패: ' + (e as Error).message)
     }
     setLoading(false)
   }
@@ -64,14 +79,13 @@ export default function BomTable({ components, guide }) {
       const mfgPart = m?.mfgPart || ''
       return `1,"${mouserPart}","${mfgPart}","${c.ref}","${c.value || ''}","${desc}"`
     }).join('\n')
-    const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob(['﻿' + header + rows], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = 'SchemaForge_BOM.csv'; a.click()
     URL.revokeObjectURL(url)
   }
 
-  // Compute total estimated cost when Mouser data available
   let totalCost = 0
   let pricedCount = 0
   if (mouserData) {
@@ -115,7 +129,6 @@ export default function BomTable({ components, guide }) {
             <button className="bom-btn cart-btn" onClick={() => {
               const matched = Object.values(mouserData).filter(m => m?.mouserPart)
               if (!matched.length) { alert('매칭된 부품이 없습니다'); return }
-              // 각 부품의 상세 페이지를 열어서 바로 장바구니에 담을 수 있게
               matched.forEach((m, i) => {
                 setTimeout(() => window.open(m.url, '_blank'), i * 400)
               })
@@ -123,7 +136,6 @@ export default function BomTable({ components, guide }) {
               🛒 Mouser에서 구매하기 ({Object.values(mouserData).filter(m => m?.mouserPart).length}개)
             </button>
             <button className="bom-btn search-btn" onClick={() => {
-              // 매칭된 각 부품 상세 페이지를 개별 탭으로 열기
               const matched = Object.values(mouserData).filter(m => m?.url)
               matched.forEach((m, i) => {
                 setTimeout(() => window.open(m.url, '_blank'), i * 300)

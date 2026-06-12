@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+﻿import { useState, useRef, useEffect } from 'react'
 import Header from './components/Header'
 import Settings from './components/Settings'
 import WizardPanel from './components/WizardPanel'
@@ -6,19 +6,26 @@ import ResultPanel from './components/ResultPanel'
 import ClarifyPanel from './components/ClarifyPanel'
 import PlanPanel from './components/PlanPanel'
 import SideDrawer from './components/SideDrawer'
+import AuthModal from './components/AuthModal'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
-import { Button } from './components/primitives.jsx'
+import { Button } from './components/primitives.tsx'
+import { loadAuth, logout as apiLogout, type AuthUser } from './api'
+import type {
+  AppSettings, LogLine, LogKind, Progress, ClarifyData, PlanData,
+  Version, ChatSession, PendingCached, GenerateResult,
+  ClarifyApiResponse, SavedSession,
+} from './types'
 import './styles/main.scss'
 
 const API = ''
 
-const DEFAULT_SETTINGS = { layout: '2col', skeleton: true, autoRetry: true, clarify: true, plan: true }
+const DEFAULT_SETTINGS: AppSettings = { layout: '2col', skeleton: true, autoRetry: true, clarify: true, plan: true }
 
-function getSettings() {
+function getSettings(): AppSettings {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('sf_settings') || '{}') } } catch { return DEFAULT_SETTINGS }
 }
 
-function detectStep(msg) {
+function detectStep(msg: string): number {
   if (msg.includes('Searching')) return 0
   if (msg.includes('GPT') || msg.includes('analysing') || msg.includes('analyzing')) return 1
   if (msg.includes('netlist') || msg.includes('Generating')) return 2
@@ -26,7 +33,7 @@ function detectStep(msg) {
 }
 
 const STEP_TO_PHASE = ['analyzing', 'routing', 'placing']
-const STEP_TO_KIND = ['info', 'plan', 'route']
+const STEP_TO_KIND: LogKind[] = ['info', 'plan', 'route']
 
 function nowTs() {
   const d = new Date()
@@ -34,26 +41,28 @@ function nowTs() {
 }
 
 export default function App() {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadAuth()?.user ?? null)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState(null)
-  const [logLines, setLogLines] = useState([])
-  const [error, setError] = useState(null)
-  const [result, setResult] = useState(null)
-  const lastPrompt = useRef('')
-  const abortRef = useRef(null)
-  const [settings, setSettings] = useState(getSettings)
+  const [progress, setProgress] = useState<Progress | null>(null)
+  const [logLines, setLogLines] = useState<LogLine[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<GenerateResult | null>(null)
+  const lastPrompt = useRef<string>('')
+  const abortRef = useRef<AbortController | null>(null)
+  const [settings, setSettings] = useState<AppSettings>(getSettings)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [clarify, setClarify] = useState(null)
-  const [plan, setPlan] = useState(null)
-  const [versions, setVersions] = useState([])
-  const [currentVersionId, setCurrentVersionId] = useState(null)
+  const [clarify, setClarify] = useState<ClarifyData | null>(null)
+  const [plan, setPlan] = useState<PlanData | null>(null)
+  const [versions, setVersions] = useState<Version[]>([])
+  const [currentVersionId, setCurrentVersionId] = useState<string | null>(null)
   const [sideDrawerOpen, setSideDrawerOpen] = useState(false)
-  const [initialChatSession, setInitialChatSession] = useState(null)
+  const [initialChatSession, setInitialChatSession] = useState<ChatSession | null>(null)
   const [resultKey, setResultKey] = useState(0)
-  const [pendingCached, setPendingCached] = useState(null)
+  const [pendingCached, setPendingCached] = useState<PendingCached | null>(null)
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', 'dark')
+    document.documentElement.setAttribute('data-theme', 'light')
   }, [])
 
   useEffect(() => {
@@ -72,8 +81,8 @@ export default function App() {
     setInitialChatSession(null)
   }
 
-  function handleLoadSession(session) {
-    const resultObj = session.result || (session.graph ? { graph: session.graph, filename: session.circuitName || '' } : null)
+  function handleLoadSession(session: SavedSession) {
+    const resultObj: GenerateResult | null = session.result || (session.graph ? { graph: session.graph, filename: session.circuitName || '' } : null)
     if (!resultObj) return
     setResult(resultObj)
     lastPrompt.current = session.circuitName || ''
@@ -81,7 +90,7 @@ export default function App() {
     setResultKey(k => k + 1)
   }
 
-  function selectVersion(id) {
+  function selectVersion(id: string) {
     const v = versions.find(x => x.id === id)
     if (!v) return
     setResult(v.result)
@@ -98,7 +107,7 @@ export default function App() {
     })
   }
 
-  async function fetchPlan(prompt) {
+  async function fetchPlan(prompt: string) {
     setPlan({ originalPrompt: prompt, plan: null, loading: true })
     try {
       const res = await fetch(`${API}/plan`, {
@@ -122,13 +131,13 @@ export default function App() {
     setLoading(false)
   }
 
-  async function runGenerate(p, typeKey, skipCache = false) {
+  async function runGenerate(p: string, typeKey?: string, skipCache = false) {
     if (!p.trim() || loading) return
 
     if (!skipCache) {
       const cached = getSavedResults().find(s => s.prompt === p)
       if (cached) {
-        setPendingCached({ prompt: p, typeKey, cached })
+        setPendingCached({ prompt: p, typeKey, cached: { ...cached, graph: cached.graph ?? undefined } })
         return
       }
     }
@@ -141,7 +150,7 @@ export default function App() {
           body: JSON.stringify({ description: p }),
         })
         if (cRes.ok) {
-          const cData = await cRes.json()
+          const cData = await cRes.json() as ClarifyApiResponse
           if (cData?.clear === false && Array.isArray(cData.questions) && cData.questions.length) {
             setClarify({ originalPrompt: p, questions: cData.questions })
             return
@@ -154,7 +163,7 @@ export default function App() {
     return executeGenerate(p)
   }
 
-  async function executeGenerate(p) {
+  async function executeGenerate(p: string) {
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
@@ -167,6 +176,7 @@ export default function App() {
 
     const abort = new AbortController()
     abortRef.current = abort
+    let gotResult = false
 
     try {
       const res = await fetch(`${API}/generate`, {
@@ -175,7 +185,11 @@ export default function App() {
         body: JSON.stringify({ description: p }),
         signal: abort.signal,
       })
-      const reader = res.body.getReader()
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`서버 오류 (${res.status}): ${text.slice(0, 200)}`)
+      }
+      const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let buf = ''
 
@@ -184,7 +198,7 @@ export default function App() {
         if (done) break
         buf += decoder.decode(value, { stream: true })
         const parts = buf.split('\n\n')
-        buf = parts.pop()
+        buf = parts.pop() ?? ''
 
         for (const part of parts) {
           const evtM = part.match(/^event: (.+)$/m)
@@ -210,6 +224,7 @@ export default function App() {
             setLogLines(prev => [...prev, { ts: nowTs(), kind: 'route', msg: `error: ${msg}` }])
             return
           } else if (evt === 'done') {
+            gotResult = true
             const d = JSON.parse(raw)
             setResult(d)
             setResultKey(k => k + 1)
@@ -236,9 +251,13 @@ export default function App() {
           }
         }
       }
+      if (!gotResult && !abort.signal.aborted) {
+        setError('회로 생성 중 연결이 끊겼습니다. 잠시 후 다시 시도해주세요.')
+        setProgress(null)
+      }
     } catch (e) {
-      if (e.name === 'AbortError') return
-      setError(`네트워크 오류: ${e.message}`)
+      if ((e as Error).name === 'AbortError') return
+      setError(`네트워크 오류: ${(e as Error).message}`)
       setProgress(null)
     } finally {
       setLoading(false)
@@ -269,6 +288,15 @@ export default function App() {
         onSettingsClick={() => setSettingsOpen(true)}
         onLogoClick={goHome}
         onMenuClick={() => setSideDrawerOpen(o => !o)}
+        user={authUser}
+        onAuthClick={() => setAuthModalOpen(true)}
+        onLogout={async () => { await apiLogout(); setAuthUser(null) }}
+      />
+
+      <AuthModal
+        open={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={(user) => setAuthUser(user)}
       />
 
       <Settings
@@ -293,7 +321,7 @@ export default function App() {
             <Button variant="ghost" size="sm" onClick={() => {
               const { prompt, cached } = pendingCached
               lastPrompt.current = prompt
-              setResult(cached.result)
+              setResult(cached.result ?? null)
               setInitialChatSession({ messages: cached.messages || [], graph: cached.result?.graph || null })
               setResultKey(k => k + 1)
               setPendingCached(null)
@@ -312,7 +340,7 @@ export default function App() {
         <ClarifyPanel
           originalPrompt={clarify.originalPrompt}
           questions={clarify.questions}
-          onConfirm={(enrichedPrompt) => {
+          onConfirm={(enrichedPrompt: string) => {
             setClarify(null)
             if (settings.plan !== false) fetchPlan(enrichedPrompt)
             else executeGenerate(enrichedPrompt)
@@ -333,7 +361,7 @@ export default function App() {
           plan={plan.plan}
           loading={plan.loading}
           onApprove={() => executeGenerate(plan.originalPrompt)}
-          onRegenerate={(feedback) => {
+          onRegenerate={(feedback: string) => {
             const enriched = feedback
               ? `${plan.originalPrompt}\n\n[수정 요청]\n${feedback}`
               : plan.originalPrompt
@@ -348,7 +376,7 @@ export default function App() {
           phase={wizardPhase}
           initialPrompt=""
           currentPrompt={lastPrompt.current}
-          onSubmit={(prompt, typeKey) => runGenerate(prompt, typeKey)}
+          onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
           onCancel={handleCancel}
           logLines={logLines}
           tokensUsed={Math.min(4096, logLines.length * 200)}

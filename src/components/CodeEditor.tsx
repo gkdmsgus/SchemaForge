@@ -1,12 +1,18 @@
-import { useState } from 'react'
+import { useState, Dispatch, SetStateAction } from 'react'
+import type { GenerateResult } from '../types'
 
 const API = ''
 
-export default function CodeEditor({ result, setResult }) {
+interface CodeEditorProps {
+  result: GenerateResult
+  setResult: Dispatch<SetStateAction<GenerateResult | null>>
+}
+
+export default function CodeEditor({ result, setResult }: CodeEditorProps) {
   const [editing, setEditing] = useState(false)
   const [editCode, setEditCode] = useState('')
   const [editLoading, setEditLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function rerunCode() {
     if (!editCode.trim() || editLoading) return
@@ -21,12 +27,12 @@ export default function CodeEditor({ result, setResult }) {
       if (data.error) {
         setError(data.error)
       } else {
-        setResult(prev => ({ ...prev, code: editCode, filename: data.filename, graph: data.graph }))
+        setResult(prev => prev ? ({ ...prev, code: editCode, filename: data.filename, graph: data.graph }) : null)
         setEditing(false)
         setError(null)
       }
     } catch (e) {
-      setError(`실행 오류: ${e.message}`)
+      setError(`실행 오류: ${(e as Error).message}`)
     } finally {
       setEditLoading(false)
     }
@@ -46,13 +52,13 @@ export default function CodeEditor({ result, setResult }) {
             {!editing ? (
               <>
                 <button className="copy-btn" onClick={e => {
-                  navigator.clipboard.writeText(result.code)
-                  const btn = e.target
+                  navigator.clipboard.writeText(result.code ?? '')
+                  const btn = e.target as HTMLButtonElement
                   btn.textContent = '복사됨!'
                   btn.style.color = 'var(--green)'
                   setTimeout(() => { btn.textContent = '복사'; btn.style.color = '' }, 2000)
                 }}>복사</button>
-                <button className="copy-btn edit-btn" onClick={() => { setEditCode(result.code); setEditing(true) }}>수정</button>
+                <button className="copy-btn edit-btn" onClick={() => { setEditCode(result.code ?? ''); setEditing(true) }}>수정</button>
               </>
             ) : (
               <>

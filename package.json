@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n vite,api -c cyan,green \"vite\" \"node server/index.js\"",
+    "dev": "concurrently -n vite,api -c cyan,green \"vite\" \"cd server && tsx --watch index.ts\"",
     "build": "vite build",
-    "start": "vite build && node server/index.js",
-    "server": "node server/index.js",
+    "start": "vite build && cd server && tsx index.ts",
+    "server": "cd server && tsx index.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -31,6 +31,7 @@
     "globals": "^17.4.0",
     "postcss": "^8.5.9",
     "sass": "^1.99.0",
+    "typescript": "^6.0.3",
     "vite": "^8.0.1"
   }
 }

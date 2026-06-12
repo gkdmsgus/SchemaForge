@@ -7,9 +7,10 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/generate': {
-        target: 'http://localhost:8002',
+        target: 'http://localhost:8080',
         changeOrigin: true,
-        // SSE 스트리밍을 위해 버퍼링 비활성화
+        proxyTimeout: 180000,
+        timeout: 180000,
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
             proxyRes.headers['cache-control'] = 'no-cache, no-transform'
@@ -17,16 +18,16 @@ export default defineConfig({
           })
         },
       },
-      '/download': 'http://localhost:8002',
-      '/download_pcb': 'http://localhost:8002',
-      '/generate_pcb': 'http://localhost:8002',
-      '/generate_gerber': 'http://localhost:8002',
-      '/mouser_search': 'http://localhost:8002',
-      '/mouser_cart': 'http://localhost:8002',
-      '/test_code': 'http://localhost:8002',
-      '/test': 'http://localhost:8002',
+      '/download': 'http://localhost:8080',
+      '/download_pcb': 'http://localhost:8080',
+      '/generate_pcb': 'http://localhost:8080',
+      '/generate_gerber': 'http://localhost:8080',
+      '/mouser_search': 'http://localhost:8080',
+      '/mouser_cart': 'http://localhost:8080',
+      '/test_code': 'http://localhost:8080',
+      '/test': 'http://localhost:8080',
       '/chat_edit': {
-        target: 'http://localhost:8002',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
@@ -35,8 +36,8 @@ export default defineConfig({
           })
         },
       },
-      '/clarify': 'http://localhost:8002',
-      '/plan': 'http://localhost:8002',
+      '/clarify': 'http://localhost:8080',
+      '/plan': 'http://localhost:8080',
     }
   }
 })

@@ -8,7 +8,7 @@
 
 import React from 'react';
 
-export default function Logo({ size = 22, showWord = true, style }) {
+export default function Logo({ size = 22, showWord = true, style }: { size?: number; showWord?: boolean; style?: React.CSSProperties }) {
   return (
     <span
       style={{

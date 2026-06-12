@@ -1,4 +1,14 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import type { NetGraph, NetEntry, ComponentEntry } from '../types'
+
+interface Pos { x: number; y: number }
+interface Pad { x: number; y: number; w: number; h: number }
+interface Footprint { w: number; h: number; pads: Pad[]; pinIndex: Record<string | number, number> }
+interface DragState { ref: string; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean }
+interface PanState { lastX: number; lastY: number }
+interface TraceDragState { netIdx: number; segIdx: number; startMx: number; startMy: number; startX: number; startY: number; pointerId: number; captured: boolean }
+interface TraceDrag { netIdx: number; segIdx: number }
+interface Toast { msg: string; timeoutId: ReturnType<typeof setTimeout> }
 
 const COPPER = '#d9a35a'
 const COPPER_GLOW = '#ffc56f'
@@ -13,14 +23,14 @@ const COMP_TYPE_LABELS = {
   K: '릴레이', BT: '배터리', F: '퓨즈',
 }
 
-function getMaxPin(ref, nets) {
+function getMaxPin(ref: string, nets: NetEntry[]): number {
   let m = 2
   nets.forEach(n => n.nodes.forEach(nd => { if (nd.ref === ref) m = Math.max(m, parseInt(nd.pin) || 2) }))
   return m
 }
 
 // PCB-style footprint sizes (different from schematic — flatter, wider)
-function getFootprint(ref, pinCount) {
+function getFootprint(ref: string, pinCount: number): Footprint {
   const t = ref[0].toUpperCase()
   if (t === 'R' || t === 'D' || t === 'L') {
     // 2-pin SMD-like: two pads at ends
@@ -59,8 +69,8 @@ function getFootprint(ref, pinCount) {
   const half = Math.ceil(pinCount / 2)
   const h = Math.max(60, half * 12 + 16)
   const w = 56
-  const pads = []
-  const pinIndex = {}
+  const pads: Pad[] = []
+  const pinIndex: Record<number, number> = {}
   for (let i = 0; i < half; i++) {
     pads.push({ x: -w / 2 + 4, y: -h / 2 + 12 + i * 12, w: 10, h: 6 })
     pinIndex[i + 1] = pads.length - 1
@@ -72,17 +82,17 @@ function getFootprint(ref, pinCount) {
   return { w, h, pads, pinIndex }
 }
 
-function autoLayout(comps, footprints) {
+function autoLayout(comps: ComponentEntry[], footprints: Record<string, Footprint>): { positions: Record<string, Pos>; width: number; height: number } {
   const cols = Math.min(Math.ceil(Math.sqrt(Math.max(comps.length, 1))), 4)
   const HGAP = 36, VGAP = 36, M = 56
-  const cW = Array(cols).fill(0), rH = []
+  const cW: number[] = Array(cols).fill(0), rH: number[] = []
   comps.forEach((c, i) => {
     const col = i % cols, row = Math.floor(i / cols)
     cW[col] = Math.max(cW[col], (footprints[c.ref]?.w || 50) + HGAP)
     if (!rH[row]) rH[row] = 0
     rH[row] = Math.max(rH[row], (footprints[c.ref]?.h || 30) + VGAP)
   })
-  const pos = {}
+  const pos: Record<string, Pos> = {}
   let cx = M
   for (let col = 0; col < cols; col++) {
     let cy = M + 14
@@ -95,11 +105,11 @@ function autoLayout(comps, footprints) {
     cx += cW[col]
   }
   const TW = cx + M
-  const TH = Object.values(pos).reduce((m, p) => Math.max(m, p.y), 0) + M + 30
+  const TH = Object.values(pos).reduce((m: number, p) => Math.max(m, p.y), 0) + M + 30
   return { positions: pos, width: Math.max(TW, 480), height: Math.max(TH, 320) }
 }
 
-function padAbs(ref, pin, pos, footprints) {
+function padAbs(ref: string, pin: string, pos: Record<string, Pos>, footprints: Record<string, Footprint>) {
   const p = pos[ref], fp = footprints[ref]
   if (!p || !fp) return null
   const idx = fp.pinIndex[pin] ?? 0
@@ -108,7 +118,7 @@ function padAbs(ref, pin, pos, footprints) {
   return { x: p.x + pad.x, y: p.y + pad.y, w: pad.w, h: pad.h }
 }
 
-function isPowerNet(name) {
+function isPowerNet(name: string): boolean {
   if (!name) return false
   const n = name.toUpperCase()
   return ['GND','AGND','DGND','PGND','SGND','EARTH','PWR','POWER','VBAT','AVCC','VREF'].includes(n)
@@ -117,7 +127,7 @@ function isPowerNet(name) {
     || /^12V/.test(n) || /^\d+V\d*$/.test(n)
 }
 
-function getPCBTraceColor(name) {
+function getPCBTraceColor(name: string): string | null {
   const n = (name || '').toUpperCase()
   if (/GND|EARTH|VSS|VEE|AGND|DGND|PGND/.test(n)) return '#5dc8a3'
   if (/VCC|VDD|VIN|V\d|^\d+V/.test(n)) return '#e74848'
@@ -125,14 +135,14 @@ function getPCBTraceColor(name) {
 }
 
 // PCB trace routing: V-H-V-H with optional mx (mid-x) and my (mid-y)
-function routeTrace(ax, ay, bx, by, mx, my) {
+function routeTrace(ax: number, ay: number, bx: number, by: number, mx: number, my: number): string {
   const midY = my !== undefined ? my : by
   const midX = mx !== undefined ? mx : ax
   return `M${ax},${ay} L${ax},${midY} L${midX},${midY} L${midX},${by} L${bx},${by}`
 }
 
 // Minimum Spanning Tree (Prim's, Manhattan distance)
-function buildMST(pts) {
+function buildMST(pts: Pos[]): number[][] {
   const n = pts.length
   if (n <= 1) return []
   const inMST = new Array(n).fill(false)
@@ -157,39 +167,39 @@ function buildMST(pts) {
   return edges
 }
 
-export default function PCBLayout({ graph }) {
-  const svgRef = useRef(null)
+export default function PCBLayout({ graph }: { graph?: NetGraph }) {
+  const svgRef = useRef<SVGSVGElement>(null)
   const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [positions, setPositions] = useState({})
-  const [hoveredNet, setHoveredNet] = useState(null)
-  const [selectedNet, setSelectedNet] = useState(null)
-  const [localNets, setLocalNets] = useState(null)
-  const [netsHistory, setNetsHistory] = useState([])
-  const [toast, setToast] = useState(null)
-  const [traceBends, setTraceBends] = useState({})
-  const [traceDrag, setTraceDrag] = useState(null)   // for rendering only
-  const traceDragRef = useRef(null)                   // live drag state
-  const dragRef = useRef(null)
-  const panDragRef = useRef(null)
+  const [pan, setPan] = useState<Pos>({ x: 0, y: 0 })
+  const [positions, setPositions] = useState<Record<string, Pos>>({})
+  const [hoveredNet, setHoveredNet] = useState<number | null>(null)
+  const [selectedNet, setSelectedNet] = useState<number | null>(null)
+  const [localNets, setLocalNets] = useState<NetEntry[] | null>(null)
+  const [netsHistory, setNetsHistory] = useState<NetEntry[][]>([])
+  const [toast, setToast] = useState<Toast | null>(null)
+  const [traceBends, setTraceBends] = useState<Record<string, { mx: number; my: number }>>({})
+  const [traceDrag, setTraceDrag] = useState<TraceDrag | null>(null)
+  const traceDragRef = useRef<TraceDragState | null>(null)
+  const dragRef = useRef<DragState | null>(null)
+  const panDragRef = useRef<PanState | null>(null)
   const didPanRef = useRef(false)
 
-  const comps = graph?.components || []
-  const nets = graph?.nets || []
+  const comps: ComponentEntry[] = graph?.components || []
+  const nets: NetEntry[] = graph?.nets || []
   const effectiveNets = localNets || nets
 
-  const containerRef = useRef(null)
-  const onWheelRef = useRef(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const onWheelRef = useRef<((e: WheelEvent) => void) | null>(null)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const handler = (e) => onWheelRef.current?.(e)
+    const handler = (e: WheelEvent) => onWheelRef.current?.(e)
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
   }, [])
 
-  const footprints = useMemo(() => {
-    const fp = {}
+  const footprints = useMemo((): Record<string, Footprint> => {
+    const fp: Record<string, Footprint> = {}
     comps.forEach(c => { fp[c.ref] = getFootprint(c.ref, getMaxPin(c.ref, nets)) })
     return fp
   }, [graph])
@@ -211,7 +221,7 @@ export default function PCBLayout({ graph }) {
 
   const W = auto.width, H = auto.height
 
-  function svgPoint(e) {
+  function svgPoint(e: { clientX: number; clientY: number }) {
     const svg = svgRef.current
     if (!svg) return { x: 0, y: 0 }
     const rect = svg.getBoundingClientRect()
@@ -221,7 +231,7 @@ export default function PCBLayout({ graph }) {
     }
   }
 
-  function onCompPointerDown(e, ref) {
+  function onCompPointerDown(e: React.PointerEvent, ref: string) {
     e.stopPropagation()
     const pt = svgPoint(e)
     const p = positions[ref] || { x: 0, y: 0 }
@@ -229,7 +239,7 @@ export default function PCBLayout({ graph }) {
     try { svgRef.current?.setPointerCapture(e.pointerId) } catch (_) {}
   }
 
-  function onSvgPointerDown(e) {
+  function onSvgPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (e.button === 0 || e.button === 1) {
       panDragRef.current = { lastX: e.clientX, lastY: e.clientY }
       didPanRef.current = false
@@ -238,7 +248,7 @@ export default function PCBLayout({ graph }) {
     }
   }
 
-  function showToast(msg) {
+  function showToast(msg: string) {
     setToast(prev => {
       if (prev?.timeoutId) clearTimeout(prev.timeoutId)
       const id = setTimeout(() => setToast(null), 4500)
@@ -246,7 +256,7 @@ export default function PCBLayout({ graph }) {
     })
   }
 
-  function deleteTrace(ni) {
+  function deleteTrace(ni: number) {
     const base = localNets ? [...localNets] : [...nets]
     const deleted = base[ni]
     setNetsHistory(prev => [...prev.slice(-19), base])
@@ -260,19 +270,19 @@ export default function PCBLayout({ graph }) {
       if (!prev.length) return prev
       const next = [...prev]
       const restored = next.pop()
-      setLocalNets(restored)
+      setLocalNets(restored ?? null)
       setToast(null)
       return next
     })
   }
 
-  function onTraceDragStart(e, netIdx, segIdx, defaultMx, defaultMy) {
+  function onTraceDragStart(e: React.PointerEvent, netIdx: number, segIdx: number, defaultMx: number, defaultMy: number) {
     e.stopPropagation()
     const pt = svgPoint(e)
     traceDragRef.current = { netIdx, segIdx, startMx: defaultMx, startMy: defaultMy, startX: pt.x, startY: pt.y, pointerId: e.pointerId, captured: false }
   }
 
-  function onSvgPointerMove(e) {
+  function onSvgPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     const td = traceDragRef.current
     if (td) {
       const pt = svgPoint(e)
@@ -305,7 +315,7 @@ export default function PCBLayout({ graph }) {
     }
   }
 
-  function onSvgPointerUp(e) {
+  function onSvgPointerUp(e: React.PointerEvent<SVGSVGElement>) {
     const td = traceDragRef.current
     if (td) {
       const captured = td.captured
@@ -323,7 +333,7 @@ export default function PCBLayout({ graph }) {
     try { svgRef.current?.releasePointerCapture(e.pointerId) } catch (_) {}
   }
 
-  function onWheel(e) {
+  function onWheel(e: WheelEvent) {
     if (!e.ctrlKey && !e.metaKey) return
     e.preventDefault()
     setZoom(z => Math.min(4, Math.max(0.25, z * (e.deltaY > 0 ? 0.9 : 1.1))))
@@ -365,7 +375,7 @@ export default function PCBLayout({ graph }) {
           {[['−', -0.15], ['+', 0.15], ['⌂', 0]].map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
               if (d === 0) { setZoom(1); setPan({ x: 0, y: 0 }); setPositions(auto.positions) }
-              else setZoom(z => Math.min(4, Math.max(0.25, z + d)))
+              else setZoom(z => Math.min(4, Math.max(0.25, z + (d as number))))
             }} style={{ padding:'3px 8px', border:'1px solid #1c2030', borderRadius:4, background:'transparent', color:'#5a6278', cursor:'pointer', fontFamily:'var(--sf-font-mono)', fontSize:12 }}>{lbl}</button>
           ))}
         </div>
@@ -448,7 +458,7 @@ export default function PCBLayout({ graph }) {
           onContextMenu={e => e.preventDefault()}
           onClick={e => {
             if (didPanRef.current) { didPanRef.current = false; return }
-            if (!e.target.closest?.('g[data-trace]')) setSelectedNet(null)
+            if (!(e.target as Element).closest?.('g[data-trace]')) setSelectedNet(null)
           }}
         >
           <g transform={`scale(${zoom}) translate(${pan.x},${pan.y})`}>
@@ -506,7 +516,7 @@ export default function PCBLayout({ graph }) {
 
                 const pts = net.nodes
                   .map(n => padAbs(n.ref, n.pin, positions, footprints))
-                  .filter(Boolean)
+                  .filter((p): p is NonNullable<ReturnType<typeof padAbs>> => p !== null)
                   .map(p => ({ x: p.x, y: p.y }))
                 if (pts.length < 2) return null
 
@@ -638,7 +648,7 @@ export default function PCBLayout({ graph }) {
   )
 }
 
-function Legend({ color, label }) {
+function Legend({ color, label }: { color: string; label: string }) {
   return (
     <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#3a4055', fontFamily:'var(--sf-font-mono)' }}>
       <span style={{ width:12, height:2, background:color, borderRadius:1, display:'block' }} />

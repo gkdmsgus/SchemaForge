@@ -11,7 +11,6 @@
 //   </div>
 // ============================================================================
 
-import React from 'react';
 
 const PATHS = [
   { d: 'M 0 80 L 200 80 L 200 160 L 420 160',                       node: [420, 160] },
@@ -26,11 +25,18 @@ const PATHS = [
   { d: 'M 480 540 L 480 460 L 340 460',                              node: null },
 ];
 
+import React, { CSSProperties } from 'react'
+
 export default function TraceField({
   density = 1,
-  accent  = 'amber', // 'amber' | 'cyan'
+  accent  = 'amber',
   opacity = 0.22,
   style,
+}: {
+  density?: number
+  accent?: string
+  opacity?: number
+  style?: CSSProperties
 }) {
   const color = accent === 'cyan' ? 'var(--sf-cyan)' : 'var(--sf-amber)';
   const slice = PATHS.slice(0, Math.ceil(PATHS.length * density));

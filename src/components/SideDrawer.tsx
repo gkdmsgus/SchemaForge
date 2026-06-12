@@ -1,20 +1,31 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
+import type { SavedSession, ChatMessage, NetGraph, GenerateResult } from '../types'
 
-function getSavedResults() {
+interface StoredEntry {
+  id: number
+  name: string
+  prompt: string
+  result?: GenerateResult
+  time: number
+  messages?: ChatMessage[]
+  graph?: NetGraph | null
+}
+
+function getSavedResults(): StoredEntry[] {
   try { return JSON.parse(localStorage.getItem('sf_saved_results') || '[]') } catch { return [] }
 }
 
 const MONO = "'IBM Plex Mono','JetBrains Mono',monospace"
 const SANS = "'Space Grotesk','Inter',sans-serif"
 
-function groupByDate(items) {
+function groupByDate(items: StoredEntry[]): [string, StoredEntry[]][] {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const weekAgo = new Date(today - 6 * 86400000)
-  const monthAgo = new Date(today - 29 * 86400000)
+  const weekAgo = new Date(today.getTime() - 6 * 86400000)
+  const monthAgo = new Date(today.getTime() - 29 * 86400000)
 
-  const groups = { '오늘': [], '이번 주': [], '이번 달': [], '이전': [] }
-  items.forEach(item => {
+  const groups: Record<string, StoredEntry[]> = { '오늘': [], '이번 주': [], '이번 달': [], '이전': [] }
+  items.forEach((item: StoredEntry) => {
     const d = new Date(item.time)
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
     if (day >= today) groups['오늘'].push(item)
@@ -25,7 +36,7 @@ function groupByDate(items) {
   return Object.entries(groups).filter(([, items]) => items.length > 0)
 }
 
-function formatTime(ts) {
+function formatTime(ts: number) {
   const d = new Date(ts), now = new Date()
   const sameDay = d.toDateString() === now.toDateString()
   return sameDay
@@ -33,14 +44,20 @@ function formatTime(ts) {
     : d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })
 }
 
-export default function SideDrawer({ open, onClose, onLoadSession }) {
-  const [savedResults, setSavedResults] = useState([])
+interface SideDrawerProps {
+  open: boolean
+  onClose: () => void
+  onLoadSession: (session: SavedSession) => void
+}
+
+export default function SideDrawer({ open, onClose, onLoadSession }: SideDrawerProps) {
+  const [savedResults, setSavedResults] = useState<StoredEntry[]>([])
 
   useEffect(() => {
     if (open) setSavedResults(getSavedResults())
   }, [open])
 
-  function deleteSaved(e, id) {
+  function deleteSaved(e: React.MouseEvent, id: number) {
     e.stopPropagation()
     const next = getSavedResults().filter(s => s.id !== id)
     localStorage.setItem('sf_saved_results', JSON.stringify(next))
@@ -54,20 +71,20 @@ export default function SideDrawer({ open, onClose, onLoadSession }) {
       {open && (
         <div onClick={onClose} style={{
           position: 'fixed', inset: 0, zIndex: 39,
-          background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)',
+          background: 'rgba(26, 22, 17, 0.35)', backdropFilter: 'blur(2px)',
         }} />
       )}
 
       <div style={{
         position: 'fixed', top: 0, left: 0, bottom: 0,
         width: 280,
-        background: '#090b12',
-        borderRight: '1px solid #1a1e2c',
+        background: 'var(--sf-bg-2)',
+        borderRight: '1px solid var(--sf-line)',
         zIndex: 40,
         display: 'flex', flexDirection: 'column',
         transform: open ? 'translateX(0)' : 'translateX(-100%)',
         transition: 'transform 0.22s cubic-bezier(.4,0,.2,1)',
-        boxShadow: open ? '8px 0 32px rgba(0,0,0,0.5)' : 'none',
+        boxShadow: open ? 'var(--sf-shadow-lg)' : 'none',
       }}>
         {/* Header */}
         <div style={{
@@ -104,7 +121,7 @@ export default function SideDrawer({ open, onClose, onLoadSession }) {
                   time={formatTime(s.time)}
                   msgCount={s.messages?.length || 0}
                   onClick={() => {
-                    onLoadSession({ graph: s.result?.graph, circuitName: s.prompt, messages: s.messages || [], result: s.result })
+                    onLoadSession({ prompt: s.prompt, graph: s.result?.graph ?? undefined, circuitName: s.prompt, messages: s.messages || [], result: s.result })
                     onClose()
                   }}
                   onDelete={(e) => deleteSaved(e, s.id)}
@@ -138,7 +155,7 @@ export default function SideDrawer({ open, onClose, onLoadSession }) {
   )
 }
 
-function SessionItem({ title, time, msgCount, onClick, onDelete }) {
+function SessionItem({ title, time, msgCount, onClick, onDelete }: { title: string; time: string; msgCount: number; onClick: () => void; onDelete: (e: React.MouseEvent) => void }) {
   const [hovered, setHovered] = useState(false)
 
   return (

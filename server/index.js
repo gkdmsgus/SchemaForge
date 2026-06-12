@@ -368,6 +368,33 @@ Always call the edit_circuit function. Reply in Korean (1-2 sentences). Use exac
   }
 });
 
+// ── GET /diag — event loop test (SSE + outbound HTTPS)  ──────────
+app.get('/diag', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+  if (res.socket) res.socket.setNoDelay(true);
+  let tick = 0;
+  const iv = setInterval(() => res.write(`: tick ${++tick}\n\n`), 1000);
+  res.write('event: start\ndata: starting\n\n');
+  try {
+    const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'say hi' }],
+      max_tokens: 5,
+    }, {
+      headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    res.write(`event: done\ndata: ${JSON.stringify({ ticks: tick, content: r.data.choices[0].message.content })}\n\n`);
+  } catch (e) {
+    res.write(`event: error\ndata: ${e.message}\n\n`);
+  } finally {
+    clearInterval(iv);
+    res.end();
+  }
+});
+
 // ── POST /generate — SSE streaming ───────────────────────────────
 app.post('/generate', async (req, res) => {
   const description = (req.body?.description || '').trim();
@@ -381,34 +408,26 @@ app.post('/generate', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders(); // flush immediately — key for SSE!
+  if (res.socket) res.socket.setNoDelay(true);
 
   const abort = new AbortController();
-  req.on('close', () => abort.abort());
+  let clientClosed = false;
+  res.on('close', () => { clientClosed = true; abort.abort(); });
+
+  // Keep-alive heartbeat — prevents proxy/browser from closing idle SSE connections
+  const heartbeat = setInterval(() => {
+    if (!clientClosed) res.write(': heartbeat\n\n');
+  }, 10000);
 
   try {
-    // Step 1 — Tavily web search
+    // Step 1 — Tavily web search (skipped for now — GPT-4o handles without references)
     if (abort.signal.aborted) return res.end();
-    res.write(sse('status', '🔍 Searching for circuit references...'));
+    res.write(sse('status', '🔍 Analysing circuit requirements...'));
     let context = '', sourceUrls = [];
-    try {
-      const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
-      const result = await client.search(
-        `${description} complete schematic all components resistor values capacitor datasheet professional circuit design`,
-        { searchDepth: 'advanced', maxResults: 5, includeAnswer: true }
-      );
-      sourceUrls = (result.results || []).map(r => r.url).filter(Boolean);
-      context = (result.results || [])
-        .filter(r => r.content)
-        .map(r => `[source: ${r.url}]\n${r.content.slice(0, 800)}`)
-        .join('\n\n');
-    } catch (e) {
-      res.write(sse('status', `⚠️ Search failed, continuing without references... (${e.message})`));
-    }
 
     // Step 2 — GPT-4o code generation
     if (abort.signal.aborted) return res.end();
     res.write(sse('status', '🤖 GPT-4o is analysing and generating the circuit...'));
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const userMsg =
       `Circuit request: ${description}\n\n` +
       (context
@@ -422,16 +441,23 @@ app.post('/generate', async (req, res) => {
       { role: 'user', content: userMsg },
     ];
 
-    const genTimeout = setTimeout(() => abort.abort(), 45000);
+    const genTimeout = setTimeout(() => abort.abort(), 90000);
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const response = await openai.chat.completions.create({
+        const axiosRes = await axios.post('https://api.openai.com/v1/chat/completions', {
           model: 'gpt-4o',
           messages,
           temperature: 0.1,
           max_tokens: 2500,
-        }, { signal: abort.signal });
-        raw = response.choices[0].message.content.trim();
+        }, {
+          headers: {
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 88000,
+          signal: abort.signal,
+        });
+        raw = axiosRes.data.choices[0].message.content.trim();
         if (raw.startsWith('from skidl')) break;
         if (attempt === 0) {
           messages.push({ role: 'assistant', content: raw });
@@ -468,15 +494,19 @@ app.post('/generate', async (req, res) => {
           { role: 'user', content: `The code above failed with this error:\n${firstErr.message}\n\nFix the code. Output ONLY the corrected skidl Python code (from skidl import * ... generate_netlist()) followed by ---GUIDE--- and the Korean guide.` },
         ];
         const retryTimeout = setTimeout(() => abort.abort(), 45000);
-        let fixResp;
+        let fixAxiosRes;
         try {
-          fixResp = await openai.chat.completions.create({
+          fixAxiosRes = await axios.post('https://api.openai.com/v1/chat/completions', {
             model: 'gpt-4o', messages: fixMessages, temperature: 0.05, max_tokens: 2500,
-          }, { signal: abort.signal });
+          }, {
+            headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+            timeout: 43000,
+            signal: abort.signal,
+          });
         } finally {
           clearTimeout(retryTimeout);
         }
-        let fixRaw = fixResp.choices[0].message.content.trim();
+        let fixRaw = fixAxiosRes.data.choices[0].message.content.trim();
         let [fixCode, fixGuide] = fixRaw.includes('---GUIDE---')
           ? fixRaw.split('---GUIDE---', 2).map(s => s.trim())
           : [fixRaw.trim(), guide];
@@ -511,9 +541,14 @@ app.post('/generate', async (req, res) => {
       graph,
     })));
   } catch (e) {
-    if (!abort.signal.aborted) {
-      res.write(sse('error', `Server error: ${e.message}`));
+    if (!clientClosed) {
+      const msg = abort.signal.aborted
+        ? '회로 생성 시간이 초과됐습니다. 다시 시도해주세요.'
+        : `Server error: ${e.message}`;
+      res.write(sse('error', JSON.stringify({ message: msg })));
     }
+  } finally {
+    clearInterval(heartbeat);
   }
 
   res.end();

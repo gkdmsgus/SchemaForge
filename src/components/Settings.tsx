@@ -1,13 +1,16 @@
-import { useState } from 'react'
-import { Button, IconClose, IconCheck } from './primitives.jsx'
+﻿import { useState, ReactNode, CSSProperties, Dispatch, SetStateAction } from 'react'
+import { Button, IconClose, IconCheck } from './primitives.tsx'
+import type { AppSettings } from '../types'
 
-function getFavorites() {
+interface Favorite { icon: string; name: string }
+
+function getFavorites(): Favorite[] {
   try { return JSON.parse(localStorage.getItem('sf_favorites') || '[]') } catch { return [] }
 }
 
-const overlay = {
+const overlay: CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 100,
-  background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+  background: 'rgba(26, 22, 17, 0.45)', backdropFilter: 'blur(4px)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   padding: 20,
 }
@@ -25,7 +28,7 @@ const label = {
 }
 const desc = { fontSize: 12, color: 'var(--sf-fg-dim)', marginTop: 2 }
 
-function OptionButton({ active, onClick, children, icon }) {
+function OptionButton({ active, onClick, children, icon }: { active: boolean; onClick: () => void; children?: ReactNode; icon?: ReactNode }) {
   return (
     <button
       onClick={onClick}
@@ -45,7 +48,7 @@ function OptionButton({ active, onClick, children, icon }) {
   )
 }
 
-function Toggle({ on, onChange }) {
+function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
     <button
       onClick={onChange}
@@ -60,14 +63,14 @@ function Toggle({ on, onChange }) {
       <span style={{
         position: 'absolute', top: 2, left: on ? 20 : 2,
         width: 16, height: 16, borderRadius: '50%',
-        background: on ? '#11140f' : 'var(--sf-fg-muted)',
+        background: on ? 'var(--sf-ink-on-amber)' : 'var(--sf-fg-muted)',
         transition: 'left var(--sf-dur) var(--sf-ease)',
       }} />
     </button>
   )
 }
 
-function Chip({ active, onClick, children }) {
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children?: ReactNode }) {
   return (
     <button
       onClick={onClick}
@@ -84,10 +87,18 @@ function Chip({ active, onClick, children }) {
   )
 }
 
-export default function Settings({ open, onClose, settings, setSettings, onClearFavorites }) {
+interface SettingsProps {
+  open: boolean
+  onClose: () => void
+  settings: AppSettings
+  setSettings: Dispatch<SetStateAction<AppSettings>>
+  onClearFavorites?: () => void
+}
+
+export default function Settings({ open, onClose, settings, setSettings, onClearFavorites }: SettingsProps) {
   const [favs, setFavs] = useState(getFavorites)
 
-  function removeFav(name) {
+  function removeFav(name: string) {
     const next = favs.filter(f => f.name !== name)
     setFavs(next)
     localStorage.setItem('sf_favorites', JSON.stringify(next))

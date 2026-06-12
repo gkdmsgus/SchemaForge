@@ -10,7 +10,7 @@
 //   Phases:  idle → analyzing → routing → placing → done
 // ============================================================================
 
-import React from 'react';
+import React from 'react'
 
 const PHASE_ORDER = ['idle', 'analyzing', 'routing', 'placing', 'done'];
 
@@ -32,7 +32,7 @@ const TRACES = [
   { d: 'M 120 270 L 120 90',  phase: 1 },
 ];
 
-export default function TraceGeneration({ phase = 'idle', height = 360, style }) {
+export default function TraceGeneration({ phase = 'idle', height = 360, style }: { phase?: string; height?: number; style?: React.CSSProperties }) {
   const p = PHASE_ORDER.indexOf(phase);
 
   return (

@@ -1,4 +1,6 @@
-export const CIRCUITS = {
+import type { CircuitCategory, CategoryMeta } from '../types'
+
+export const CIRCUITS: Record<string, CircuitCategory> = {
   audio: {
     icon: '🔊', name: '오디오 앰프',
     items: [
@@ -53,7 +55,7 @@ export const CIRCUITS = {
   },
 }
 
-export const CATEGORIES = [
+export const CATEGORIES: CategoryMeta[] = [
   { key: 'audio',  icon: '🔊', name: '오디오 앰프', desc: '스피커, 헤드폰, 마이크' },
   { key: 'power',  icon: '⚡', name: '전원 & 충전', desc: '배터리 충전, 전압 변환' },
   { key: 'led',    icon: '💡', name: 'LED & 조명', desc: '점멸, 밝기 조절, 색상' },
@@ -62,7 +64,7 @@ export const CATEGORIES = [
   { key: 'motor',  icon: '🎛️', name: '모터 & 제어', desc: 'DC 모터, 릴레이 스위치' },
 ]
 
-export function detectCategory(text) {
+export function detectCategory(text: string): string {
   const t = text.toLowerCase()
   if (t.match(/앰프|엠프|amplif|스피커|헤드폰|마이크|프리앰프|오디오|bass|guitar|베이스/)) return 'amp'
   if (t.match(/led|조명|점멸|발광|깜빡|디머/)) return 'led'
