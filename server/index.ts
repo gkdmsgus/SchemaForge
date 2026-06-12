@@ -695,7 +695,7 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
     } catch (_) {}
 
     // Auto-save session to DB if user is logged in
-    if (req.user?.id) {
+    if (req.user?.id && supabase) {
       supabase.from('sessions').insert({
         user_id: req.user.id,
         prompt: description,
