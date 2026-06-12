@@ -122,19 +122,49 @@ export default function Header({
           {modelLabel} · {modelStatus}
         </span>
         {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 12, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user.email}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: '50%',
+              background: 'var(--sf-amber)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'var(--sf-font-sans)', fontSize: 12, fontWeight: 700,
+              color: '#fff', flexShrink: 0,
+              boxShadow: '0 0 0 2px var(--sf-amber-line)',
+            }}>
+              {user.email?.[0]?.toUpperCase() ?? '?'}
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.email?.split('@')[0]}
             </span>
             <button
               onClick={onLogout}
-              style={{ background: 'none', border: '1px solid var(--sf-line-strong)', borderRadius: 6, color: 'var(--sf-fg-dim)', cursor: 'pointer', fontSize: 11, padding: '3px 8px', fontFamily: 'var(--sf-font-mono)' }}
+              style={{
+                background: 'none',
+                border: '1px solid var(--sf-line)',
+                borderRadius: 7, color: 'var(--sf-fg-dim)',
+                cursor: 'pointer', fontSize: 11, padding: '3px 9px',
+                fontFamily: 'var(--sf-font-mono)',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--sf-line-strong)'; e.currentTarget.style.color = 'var(--sf-fg)' }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--sf-line)'; e.currentTarget.style.color = 'var(--sf-fg-dim)' }}
             >로그아웃</button>
           </div>
         ) : (
           <button
             onClick={onAuthClick}
-            style={{ background: 'var(--sf-amber-soft)', border: '1px solid var(--sf-amber-line)', borderRadius: 6, color: 'var(--sf-amber)', cursor: 'pointer', fontSize: 12, padding: '5px 12px', fontFamily: 'var(--sf-font-mono)', fontWeight: 600 }}
+            style={{
+              background: 'var(--sf-amber)',
+              border: 'none',
+              borderRadius: 8, color: '#fff',
+              cursor: 'pointer', fontSize: 12.5, padding: '6px 14px',
+              fontFamily: 'var(--sf-font-sans)', fontWeight: 700,
+              letterSpacing: '-0.01em',
+              transition: 'all 0.15s',
+              boxShadow: '0 2px 8px rgba(200,117,21,0.3)',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#a85c0e'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber)'; e.currentTarget.style.transform = 'none' }}
           >로그인</button>
         )}
         <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="Settings" />

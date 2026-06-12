@@ -1,6 +1,7 @@
 ﻿import React, { useRef, useState, Dispatch, SetStateAction } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
+import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
 import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
@@ -58,12 +59,14 @@ interface ResultPanelProps {
   onSelectVersion?: (id: string) => void
   onApplyVersion?: () => void
   initialChatSession?: ChatSession | null
+  authUser?: AuthUser | null
+  sessionId?: string | null
 }
 
 export default function ResultPanel({
   result, setResult, theme, onRegenerate, lastPrompt,
   versions = [], currentVersionId = null, onSelectVersion, onApplyVersion,
-  initialChatSession = null,
+  initialChatSession = null, authUser = null, sessionId = null,
 }: ResultPanelProps) {
   const resultRef = useRef<HTMLDivElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -80,6 +83,9 @@ export default function ResultPanel({
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [localGraph, setLocalGraph] = useState<NetGraph | null>(() => initialChatSession?.graph || null)
+  const [isFavorited, setIsFavorited] = useState(false)
+  const [favId, setFavId] = useState<string | null>(null)
+  const [favLoading, setFavLoading] = useState(false)
   const [graphHistory, setGraphHistory] = useState<NetGraph[]>([])
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
 
@@ -120,7 +126,7 @@ export default function ResultPanel({
         const baseName = result?.filename?.replace('.net', '') || 'circuit'
         const res = await fetch(`${API}/generate_pcb_from_graph`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ graph: localGraph, baseName }),
         })
         data = await res.json()
@@ -128,7 +134,7 @@ export default function ResultPanel({
         if (!result?.filename) { setPcbStatus('error'); return }
         const res = await fetch(`${API}/generate_pcb`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ filename: result.filename }),
         })
         data = await res.json()
@@ -148,7 +154,7 @@ export default function ResultPanel({
     try {
       const res = await fetch(`${API}/generate_gerber`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ pcbFilename }),
       })
       const data = await res.json()
@@ -185,7 +191,7 @@ export default function ResultPanel({
       const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
       const res = await fetch(`${API}/chat_edit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ graph: effectiveGraph, message: msg, history }),
       })
 
@@ -245,6 +251,26 @@ export default function ResultPanel({
     }
     setChatLoading(false)
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+  }
+
+  async function toggleFavorite() {
+    if (!sessionId || favLoading) return
+    setFavLoading(true)
+    try {
+      if (isFavorited && favId) {
+        await removeFavorite(favId)
+        setIsFavorited(false)
+        setFavId(null)
+      } else {
+        const id = await addFavorite(sessionId)
+        setIsFavorited(true)
+        setFavId(id)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setFavLoading(false)
+    }
   }
 
   async function exportPDF() {
@@ -338,6 +364,22 @@ export default function ResultPanel({
         <div style={{ flex: 1 }} />
 
         {/* actions */}
+        {authUser && sessionId && (
+          <button
+            onClick={toggleFavorite}
+            disabled={favLoading}
+            title={isFavorited ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+            style={{
+              ...iconBtn,
+              color: isFavorited ? '#c87515' : undefined,
+              opacity: favLoading ? 0.5 : 1,
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill={isFavorited ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+              <path d="M4 2h8a1 1 0 0 1 1 1v10.5l-5-3-5 3V3a1 1 0 0 1 1-1z"/>
+            </svg>
+          </button>
+        )}
         <button onClick={handleCopyPrompt} title="프롬프트 복사" style={iconBtn}><IconCopy size={14} /></button>
         <button onClick={() => onRegenerate(lastPrompt)} title="재생성" style={{...iconBtn, fontSize:16}}>↺</button>
         <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding:'5px 10px'}}>PDF</button>
