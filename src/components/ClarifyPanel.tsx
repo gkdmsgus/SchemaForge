@@ -1,20 +1,29 @@
-import { useState } from 'react'
-import TraceField from './TraceField.jsx'
-import Mascot from './Mascot.jsx'
-import { Button, Chip, IconBolt, IconClose, IconWand } from './primitives.jsx'
+﻿import { useState } from 'react'
+import TraceField from './TraceField.tsx'
+import Mascot from './Mascot.tsx'
+import { Button, Chip, IconBolt, IconClose, IconWand } from './primitives.tsx'
+import type { ClarifyQuestion } from '../types'
 
-export default function ClarifyPanel({ originalPrompt, questions, onConfirm, onSkip, onCancel }) {
-  const [answers, setAnswers] = useState({})
-  const [customs, setCustoms] = useState({})
+interface ClarifyPanelProps {
+  originalPrompt: string
+  questions: ClarifyQuestion[]
+  onConfirm: (enrichedPrompt: string) => void
+  onSkip: () => void
+  onCancel: () => void
+}
+
+export default function ClarifyPanel({ originalPrompt, questions, onConfirm, onSkip, onCancel }: ClarifyPanelProps) {
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [customs, setCustoms] = useState<Record<string, string>>({})
 
   const allAnswered = questions.every(q => answers[q.key] || customs[q.key]?.trim())
 
-  function pick(key, value) {
+  function pick(key: string, value: string) {
     setAnswers(a => ({ ...a, [key]: value }))
     setCustoms(c => ({ ...c, [key]: '' }))
   }
 
-  function setCustom(key, val) {
+  function setCustom(key: string, val: string) {
     setCustoms(c => ({ ...c, [key]: val }))
     if (val.trim()) setAnswers(a => ({ ...a, [key]: '' }))
   }

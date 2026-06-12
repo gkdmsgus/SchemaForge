@@ -1,4 +1,6 @@
-export const QA_TREES = {
+import type { QaTree } from '../types'
+
+export const QA_TREES: Record<string, QaTree> = {
   amp: {
     label: '앰프 회로',
     questions: [

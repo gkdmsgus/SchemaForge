@@ -11,7 +11,8 @@
 //   plain string paths or move the SVGs to /public.
 // ============================================================================
 
-import React from 'react';
+import React from 'react'
+
 
 import sparkyIdle    from '../assets/sparky-idle.svg';
 import sparkyWorking from '../assets/sparky-working.svg';
@@ -28,7 +29,13 @@ const SOURCES = {
  * @param {'idle'|'working'|'ready'} state
  * @param {number} size  rendered px (square)
  */
-export default function Mascot({ state = 'idle', size = 56, alt = 'Sparky', style, ...rest }) {
+export default function Mascot({ state = 'idle', size = 56, alt = 'Sparky', style, ...rest }: {
+  state?: 'idle' | 'working' | 'ready'
+  size?: number
+  alt?: string
+  style?: React.CSSProperties
+  [key: string]: unknown
+}) {
   const src = SOURCES[state] ?? SOURCES.idle;
   return (
     <img

@@ -1,9 +1,34 @@
-import { useState } from 'react'
-import TraceField from './TraceField.jsx'
-import Mascot from './Mascot.jsx'
-import { Button, Chip, IconBolt, IconWand } from './primitives.jsx'
+﻿import { useState } from 'react'
+import TraceField from './TraceField.tsx'
+import Mascot from './Mascot.tsx'
+import { Button, Chip, IconBolt, IconWand } from './primitives.tsx'
 
-const CIRCUIT_TYPES = [
+interface CircuitField {
+  key: string
+  label: string
+  required?: boolean
+  options: string[]
+  recommended?: string
+  hints?: Record<string, string>
+  multi?: boolean
+}
+
+interface WorkflowStep {
+  num: string
+  title: string
+  desc: string
+  bullets: string[]
+}
+
+interface CircuitType {
+  key: string
+  label: string
+  desc: string
+  glyph: string
+  fields: CircuitField[]
+}
+
+const CIRCUIT_TYPES: CircuitType[] = [
   {
     key: 'amp',
     label: '오디오 앰프',
@@ -480,7 +505,7 @@ const CIRCUIT_TYPES = [
   },
 ]
 
-function fieldHasValue(field, values, customs) {
+function fieldHasValue(field: {key: string; multi?: boolean}, values: Record<string, unknown>, customs: Record<string, string>) {
   const c = customs[field.key]?.trim()
   if (c) return true
   const v = values[field.key]
@@ -488,7 +513,7 @@ function fieldHasValue(field, values, customs) {
   return !!v
 }
 
-function fieldValueString(field, values, customs) {
+function fieldValueString(field: {key: string; multi?: boolean}, values: Record<string, unknown>, customs: Record<string, string>) {
   const c = customs[field.key]?.trim()
   if (c) return c
   const v = values[field.key]
@@ -496,10 +521,10 @@ function fieldValueString(field, values, customs) {
   return v || null
 }
 
-export default function FormComposer({ onSubmit }) {
-  const [typeKey, setTypeKey] = useState(null)
-  const [values, setValues] = useState({})
-  const [customs, setCustoms] = useState({})
+export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, typeKey?: string) => void }) {
+  const [typeKey, setTypeKey] = useState<string | null>(null)
+  const [values, setValues] = useState<Record<string, unknown>>({})
+  const [customs, setCustoms] = useState<Record<string, string>>({})
   const [heroText, setHeroText] = useState('')
 
   const type = CIRCUIT_TYPES.find(t => t.key === typeKey)
@@ -509,7 +534,7 @@ export default function FormComposer({ onSubmit }) {
 
   const canSubmit = (type && requiredFilled) || (!type && heroText.trim().length >= 4)
 
-  function chooseType(key) {
+  function chooseType(key: string) {
     if (key === typeKey) {
       setTypeKey(null)
       setValues({})
@@ -521,19 +546,19 @@ export default function FormComposer({ onSubmit }) {
     setCustoms({})
   }
 
-  function pickSingle(fieldKey, opt) {
+  function pickSingle(fieldKey: string, opt: string) {
     setValues(v => ({ ...v, [fieldKey]: v[fieldKey] === opt ? '' : opt }))
     setCustoms(c => ({ ...c, [fieldKey]: '' }))
   }
 
-  function toggleMulti(fieldKey, opt) {
+  function toggleMulti(fieldKey: string, opt: string) {
     setValues(v => {
       const cur = Array.isArray(v[fieldKey]) ? v[fieldKey] : []
       return { ...v, [fieldKey]: cur.includes(opt) ? cur.filter(x => x !== opt) : [...cur, opt] }
     })
   }
 
-  function setCustom(fieldKey, val) {
+  function setCustom(fieldKey: string, val: string) {
     setCustoms(c => ({ ...c, [fieldKey]: val }))
     if (val.trim()) {
       setValues(v => {
@@ -561,7 +586,7 @@ export default function FormComposer({ onSubmit }) {
 
   function submit() {
     if (!canSubmit) return
-    onSubmit?.(buildPrompt(), typeKey)
+    onSubmit?.(buildPrompt(), typeKey ?? undefined)
   }
 
   return (
@@ -760,7 +785,7 @@ function WorkflowSection() {
   )
 }
 
-function WorkflowCard({ step, isLast }) {
+function WorkflowCard({ step, isLast }: { step: WorkflowStep; isLast: boolean }) {
   return (
     <div style={{
       position: 'relative',
@@ -810,7 +835,7 @@ function WorkflowCard({ step, isLast }) {
   )
 }
 
-function SectionLabel({ num, title }) {
+function SectionLabel({ num, title }: { num: string; title: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14 }}>
       <span style={{
@@ -826,7 +851,7 @@ function SectionLabel({ num, title }) {
   )
 }
 
-function TypeCard({ active, glyph, label, desc, onClick }) {
+function TypeCard({ active, glyph, label, desc, onClick }: { active: boolean; glyph: string; label: string; desc: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -870,11 +895,11 @@ function TypeCard({ active, glyph, label, desc, onClick }) {
   )
 }
 
-function FieldRow({ field, value, custom, onPick, onCustom, isLast }) {
-  const [hoveredOpt, setHoveredOpt] = useState(null)
+function FieldRow({ field, value, custom, onPick, onCustom, isLast }: { field: CircuitField; value: unknown; custom: string; onPick: (opt: string) => void; onCustom: (val: string) => void; isLast: boolean }) {
+  const [hoveredOpt, setHoveredOpt] = useState<string | null>(null)
   const picked = field.multi
-    ? (Array.isArray(value) ? value : [])
-    : value
+    ? (Array.isArray(value) ? (value as string[]) : [])
+    : (value as string | undefined)
 
   const hintText = hoveredOpt && field.hints?.[hoveredOpt]
 
@@ -902,7 +927,7 @@ function FieldRow({ field, value, custom, onPick, onCustom, isLast }) {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: hintText ? 6 : 8 }}>
         {field.options.map((opt, i) => {
-          const active = field.multi ? picked.includes(opt) : picked === opt
+          const active = field.multi ? (picked as string[]).includes(opt) : picked === opt
           const isRec = field.recommended === opt
           return (
             <div

@@ -1,15 +1,13 @@
-// ============================================================================
-// primitives.jsx — small shared UI atoms used across the patched panels.
-// ----------------------------------------------------------------------------
-//   Button · Chip · Input · Spinner — minimal API, all driven by the
-//   `--sf-*` tokens from styles/_variables.scss.
-// ============================================================================
-
-import React, { useState } from 'react';
+import React, { useState, CSSProperties, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from 'react';
 
 // ── Spinner ────────────────────────────────────────────────────────────────
 
-export function Spinner({ size = 16, color = 'currentColor' }) {
+interface SpinnerProps {
+  size?: number
+  color?: string
+}
+
+export function Spinner({ size = 16, color = 'currentColor' }: SpinnerProps) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 24 24"
@@ -24,23 +22,26 @@ export function Spinner({ size = 16, color = 'currentColor' }) {
 
 // ── Button ─────────────────────────────────────────────────────────────────
 
-const BTN_SIZES = {
+type BtnSize = 'sm' | 'md' | 'lg' | 'pill'
+type BtnVariant = 'primary' | 'cyan' | 'secondary' | 'ghost' | 'outline' | 'danger'
+
+const BTN_SIZES: Record<BtnSize, CSSProperties> = {
   sm:   { height: 28, padding: '0 10px', fontSize: 13, borderRadius: 'var(--sf-r-sm)' },
   md:   { height: 36, padding: '0 14px', fontSize: 14, borderRadius: 'var(--sf-r-sm)' },
   lg:   { height: 44, padding: '0 20px', fontSize: 15, borderRadius: 'var(--sf-r-sm)' },
   pill: { height: 40, padding: '0 20px', fontSize: 14, borderRadius: 'var(--sf-r-pill)' },
 };
 
-const BTN_VARIANTS = {
-  primary:   { background: 'var(--sf-amber)',   color: '#fff8ef',         border: '1px solid var(--sf-amber)' },
-  cyan:      { background: 'var(--sf-cyan)',    color: '#f4f7f2',         border: '1px solid var(--sf-cyan)' },
-  secondary: { background: 'var(--sf-bg-3)',    color: 'var(--sf-fg)',    border: '1px solid var(--sf-line-strong)' },
+const BTN_VARIANTS: Record<BtnVariant, CSSProperties> = {
+  primary:   { background: 'var(--sf-amber)',   color: '#fff8ef',            border: '1px solid var(--sf-amber)' },
+  cyan:      { background: 'var(--sf-cyan)',    color: '#f4f7f2',            border: '1px solid var(--sf-cyan)' },
+  secondary: { background: 'var(--sf-bg-3)',    color: 'var(--sf-fg)',       border: '1px solid var(--sf-line-strong)' },
   ghost:     { background: 'transparent',       color: 'var(--sf-fg-muted)', border: '1px solid transparent' },
-  outline:   { background: 'transparent',       color: 'var(--sf-fg)',    border: '1px solid var(--sf-line-strong)' },
-  danger:    { background: 'transparent',       color: 'var(--sf-danger)', border: '1px solid rgba(255,106,91,0.4)' },
+  outline:   { background: 'transparent',       color: 'var(--sf-fg)',       border: '1px solid var(--sf-line-strong)' },
+  danger:    { background: 'transparent',       color: 'var(--sf-danger)',   border: '1px solid rgba(255,106,91,0.4)' },
 };
 
-const BTN_HOVER = {
+const BTN_HOVER: Record<BtnVariant, CSSProperties> = {
   primary:   { background: '#d97559' },
   cyan:      { background: '#5e948a' },
   secondary: { background: 'var(--sf-bg-4)', borderColor: 'var(--sf-fg-faint)' },
@@ -49,12 +50,23 @@ const BTN_HOVER = {
   danger:    { background: 'rgba(255,106,91,0.1)' },
 };
 
+interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
+  variant?: BtnVariant
+  size?: BtnSize
+  icon?: ReactNode
+  trailingIcon?: ReactNode
+  loading?: boolean
+  onClick?: () => void
+  children?: ReactNode
+  style?: CSSProperties
+}
+
 export function Button({
   variant = 'ghost', size = 'md',
   icon, trailingIcon,
   loading, disabled, onClick,
   children, style, ...rest
-}) {
+}: ButtonProps) {
   const [hover, setHover]     = useState(false);
   const [pressed, setPressed] = useState(false);
   const hoverStyle = hover && !disabled ? BTN_HOVER[variant] : {};
@@ -91,7 +103,16 @@ export function Button({
 
 // ── Chip ───────────────────────────────────────────────────────────────────
 
-export function Chip({ children, icon, active, onClick, variant = 'default', style }) {
+interface ChipProps {
+  children?: ReactNode
+  icon?: ReactNode
+  active?: boolean
+  onClick?: () => void
+  variant?: 'default' | 'cyan'
+  style?: CSSProperties
+}
+
+export function Chip({ children, icon, active, onClick, variant = 'default', style }: ChipProps) {
   const [hover, setHover] = useState(false);
   const v = variant === 'cyan'
     ? { bg: 'var(--sf-cyan-soft)',  fg: 'var(--sf-cyan)',  bd: 'var(--sf-cyan-line)',  bgHover: 'var(--sf-cyan-soft)' }
@@ -127,7 +148,13 @@ export function Chip({ children, icon, active, onClick, variant = 'default', sty
 
 // ── Input ──────────────────────────────────────────────────────────────────
 
-export function Input({ icon, size = 'md', style, ...rest }) {
+interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
+  icon?: ReactNode
+  size?: 'sm' | 'md' | 'lg'
+  style?: CSSProperties
+}
+
+export function Input({ icon, size = 'md', style, ...rest }: InputProps) {
   const [focus, setFocus] = useState(false);
   const h = size === 'lg' ? 44 : size === 'sm' ? 28 : 36;
   return (
@@ -156,18 +183,22 @@ export function Input({ icon, size = 'md', style, ...rest }) {
   );
 }
 
-// ── Tiny icon set (only the ones the panels need) ──────────────────────────
+// ── Icon set ───────────────────────────────────────────────────────────────
 
-const stroke = { stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' };
+interface IconProps {
+  size?: number
+}
 
-export const IconBolt     = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>;
-export const IconWand     = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8l1.4 1.4M17.8 6.2l1.4-1.4M3 21l9-9M12.2 6.2l-1.4-1.4"/></svg>;
-export const IconFile     = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>;
-export const IconClose    = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M6 6l12 12M18 6L6 18"/></svg>;
-export const IconCheck    = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M4 12l5 5L20 6"/></svg>;
-export const IconCopy     = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>;
-export const IconPin      = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 17v5M5 3h14l-2 7H7L5 3zM7 10l5 7 5-7"/></svg>;
-export const IconDownload = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 3v13M6 11l6 6 6-6M4 21h16"/></svg>;
-export const IconHistory  = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
-export const IconSettings = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
-export const IconLayers   = (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>;
+const stroke = { stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+
+export const IconBolt     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>;
+export const IconWand     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8l1.4 1.4M17.8 6.2l1.4-1.4M3 21l9-9M12.2 6.2l-1.4-1.4"/></svg>;
+export const IconFile     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>;
+export const IconClose    = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M6 6l12 12M18 6L6 18"/></svg>;
+export const IconCheck    = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M4 12l5 5L20 6"/></svg>;
+export const IconCopy     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>;
+export const IconPin      = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 17v5M5 3h14l-2 7H7L5 3zM7 10l5 7 5-7"/></svg>;
+export const IconDownload = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 3v13M6 11l6 6 6-6M4 21h16"/></svg>;
+export const IconHistory  = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
+export const IconSettings = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
+export const IconLayers   = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>;

@@ -1,37 +1,42 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
+import type { NetGraph, NetEntry } from '../types'
 
 // ── Color palette ─────────────────────────────────────────────
-const NET_COLORS = ['#a78bfa','#34d3a0','#f59e0b','#60a5fa','#f87171','#38bdf8','#fb923c','#a3e635']
-const COMP_COLORS = { R:'#f59e0b', C:'#60a5fa', Q:'#34d3a0', D:'#f87171', L:'#a78bfa', U:'#38bdf8', SW:'#fb923c', K:'#f59e0b', BT:'#a3e635' }
-const BG = '#080a10'
-const COMP_FILL = '#0e1018'
-const COMP_BORDER = '#1c2030'
-const GRID_DOT = '#1a1e2c'
-const TEXT_DIM = '#3a4055'
-const TEXT_LABEL = '#c8cfe8'
-const TEXT_VALUE = '#5a6278'
-const PIN_IDLE = '#2a3040'
-const PIN_HOVER = '#a78bfa'
-const PIN_ACTIVE = '#f59e0b'
-const WIRE_PREVIEW = '#a78bfacc'
+const NET_COLORS = ['#6a4cb5','#1d7a6a','#c87515','#2563eb','#b04826','#0891b2','#c2410c','#4d7c0f']
+const COMP_COLORS = { R:'#c87515', C:'#2563eb', Q:'#1d7a6a', D:'#b04826', L:'#6a4cb5', U:'#0891b2', SW:'#c2410c', K:'#c87515', BT:'#4d7c0f' }
+const BG = '#fbf7ec'
+const COMP_FILL = '#f6f0e0'
+const COMP_BORDER = '#d6cdb6'
+const GRID_DOT = '#e3dcc7'
+const TEXT_DIM = '#b0a895'
+const TEXT_LABEL = '#1a1611'
+const TEXT_VALUE = '#5c5444'
+const PIN_IDLE = '#d6cdb6'
+const PIN_HOVER = '#6a4cb5'
+const PIN_ACTIVE = '#c87515'
+const WIRE_PREVIEW = '#6a4cb5cc'
 
-const COMP_TYPE_LABELS = {
+const COMP_TYPE_LABELS: Record<string, string> = {
   R:'Resistor', C:'Capacitor', L:'Inductor', D:'Diode/LED',
   Q:'Transistor', U:'IC/Chip', SW:'Switch', K:'Relay',
   LS:'Speaker', BT:'Battery', F:'Fuse', J:'Connector',
 }
 
-function compColor(ref) {
-  return COMP_COLORS[ref[0].toUpperCase()] || '#64748b'
+interface PinDef { x: number; y: number; side: 'L' | 'R' | 'T' | 'B' }
+interface Layout { w: number; h: number; pins: Record<string, PinDef> }
+interface Pos { x: number; y: number }
+
+function compColor(ref: string): string {
+  return (COMP_COLORS as Record<string, string>)[ref[0].toUpperCase()] || '#64748b'
 }
 
-function getMaxPin(ref, nets) {
+function getMaxPin(ref: string, nets: NetEntry[]): number {
   let m = 2
   nets.forEach(n => n.nodes.forEach(nd => { if (nd.ref === ref) m = Math.max(m, parseInt(nd.pin) || 2) }))
   return m
 }
 
-function getPinLayout(ref, pinCount) {
+function getPinLayout(ref: string, pinCount: number): Layout {
   const t = ref[0].toUpperCase()
   const PIN_STUB = 14
   if (t === 'Q') {
@@ -44,13 +49,13 @@ function getPinLayout(ref, pinCount) {
   }
   const l = Math.ceil(pinCount / 2), r = Math.floor(pinCount / 2)
   const h = Math.max(72, Math.max(l,r) * 22 + 28)
-  const pins = {}
+  const pins: Record<number, PinDef> = {}
   for (let i=0;i<l;i++) pins[i+1] = {x:-50,y:-h/2+24+i*22,side:'L'}
   for (let i=0;i<r;i++) pins[l+i+1] = {x:50,y:-h/2+24+i*22,side:'R'}
   return { w: 100, h, pins }
 }
 
-function pinAbsPos(ref, pin, pos, layouts) {
+function pinAbsPos(ref: string, pin: string, pos: Record<string, Pos>, layouts: Record<string, Layout>): Pos | null {
   const p = pos[ref], l = layouts[ref]
   if (!p || !l) return null
   const pn = l.pins[pin] || l.pins[Object.keys(l.pins)[0]]
@@ -61,17 +66,17 @@ function pinAbsPos(ref, pin, pos, layouts) {
   return { x: p.x + pn.x, y: p.y + l.h/2 + STUB }
 }
 
-function autoLayout(comps, layouts) {
+function autoLayout(comps: {ref: string}[], layouts: Record<string, Layout>) {
   const cols = Math.min(Math.ceil(Math.sqrt(Math.max(comps.length,1))), 5)
   const HGAP = 110, VGAP = 100, M = 80
-  const cW = Array(cols).fill(0), rH = []
+  const cW = Array(cols).fill(0) as number[], rH: number[] = []
   comps.forEach((c,i) => {
     const col = i%cols, row = Math.floor(i/cols)
     cW[col] = Math.max(cW[col], (layouts[c.ref]?.w||80)+HGAP)
     if (!rH[row]) rH[row]=0
     rH[row] = Math.max(rH[row], (layouts[c.ref]?.h||60)+VGAP)
   })
-  const pos = {}
+  const pos: Record<string, Pos> = {}
   let cx = M
   for (let col=0;col<cols;col++) {
     let cy = M+30
@@ -88,7 +93,7 @@ function autoLayout(comps, layouts) {
   return { positions:pos, width:Math.max(TW,700), height:Math.max(TH,480) }
 }
 
-function isPowerNet(name) {
+function isPowerNet(name: string): boolean {
   if (!name) return false
   const n = name.toUpperCase()
   return ['GND','AGND','DGND','PGND','SGND','EARTH','PWR','POWER','VBAT','AVCC','VREF'].includes(n)
@@ -97,7 +102,7 @@ function isPowerNet(name) {
     || /^12V/.test(n) || /^V3\d/.test(n) || /^V5\d/.test(n) || /^\d+V\d*$/.test(n)
 }
 
-function PowerSymbol({ x, y, name, color }) {
+function PowerSymbol({ x, y, name, color }: { x: number; y: number; name: string; color: string }) {
   const isGnd = /GND|EARTH|VSS|VEE/i.test(name)
   if (isGnd) {
     return (
@@ -123,14 +128,14 @@ function PowerSymbol({ x, y, name, color }) {
 
 // Right-angle wire routing with optional mx (vertical x) and my (middle horizontal y)
 // Default: H-V-H (3 segments). With my set: H-V-H-V (5 segments, Z-shape).
-function routeWire(ax, ay, bx, by, mx, my) {
+function routeWire(ax: number, ay: number, bx: number, by: number, mx?: number, my?: number): string {
   const midX = mx !== undefined ? mx : ax + (bx - ax) * 0.5
   const midY = my !== undefined ? my : by
   return `M${ax},${ay} L${midX},${ay} L${midX},${midY} L${bx},${midY} L${bx},${by}`
 }
 
 // Minimum Spanning Tree (Prim's, Manhattan distance) — minimises total wire length
-function buildMST(pts) {
+function buildMST(pts: Pos[]): number[][] {
   const n = pts.length
   if (n <= 1) return []
   const inMST = new Array(n).fill(false)
@@ -155,29 +160,39 @@ function buildMST(pts) {
   return edges
 }
 
-export default function CircuitCanvas({ graph, graphDiff = null }) {
-  const svgRef = useRef(null)
-  const dragRef = useRef(null)
+interface DragState { ref: string; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean }
+interface PanDrag { lastX: number; lastY: number }
+interface WireDragLive { netIdx: number; segIdx: number; startX: number; startY: number; startMx: number; startMy: number; captured: boolean; pointerId: number }
+interface GraphDiff { added?: Set<string>; removed?: Set<string>; modified?: Set<string> }
+
+interface CircuitCanvasProps {
+  graph?: NetGraph
+  graphDiff?: GraphDiff | null
+}
+
+export default function CircuitCanvas({ graph, graphDiff = null }: CircuitCanvasProps) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const dragRef = useRef<DragState | null>(null)
   const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const panDragRef = useRef(null)
+  const [pan, setPan] = useState<Pos>({ x: 0, y: 0 })
+  const panDragRef = useRef<PanDrag | null>(null)
   const didPanRef = useRef(false)
-  const [positions, setPositions] = useState({})
-  const [selected, setSelected] = useState(null)
-  const [selectedNet, setSelectedNet] = useState(null) // selected wire index
-  const [hoveredNet, setHoveredNet] = useState(null)
-  const [hoveredPin, setHoveredPin] = useState(null) // { ref, pin }
-  const [wireState, setWireState] = useState(null)     // { fromRef, fromPin }
-  const [reconnectState, setReconnectState] = useState(null) // { netIdx, nodeIdx }
-  const [wireDrag, setWireDrag] = useState(null)        // { netIdx, segIdx } — for rendering only
-  const wireDragRef = useRef(null)                       // live drag state, avoids stale closures
-  const [wireBends, setWireBends] = useState({})        // { "ni_i": { mx, my } }
-  const [cursor, setCursor] = useState({ x:0, y:0 })
-  const [localNets, setLocalNets] = useState(null)
-  const [netsHistory, setNetsHistory] = useState([])  // undo stack for net deletions
-  const [toast, setToast] = useState(null)             // { msg, timeoutId }
-  const [edits, setEdits] = useState({})
-  const [editingRef, setEditingRef] = useState(null)
+  const [positions, setPositions] = useState<Record<string, Pos>>({})
+  const [selected, setSelected] = useState<string | null>(null)
+  const [selectedNet, setSelectedNet] = useState<number | null>(null)
+  const [hoveredNet, setHoveredNet] = useState<number | null>(null)
+  const [hoveredPin, setHoveredPin] = useState<{ref: string; pin: string} | null>(null)
+  const [wireState, setWireState] = useState<{fromRef: string; fromPin: string} | null>(null)
+  const [reconnectState, setReconnectState] = useState<{netIdx: number; nodeIdx: number} | null>(null)
+  const [wireDrag, setWireDrag] = useState<{netIdx: number; segIdx: number} | null>(null)
+  const wireDragRef = useRef<WireDragLive | null>(null)
+  const [wireBends, setWireBends] = useState<Record<string, {mx: number; my: number}>>({})
+  const [cursor, setCursor] = useState<Pos>({ x:0, y:0 })
+  const [localNets, setLocalNets] = useState<NetEntry[] | null>(null)
+  const [netsHistory, setNetsHistory] = useState<NetEntry[][]>([])
+  const [toast, setToast] = useState<{msg: string; timeoutId: ReturnType<typeof setTimeout>} | null>(null)
+  const [edits, setEdits] = useState<Record<string, {value: string}>>({})
+  const [editingRef, setEditingRef] = useState<string | null>(null)
   const [editingValue, setEditingValue] = useState('')
 
   const comps = graph?.components || []
@@ -185,18 +200,18 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   const effectiveNets = localNets || nets
 
   // Non-passive wheel listener to allow preventDefault for zoom
-  const containerRef = useRef(null)
-  const onWheelRef = useRef(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const onWheelRef = useRef<((e: WheelEvent) => void) | null>(null)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const handler = (e) => onWheelRef.current?.(e)
+    const handler = (e: WheelEvent) => onWheelRef.current?.(e)
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
   }, [])
 
-  const layouts = useMemo(() => {
-    const ls = {}
+  const layouts = useMemo<Record<string, Layout>>(() => {
+    const ls: Record<string, Layout> = {}
     comps.forEach(c => { ls[c.ref] = getPinLayout(c.ref, getMaxPin(c.ref, nets)) })
     return ls
   }, [graph])
@@ -223,7 +238,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
 
   const W = auto.width, H = auto.height
 
-  function svgPoint(e) {
+  function svgPoint(e: React.PointerEvent | PointerEvent): Pos {
     const svg = svgRef.current
     if (!svg) return { x:0, y:0 }
     const rect = svg.getBoundingClientRect()
@@ -234,7 +249,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   }
 
   // ── Drag / pan — all pointer handling on SVG ─────────────
-  function onCompPointerDown(e, ref) {
+  function onCompPointerDown(e: React.PointerEvent, ref: string) {
     if (wireState) return
     e.stopPropagation()
     const pt = svgPoint(e)
@@ -244,7 +259,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     try { svgRef.current?.setPointerCapture(e.pointerId) } catch(_) {}
   }
 
-  function onSvgPointerDown(e) {
+  function onSvgPointerDown(e: React.PointerEvent) {
     if (reconnectState) return
     if (wireState && e.button === 0) {
       // 빈 공간 클릭 시 wireState 취소
@@ -259,7 +274,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     }
   }
 
-  function onSvgPointerMove(e) {
+  function onSvgPointerMove(e: React.PointerEvent) {
     const pt = svgPoint(e)
     if (wireState || reconnectState) setCursor(pt)
     const wd = wireDragRef.current
@@ -293,7 +308,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     }
   }
 
-  function onSvgPointerUp(e) {
+  function onSvgPointerUp(e: React.PointerEvent) {
     if (wireDragRef.current) {
       const captured = wireDragRef.current.captured
       wireDragRef.current = null
@@ -323,11 +338,11 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   }
 
   // ── Wire drawing ──────────────────────────────────────────
-  function onPinPointerDown(e, ref, pinNum) {
+  function onPinPointerDown(e: React.PointerEvent, ref: string, pinNum: string | number) {
     e.stopPropagation()  // 컴포넌트 드래그 차단
     e.preventDefault()
     if (!wireState) {
-      const pa = pinAbsPos(ref, pinNum, positions, layouts)
+      const pa = pinAbsPos(ref, String(pinNum), positions, layouts)
       if (pa) { setWireState({ fromRef: ref, fromPin: String(pinNum) }); setCursor(pa) }
     } else {
       if (wireState.fromRef !== ref || wireState.fromPin !== String(pinNum)) {
@@ -337,7 +352,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     }
   }
 
-  function connectPins(ref1, pin1, ref2, pin2) {
+  function connectPins(ref1: string, pin1: string, ref2: string, pin2: string) {
     setLocalNets(prev => {
       const base = prev ? [...prev] : nets.map(n => ({ ...n, nodes: [...n.nodes] }))
       const i1 = base.findIndex(n => n.nodes.some(nd => nd.ref===ref1 && String(nd.pin)===String(pin1)))
@@ -360,7 +375,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     })
   }
 
-  function showToast(msg) {
+  function showToast(msg: string) {
     setToast(prev => {
       if (prev?.timeoutId) clearTimeout(prev.timeoutId)
       const id = setTimeout(() => setToast(null), 4500)
@@ -368,7 +383,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     })
   }
 
-  function deleteNet(ni) {
+  function deleteNet(ni: number) {
     const base = localNets ? [...localNets] : [...nets]
     const deleted = base[ni]
     setNetsHistory(prev => [...prev.slice(-19), base])
@@ -382,13 +397,13 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
       if (!prev.length) return prev
       const next = [...prev]
       const restored = next.pop()
-      setLocalNets(restored)
+      setLocalNets(restored ?? null)
       setToast(null)
       return next
     })
   }
 
-  function findNearestPin(x, y, threshold = 22) {
+  function findNearestPin(x: number, y: number, threshold = 22): {ref: string; pin: string} | null {
     let best = null, bestDist = threshold
     comps.forEach(c => {
       const l = layouts[c.ref]
@@ -403,7 +418,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     return best
   }
 
-  function reconnectEndpoint(netIdx, nodeIdx, newRef, newPin) {
+  function reconnectEndpoint(netIdx: number, nodeIdx: number, newRef: string, newPin: string) {
     setLocalNets(prev => {
       let nts = (prev || nets).map(n => ({ ...n, nodes: [...n.nodes] }))
       // Remove the dragged node from its net
@@ -427,7 +442,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     setSelectedNet(null)
   }
 
-  function onEndpointPointerDown(e, netIdx, nodeIdx) {
+  function onEndpointPointerDown(e: React.PointerEvent, netIdx: number, nodeIdx: number) {
     e.stopPropagation()
     if (wireState) return
     setReconnectState({ netIdx, nodeIdx })
@@ -435,14 +450,14 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
     try { svgRef.current?.setPointerCapture(e.pointerId) } catch (_) {}
   }
 
-  function onNetClick(e, ni) {
+  function onNetClick(e: React.MouseEvent, ni: number) {
     e.stopPropagation()
     if (wireState) return
     setSelectedNet(ni)
     setSelected(null)
   }
 
-  function onWireDragStart(e, netIdx, segIdx, defaultMx, defaultMy) {
+  function onWireDragStart(e: React.PointerEvent, netIdx: number, segIdx: number, defaultMx: number, defaultMy: number) {
     e.stopPropagation()
     if (wireState || reconnectState) return
     const pt = svgPoint(e)
@@ -452,7 +467,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   }
 
   // ── Zoom ──────────────────────────────────────────────────
-  function onWheel(e) {
+  function onWheel(e: WheelEvent) {
     if (!e.ctrlKey && !e.metaKey) return
     e.preventDefault()
     setZoom(z => Math.min(4, Math.max(0.25, z * (e.deltaY > 0 ? 0.9 : 1.1))))
@@ -460,12 +475,12 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   onWheelRef.current = onWheel
 
   // ── Value inline edit ─────────────────────────────────────
-  function startEdit(ref, val) {
+  function startEdit(ref: string, val: string) {
     setEditingRef(ref)
     setEditingValue(val)
   }
   function commitEdit() {
-    if (editingRef) setEdits(es => ({ ...es, [editingRef]: { value: editingValue } }))
+    if (editingRef) setEdits(es => ({ ...es, [editingRef]: { value: editingValue } }) as Record<string, {value: string}>)
     setEditingRef(null)
   }
 
@@ -483,7 +498,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
       {/* toolbar */}
       <div style={{
         display:'flex', alignItems:'center', gap:6, padding:'6px 14px',
-        background:'#0b0d14', borderBottom:'1px solid #151821', flexShrink:0,
+        background:'var(--sf-bg-1)', borderBottom:'2px solid var(--sf-line-strong)', flexShrink:0,
       }}>
         <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:TEXT_DIM, letterSpacing:'0.1em' }}>
           {comps.length} COMPS · {effectiveNets.length} NETS
@@ -507,27 +522,27 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
               fontFamily:'var(--sf-font-mono)', fontSize:10 }}>
               <span style={{ width:6, height:6, borderRadius:'50%', background:color }} />
               <span style={{ color }}>{net.name}</span>
-              <span style={{ color:'#3a4055' }}>
+              <span style={{ color:TEXT_DIM }}>
                 {net.nodes.map(n => `${n.ref}[${n.pin}]`).join(' → ')}
               </span>
-              <span style={{ color:'#3a4055', margin:'0 2px' }}>·</span>
-              <span style={{ color:'#5a6278', fontSize:9 }}>끝점 드래그로 재연결</span>
+              <span style={{ color:TEXT_DIM, margin:'0 2px' }}>·</span>
+              <span style={{ color:TEXT_VALUE, fontSize:9 }}>끝점 드래그로 재연결</span>
               <button onClick={() => deleteNet(selectedNet)} style={{
-                marginLeft:4, padding:'1px 6px', borderRadius:3, border:'1px solid #2a1515',
-                background:'transparent', color:'#f87171', cursor:'pointer', fontSize:10
+                marginLeft:4, padding:'1px 6px', borderRadius:3, border:'1px solid var(--sf-danger)',
+                background:'transparent', color:'var(--sf-danger)', cursor:'pointer', fontSize:10
               }}>✕ 삭제</button>
             </span>
           )
         })()}
         {netsHistory.length > 0 && (
           <button onClick={undoNetDelete} style={{
-            padding:'2px 8px', borderRadius:4, border:'1px solid #2a1a4a',
-            background:'transparent', color:'#a78bfa', cursor:'pointer',
+            padding:'2px 8px', borderRadius:4, border:'1px solid var(--sf-violet-line)',
+            background:'transparent', color:'var(--sf-violet)', cursor:'pointer',
             fontFamily:'var(--sf-font-mono)', fontSize:10,
           }}>↩ 되돌리기</button>
         )}
         {localNets && (
-          <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'#34d3a0', letterSpacing:'0.08em' }}>● 수정됨</span>
+          <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'var(--sf-cyan)', letterSpacing:'0.08em' }}>● 수정됨</span>
         )}
         <div style={{ flex:1 }} />
         {Object.keys(wireBends).length > 0 && (
@@ -541,13 +556,13 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
           드래그·이동 · 핀클릭·연결 · 선드래그·경로변경 · 더블클릭·값편집
         </span>
         <div style={{ display:'flex', gap:2 }}>
-          {[['−', -0.15], ['+', 0.15], ['⌂', 0]].map(([lbl, d]) => (
+          {([['−', -0.15], ['+', 0.15], ['⌂', 0]] as [string, number][]).map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
               if (d===0) { setZoom(1); setPan({x:0,y:0}) }
               else setZoom(z => Math.min(4, Math.max(0.25, z+d)))
             }} style={{
-              padding:'3px 8px', border:'1px solid #1c2030', borderRadius:4,
-              background:'transparent', color:'#5a6278', cursor:'pointer',
+              padding:'3px 8px', border:'1px solid var(--sf-line)', borderRadius:4,
+              background:'transparent', color:TEXT_VALUE, cursor:'pointer',
               fontFamily:'var(--sf-font-mono)', fontSize:12,
             }}>{lbl}</button>
           ))}
@@ -559,19 +574,19 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
         <div style={{
           position:'absolute', bottom:20, left:'50%', transform:'translateX(-50%)',
           zIndex:50, display:'flex', alignItems:'center', gap:10,
-          background:'#151821', border:'1px solid #2a3040',
+          background:'var(--sf-bg-2)', border:'1px solid var(--sf-line-strong)',
           borderRadius:8, padding:'8px 14px',
-          fontFamily:'var(--sf-font-mono)', fontSize:11, color:'#8090b0',
-          boxShadow:'0 4px 20px rgba(0,0,0,0.5)',
+          fontFamily:'var(--sf-font-mono)', fontSize:11, color:TEXT_DIM,
+          boxShadow:'var(--sf-shadow-md)',
           animation:'fadeIn 0.15s ease',
         }}>
           <span>{toast.msg}</span>
           <button onClick={undoNetDelete} style={{
-            padding:'2px 8px', borderRadius:4, border:'1px solid #2a1a4a',
-            background:'transparent', color:'#a78bfa', cursor:'pointer', fontSize:10,
+            padding:'2px 8px', borderRadius:4, border:'1px solid var(--sf-violet-line)',
+            background:'transparent', color:'var(--sf-violet)', cursor:'pointer', fontSize:10,
           }}>↩ 되돌리기</button>
           <button onClick={() => setToast(null)} style={{
-            background:'none', border:'none', color:'#3a4055', cursor:'pointer', fontSize:14, lineHeight:1,
+            background:'none', border:'none', color:TEXT_DIM, cursor:'pointer', fontSize:14, lineHeight:1,
           }}>×</button>
         </div>
       )}
@@ -594,7 +609,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
           onContextMenu={e => e.preventDefault()}
           onClick={e => {
             if (didPanRef.current) { didPanRef.current = false; return }
-            if (!e.target.closest?.('g[data-comp]') && !e.target.closest?.('g[data-net]')) {
+            if (!(e.target as Element).closest?.('g[data-comp]') && !(e.target as Element).closest?.('g[data-net]')) {
               setSelected(null)
               setSelectedNet(null)
               if (wireState) setWireState(null)
@@ -625,7 +640,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
                 : NET_COLORS[ni % NET_COLORS.length]
               const pts = net.nodes
                 .map(n => pinAbsPos(n.ref, n.pin, positions, layouts))
-                .filter(Boolean)
+                .filter((p): p is Pos => p !== null)
               if (!pts.length) return null
               const isHov = hoveredNet===ni
               const isSel = selectedNet===ni
@@ -926,15 +941,15 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
 
       {/* ── Net legend ──────────────────────────────────────── */}
       <div style={{
-        padding:'8px 14px', borderTop:'1px solid #151821',
-        background:'#0b0d14', flexShrink:0,
+        padding:'8px 14px', borderTop:'2px solid var(--sf-line-strong)',
+        background:'var(--sf-bg-1)', flexShrink:0,
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
           <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:9, color:TEXT_DIM, letterSpacing:'0.14em', marginRight:4 }}>NETS</span>
           {effectiveNets.map((net, ni) => {
             const isPwr = net.name==='VCC'||net.name==='GND'||net.name==='PWR'
             const color = isPwr
-              ? (net.name==='GND' ? '#4a5568' : '#f87171')
+              ? (net.name==='GND' ? '#8a8270' : '#b04826')
               : NET_COLORS[ni % NET_COLORS.length]
             return (
               <div key={ni}
@@ -960,11 +975,11 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
         <div style={{
           position:'absolute', right:0, top:36,
           width:240, bottom:0,
-          background:'#0c0e16', borderLeft:'1px solid #151821',
+          background:'var(--sf-bg-2)', borderLeft:'2px solid var(--sf-line-strong)',
           display:'flex', flexDirection:'column',
           fontFamily:'var(--sf-font-mono)',
         }}>
-          <div style={{ padding:'12px 14px', borderBottom:'1px solid #151821', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <div style={{ padding:'12px 14px', borderBottom:'1px solid var(--sf-line)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
             <div>
               <div style={{ fontSize:9, color:TEXT_DIM, letterSpacing:'0.14em', marginBottom:4 }}>PROPERTIES</div>
               <div style={{ fontSize:20, color:compColor(selectedComp.ref), fontWeight:700 }}>{selectedComp.ref}</div>
@@ -974,7 +989,7 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
           <div style={{ padding:'12px 14px', flex:1, overflowY:'auto' }}>
             <PropRow label="Value">
               <input value={edits[selectedComp.ref]?.value ?? selectedComp.value ?? ''}
-                     onChange={e => setEdits(es => ({ ...es, [selectedComp.ref]: { value: e.target.value } }))}
+                     onChange={e => setEdits(es => ({ ...es, [selectedComp.ref]: { value: e.target.value } }) as Record<string, {value: string}>)}
                      style={{
                        width:'100%', boxSizing:'border-box', padding:'5px 8px', height:30,
                        background:'#151821', border:'1px solid #1c2030', borderRadius:4,
@@ -1001,10 +1016,10 @@ export default function CircuitCanvas({ graph, graphDiff = null }) {
   )
 }
 
-function PropRow({ label, children }) {
+function PropRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom:12 }}>
-      <div style={{ fontSize:9, color:'#2e3a50', letterSpacing:'0.1em', marginBottom:5 }}>{label.toUpperCase()}</div>
+      <div style={{ fontSize:9, color:TEXT_DIM, letterSpacing:'0.1em', marginBottom:5 }}>{label.toUpperCase()}</div>
       {children}
     </div>
   )

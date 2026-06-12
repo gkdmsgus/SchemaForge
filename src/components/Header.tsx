@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // Header.jsx — top app bar.
 // ----------------------------------------------------------------------------
 //   Sticky, blurred, sits above the trace background. Houses the logo,
@@ -10,8 +10,9 @@
 // ============================================================================
 
 import React from 'react';
-import Logo from './Logo.jsx';
-import { Button, IconSettings } from './primitives.jsx';
+import Logo from './Logo.tsx';
+import { Button, IconSettings } from './primitives.tsx';
+import type { AuthUser } from '../api';
 
 function HamburgerIcon() {
   return (
@@ -23,6 +24,18 @@ function HamburgerIcon() {
   )
 }
 
+interface HeaderProps {
+  variant?: string
+  modelLabel?: string
+  modelStatus?: 'ready' | 'busy' | 'offline'
+  onSettingsClick?: () => void
+  onLogoClick?: () => void
+  onMenuClick?: () => void
+  user?: AuthUser | null
+  onAuthClick?: () => void
+  onLogout?: () => void
+}
+
 export default function Header({
   variant = 'app',
   modelLabel = 'GPT-4o',
@@ -30,7 +43,10 @@ export default function Header({
   onSettingsClick,
   onLogoClick,
   onMenuClick,
-}) {
+  user,
+  onAuthClick,
+  onLogout,
+}: HeaderProps) {
   const dotColor = {
     ready:   'var(--sf-cyan)',
     busy:    'var(--sf-amber)',
@@ -43,8 +59,8 @@ export default function Header({
         position: 'sticky', top: 0, zIndex: 30,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '14px 28px',
-        borderBottom: '1px solid var(--sf-line)',
-        background: 'rgba(7, 8, 10, 0.78)',
+        borderBottom: '2px solid var(--sf-line-strong)',
+        background: 'rgba(241, 236, 224, 0.88)',
         backdropFilter: 'blur(14px)',
         WebkitBackdropFilter: 'blur(14px)',
       }}
@@ -105,6 +121,22 @@ export default function Header({
           />
           {modelLabel} · {modelStatus}
         </span>
+        {user ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.email}
+            </span>
+            <button
+              onClick={onLogout}
+              style={{ background: 'none', border: '1px solid var(--sf-line-strong)', borderRadius: 6, color: 'var(--sf-fg-dim)', cursor: 'pointer', fontSize: 11, padding: '3px 8px', fontFamily: 'var(--sf-font-mono)' }}
+            >로그아웃</button>
+          </div>
+        ) : (
+          <button
+            onClick={onAuthClick}
+            style={{ background: 'var(--sf-amber-soft)', border: '1px solid var(--sf-amber-line)', borderRadius: 6, color: 'var(--sf-amber)', cursor: 'pointer', fontSize: 12, padding: '5px 12px', fontFamily: 'var(--sf-font-mono)', fontWeight: 600 }}
+          >로그인</button>
+        )}
         <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="Settings" />
       </div>
     </header>

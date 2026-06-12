@@ -1,9 +1,29 @@
-import { useState } from 'react'
-import TraceField from './TraceField.jsx'
-import Mascot from './Mascot.jsx'
-import { Button, Spinner, IconBolt, IconClose, IconCheck } from './primitives.jsx'
+﻿import { useState, ReactNode } from 'react'
+import TraceField from './TraceField.tsx'
+import Mascot from './Mascot.tsx'
+import { Button, Spinner, IconBolt, IconClose, IconCheck } from './primitives.tsx'
 
-export default function PlanPanel({ originalPrompt, plan, loading, onApprove, onRegenerate, onCancel }) {
+interface PlanSpec { label: string; value: string }
+interface PlanPart { ref: string; type: string; value: string; role: string }
+interface PlanData {
+  title?: string
+  summary?: string
+  topology?: string
+  specs?: PlanSpec[]
+  parts?: PlanPart[]
+  risks?: string[]
+}
+
+interface PlanPanelProps {
+  originalPrompt: string
+  plan: unknown
+  loading: boolean
+  onApprove: () => void
+  onRegenerate: (feedback: string) => void
+  onCancel: () => void
+}
+
+export default function PlanPanel({ originalPrompt, plan, loading, onApprove, onRegenerate, onCancel }: PlanPanelProps) {
   const [editing, setEditing] = useState(false)
   const [feedback, setFeedback] = useState('')
 
@@ -26,9 +46,10 @@ export default function PlanPanel({ originalPrompt, plan, loading, onApprove, on
 
   if (!plan) return null
 
-  const specs = plan.specs || []
-  const parts = plan.parts || []
-  const risks = plan.risks || []
+  const p = plan as PlanData
+  const specs = p.specs || []
+  const parts = p.parts || []
+  const risks = p.risks || []
 
   return (
     <div style={{ position: 'relative', minHeight: '100%', background: 'var(--sf-bg)', overflow: 'hidden' }}>
@@ -40,7 +61,7 @@ export default function PlanPanel({ originalPrompt, plan, loading, onApprove, on
             <Mascot state="idle" size={56} />
             <div>
               <div className="sf-eyebrow" style={{ marginBottom: 6 }}>STEP 01 · PLAN</div>
-              <h2 className="sf-heading-l" style={{ margin: 0 }}>{plan.title || '설계 계획'}</h2>
+              <h2 className="sf-heading-l" style={{ margin: 0 }}>{p.title || '설계 계획'}</h2>
               <p className="sf-body" style={{ marginTop: 8, fontFamily: 'var(--sf-font-mono)', fontSize: 13, maxWidth: 600 }}>
                 <span style={{ color: 'var(--sf-cyan)' }}>›</span>{' '}
                 <span style={{ color: 'var(--sf-fg-muted)' }}>{originalPrompt.slice(0, 120)}{originalPrompt.length > 120 ? '…' : ''}</span>
@@ -58,20 +79,20 @@ export default function PlanPanel({ originalPrompt, plan, loading, onApprove, on
           padding: '20px 22px',
           marginBottom: 16,
         }}>
-          {plan.summary && (
+          {p.summary && (
             <p style={{
               margin: '0 0 14px',
               fontSize: 15, lineHeight: 1.6, color: 'var(--sf-fg)',
-            }}>{plan.summary}</p>
+            }}>{p.summary}</p>
           )}
-          {plan.topology && (
+          {p.topology && (
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
               <span style={{
                 fontFamily: 'var(--sf-font-mono)', fontSize: 11,
                 color: 'var(--sf-amber)', letterSpacing: '0.14em',
               }}>TOPOLOGY</span>
               <span style={{ fontSize: 13, color: 'var(--sf-fg-muted)', fontFamily: 'var(--sf-font-mono)' }}>
-                {plan.topology}
+                {p.topology}
               </span>
             </div>
           )}
@@ -218,7 +239,7 @@ export default function PlanPanel({ originalPrompt, plan, loading, onApprove, on
   )
 }
 
-function Section({ title, num, badge, children }) {
+function Section({ title, num, badge, children }: { title: string; num: string; badge?: string; children: ReactNode }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>

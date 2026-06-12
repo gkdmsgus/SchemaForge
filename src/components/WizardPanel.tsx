@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // WizardPanel.jsx — composer + live generation view.
 // ----------------------------------------------------------------------------
 //   Houses the two earliest screens of the user journey:
@@ -15,14 +15,14 @@
 // ============================================================================
 
 import React, { useEffect, useState } from 'react';
-import TraceField      from './TraceField.jsx';
-import TraceGeneration from './TraceGeneration.jsx';
-import Mascot          from './Mascot.jsx';
-import FormComposer    from './FormComposer.jsx';
+import TraceField      from './TraceField.tsx';
+import TraceGeneration from './TraceGeneration.tsx';
+import Mascot          from './Mascot.tsx';
+import FormComposer    from './FormComposer.tsx';
 import {
   Button, Spinner,
   IconClose, IconCheck,
-} from './primitives.jsx';
+} from './primitives.tsx';
 
 const PHASES = [
   { key: 'analyzing', label: '요구사항 분석',     note: 'GPT-4o · 부품 추론' },
@@ -38,6 +38,19 @@ const PHASE_TO_IDX = {
   done:      4,
 };
 
+import type { LogLine } from '../types'
+
+interface WizardPanelProps {
+  phase?: string
+  initialPrompt?: string
+  currentPrompt?: string
+  onSubmit: (prompt: string, typeKey?: string) => void
+  onCancel?: () => void
+  logLines?: LogLine[]
+  tokensUsed?: number
+  tokenBudget?: number
+}
+
 export default function WizardPanel({
   phase = 'composer',
   initialPrompt = '',
@@ -47,7 +60,7 @@ export default function WizardPanel({
   logLines,
   tokensUsed = 1243,
   tokenBudget = 4096,
-}) {
+}: WizardPanelProps) {
   if (phase === 'composer') {
     return <FormComposer onSubmit={onSubmit} />;
   }
@@ -65,7 +78,7 @@ export default function WizardPanel({
 
 // ─── Generating ────────────────────────────────────────────────────────────
 
-const DEFAULT_LOG = [
+const DEFAULT_LOG: LogLine[] = [
   { ts: '12:04:33', kind: 'info',  msg: 'tavily search complete · 12 datasheets' },
   { ts: '12:04:34', kind: 'info',  msg: 'identified parts: BAT_9V, R_330, LED_RED ×3, NE555, C_10uF' },
   { ts: '12:04:35', kind: 'plan',  msg: 'astable multivibrator topology @ 1Hz' },
@@ -73,8 +86,8 @@ const DEFAULT_LOG = [
   { ts: '12:04:37', kind: 'route', msg: 'connecting GND rail …', cursor: true },
 ];
 
-function Generating({ phase, currentPrompt, onCancel, logLines, tokensUsed, tokenBudget }) {
-  const currentIdx = PHASE_TO_IDX[phase] ?? 0;
+function Generating({ phase, currentPrompt, onCancel, logLines, tokensUsed, tokenBudget }: { phase: string; currentPrompt?: string; onCancel?: () => void; logLines?: LogLine[]; tokensUsed: number; tokenBudget: number }) {
+  const currentIdx = PHASE_TO_IDX[phase as keyof typeof PHASE_TO_IDX] ?? 0;
   const lines = logLines ?? DEFAULT_LOG;
   const title = currentPrompt?.trim() || '회로 생성 중';
   const truncated = title.length > 50 ? title.slice(0, 50) + '…' : title;
@@ -164,7 +177,7 @@ function Generating({ phase, currentPrompt, onCancel, logLines, tokensUsed, toke
                       background:
                         state === 'done'   ? 'var(--sf-cyan)'  :
                         state === 'active' ? 'var(--sf-amber)' : 'var(--sf-bg-3)',
-                      color: state === 'idle' ? 'var(--sf-fg-faint)' : '#11140f',
+                      color: state === 'idle' ? 'var(--sf-fg-faint)' : 'var(--sf-ink-on-amber)',
                       marginTop: 2,
                     }}>
                       {state === 'done'   ? <IconCheck size={11} />
@@ -193,7 +206,7 @@ function Generating({ phase, currentPrompt, onCancel, logLines, tokensUsed, toke
 
             <pre style={{
               margin: 0,
-              background: '#06070a', border: '1px solid var(--sf-line)',
+              background: 'var(--sf-bg-1)', border: '1px solid var(--sf-line-strong)',
               borderRadius: 'var(--sf-r-md)',
               padding: 14,
               fontFamily: 'var(--sf-font-mono)', fontSize: 11.5, lineHeight: 1.7,
@@ -219,7 +232,7 @@ function Generating({ phase, currentPrompt, onCancel, logLines, tokensUsed, toke
 
 // ─── Narration bubble (flux-style speech overlay) ─────────────────────────
 
-function pickNarration(lines) {
+function pickNarration(lines: LogLine[] | undefined) {
   if (!lines?.length) return null;
   // Prefer the line marked with cursor (active), else the last non-info line, else last.
   const active = lines.find(l => l.cursor);
@@ -227,7 +240,7 @@ function pickNarration(lines) {
   return lines[lines.length - 1];
 }
 
-function humanizeMsg(raw) {
+function humanizeMsg(raw: string) {
   if (!raw) return '';
   let m = raw.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}]\s*/u, ''); // strip leading emoji
   // Translate common english status into Korean phrasing
@@ -239,7 +252,7 @@ function humanizeMsg(raw) {
   return m.length > 80 ? m.slice(0, 78) + '…' : m;
 }
 
-function NarrationBubble({ lines }) {
+function NarrationBubble({ lines }: { lines: LogLine[] | undefined }) {
   const active = pickNarration(lines);
   const text = humanizeMsg(active?.msg || '');
   const [show, setShow] = useState(false);
@@ -278,9 +291,9 @@ function NarrationBubble({ lines }) {
         width: 22, height: 22, borderRadius: '50%',
         background: 'linear-gradient(135deg, #c89cff, #8a5dd8)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: '0 0 0 2px rgba(0,0,0,0.3), 0 0 12px rgba(170,110,255,0.6)',
+        boxShadow: '0 0 0 2px rgba(74,52,18,0.15), 0 0 12px rgba(106,76,181,0.5)',
       }}>
-        <span style={{ fontSize: 12, color: '#fff', fontWeight: 700, lineHeight: 1 }}>✦</span>
+        <span style={{ fontSize: 12, color: 'var(--sf-ink-on-amber)', fontWeight: 700, lineHeight: 1 }}>✦</span>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{

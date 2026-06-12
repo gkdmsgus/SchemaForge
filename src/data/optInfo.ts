@@ -1,4 +1,6 @@
-export const OPT_INFO = {
+import type { OptInfoEntry } from '../types'
+
+export const OPT_INFO: Record<string, OptInfoEntry> = {
   'speaker amplifier': {
     name: '스피커 앰프', emoji: '🔊',
     desc: '외부 스피커에 연결해 소리를 크게 출력하는 가장 흔한 앰프예요.',
