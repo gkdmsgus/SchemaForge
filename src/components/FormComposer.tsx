@@ -3,6 +3,14 @@ import TraceField from './TraceField.tsx'
 import Mascot from './Mascot.tsx'
 import { Button, Chip, IconBolt, IconWand } from './primitives.tsx'
 
+const EXAMPLE_PROMPTS = [
+  '9V로 LED 3개 점멸',
+  'USB 5V → 3.3V 레귤레이터',
+  'NE555 1Hz 타이머',
+  'DHT11 온습도 센서',
+  '오디오 헤드폰 앰프',
+]
+
 interface CircuitField {
   key: string
   label: string
@@ -526,6 +534,7 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [customs, setCustoms] = useState<Record<string, string>>({})
   const [heroText, setHeroText] = useState('')
+  const [heroFocused, setHeroFocused] = useState(false)
 
   const type = CIRCUIT_TYPES.find(t => t.key === typeKey)
 
@@ -591,59 +600,100 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
 
   return (
     <div style={{ position: 'relative', minHeight: '100%', background: 'var(--sf-bg)', overflow: 'hidden' }}>
-      <TraceField opacity={0.22} />
-      <div style={{ position: 'relative', maxWidth: 920, margin: '0 auto', padding: '64px 24px 96px' }}>
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
-          <Mascot state="idle" size={64} style={{ margin: '0 auto 20px' }} />
-          <div className="sf-eyebrow" style={{ marginBottom: 12 }}>AI · CIRCUIT · DESIGN</div>
-          <h1 className="sf-display-l" style={{ textWrap: 'balance', marginBottom: 12 }}>
-            어떤 회로를 <span style={{ color: 'var(--sf-amber)' }}>만들까요?</span>
+      <TraceField opacity={0.18} />
+      <div className="sf-composer-wrap" style={{ position: 'relative', maxWidth: 940, margin: '0 auto', padding: '56px 24px 96px' }}>
+
+        {/* Hero headline */}
+        <div style={{ textAlign: 'center', marginBottom: 44 }}>
+          <Mascot state="idle" size={60} style={{ margin: '0 auto 18px' }} />
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 7,
+            background: 'var(--sf-amber-soft)',
+            border: '1px solid var(--sf-amber-line)',
+            borderRadius: 999,
+            padding: '4px 14px',
+            marginBottom: 18,
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sf-cyan)', boxShadow: '0 0 6px var(--sf-cyan)', flexShrink: 0 }} />
+            <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10.5, color: 'var(--sf-amber)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              AI · Circuit · Design
+            </span>
+          </div>
+          <h1 style={{
+            margin: '0 0 14px',
+            fontFamily: 'var(--sf-font-sans)',
+            fontSize: 'clamp(32px, 5vw, 52px)',
+            fontWeight: 700,
+            color: 'var(--sf-fg)',
+            lineHeight: 1.1,
+            letterSpacing: '-0.03em',
+          }}>
+            어떤 회로를{' '}
+            <span style={{
+              color: 'var(--sf-amber)',
+              position: 'relative',
+              display: 'inline-block',
+            }}>만들까요?</span>
           </h1>
-          <p className="sf-body-l" style={{ maxWidth: 540, margin: '0 auto' }}>
+          <p style={{
+            margin: '0 auto',
+            maxWidth: 500,
+            fontFamily: 'var(--sf-font-sans)',
+            fontSize: 15.5,
+            color: 'var(--sf-fg-muted)',
+            lineHeight: 1.65,
+          }}>
             한 줄로 설명하거나, 카테고리에서 사양을 골라 주세요.
           </p>
         </div>
 
         {/* Hero free-text entry */}
-        <div style={{ marginBottom: 32 }}>
+        <div style={{ marginBottom: 36 }}>
           <div style={{
             position: 'relative',
             background: 'var(--sf-bg-2)',
-            border: '1px solid var(--sf-line-strong)',
-            borderRadius: 'var(--sf-r-lg)',
-            boxShadow: 'var(--sf-shadow-md)',
+            border: `1.5px solid ${heroFocused ? 'var(--sf-amber)' : 'var(--sf-line-strong)'}`,
+            borderRadius: 20,
+            boxShadow: heroFocused
+              ? '0 0 0 4px rgba(200,117,21,0.1), 0 8px 32px rgba(74,52,18,0.12)'
+              : '0 4px 20px rgba(74,52,18,0.08)',
             overflow: 'hidden',
+            transition: 'border-color 0.2s, box-shadow 0.2s',
           }}>
             <textarea
               value={heroText}
               onChange={e => setHeroText(e.target.value)}
+              onFocus={() => setHeroFocused(true)}
+              onBlur={() => setHeroFocused(false)}
               onKeyDown={e => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canSubmit) {
                   e.preventDefault()
                   submit()
                 }
               }}
-              placeholder="만들고 싶은 회로를 자유롭게 적어 주세요. 예: 9V 배터리로 빨간 LED 3개를 1초 간격으로 점멸"
+              placeholder="만들고 싶은 회로를 자유롭게 적어 주세요&#10;예: 9V 배터리로 빨간 LED 3개를 1초 간격으로 점멸"
               style={{
-                width: '100%', minHeight: 108,
+                width: '100%', minHeight: 116,
                 background: 'transparent', border: 'none', outline: 'none',
-                padding: '20px 22px 60px',
+                padding: '22px 24px 64px',
                 color: 'var(--sf-fg)',
                 fontFamily: 'var(--sf-font-sans)',
-                fontSize: 16, lineHeight: 1.55,
+                fontSize: 15.5, lineHeight: 1.6,
                 resize: 'none',
                 boxSizing: 'border-box',
                 display: 'block',
               }}
             />
             <div style={{
-              position: 'absolute', right: 12, bottom: 12,
-              display: 'flex', alignItems: 'center', gap: 12,
+              position: 'absolute', left: 16, right: 12, bottom: 12,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <span style={{
-                fontSize: 11, color: 'var(--sf-fg-dim)',
+                fontSize: 11, color: 'var(--sf-fg-faint)',
                 fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.06em',
-              }}>⌘ + ↵</span>
+              }}>
+                {heroText.length > 0 ? `${heroText.length}자` : '⌘ + ↵ 로 바로 생성'}
+              </span>
               <Button
                 variant="primary" size="md"
                 icon={<IconBolt size={14} />}
@@ -654,24 +704,60 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
               </Button>
             </div>
           </div>
+
+          {/* Quick example chips */}
+          {!heroText && !type && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+              {EXAMPLE_PROMPTS.map(ex => (
+                <button
+                  key={ex}
+                  onClick={() => setHeroText(ex)}
+                  style={{
+                    background: 'var(--sf-bg-2)',
+                    border: '1px solid var(--sf-line)',
+                    borderRadius: 999,
+                    padding: '5px 13px',
+                    fontFamily: 'var(--sf-font-sans)',
+                    fontSize: 12,
+                    color: 'var(--sf-fg-muted)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = 'var(--sf-amber-line)'
+                    e.currentTarget.style.background = 'var(--sf-amber-soft)'
+                    e.currentTarget.style.color = 'var(--sf-amber)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = 'var(--sf-line)'
+                    e.currentTarget.style.background = 'var(--sf-bg-2)'
+                    e.currentTarget.style.color = 'var(--sf-fg-muted)'
+                  }}
+                >
+                  {ex}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div style={{
             display: 'flex', alignItems: 'center', gap: 12,
-            marginTop: 18, marginBottom: 4,
+            marginTop: 28, marginBottom: 4,
           }}>
-            <span style={{ flex: 1, height: 1, background: 'var(--sf-line)' }} />
+            <span style={{ flex: 1, height: 1, background: 'var(--sf-line-soft)' }} />
             <span style={{
-              fontSize: 11, color: 'var(--sf-fg-dim)',
-              fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.18em',
+              fontSize: 11, color: 'var(--sf-fg-faint)',
+              fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.16em',
               textTransform: 'uppercase',
             }}>또는 카테고리에서 시작</span>
-            <span style={{ flex: 1, height: 1, background: 'var(--sf-line)' }} />
+            <span style={{ flex: 1, height: 1, background: 'var(--sf-line-soft)' }} />
           </div>
         </div>
 
         {/* Step 1: Circuit type cards */}
         <SectionLabel num="01" title="회로 종류" />
-        <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10,
+        <div className="sf-type-grid" style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10,
           marginBottom: 28,
         }}>
           {CIRCUIT_TYPES.map(t => (
@@ -773,7 +859,7 @@ function WorkflowSection() {
         </p>
       </div>
 
-      <div style={{
+      <div className="sf-workflow-grid" style={{
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12,
         position: 'relative',
       }}>
@@ -786,47 +872,59 @@ function WorkflowSection() {
 }
 
 function WorkflowCard({ step, isLast }: { step: WorkflowStep; isLast: boolean }) {
+  const [hovered, setHovered] = useState(false)
   return (
-    <div style={{
-      position: 'relative',
-      background: 'var(--sf-bg-2)',
-      border: '1px solid var(--sf-line)',
-      borderRadius: 'var(--sf-r-md)',
-      padding: '20px 18px',
-      display: 'flex', flexDirection: 'column', gap: 8,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-        <span style={{
-          fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-          color: 'var(--sf-amber)', letterSpacing: '0.14em',
-          padding: '3px 8px',
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        position: 'relative',
+        background: hovered ? 'var(--sf-bg-3)' : 'var(--sf-bg-2)',
+        border: `1px solid ${hovered ? 'var(--sf-line-strong)' : 'var(--sf-line)'}`,
+        borderRadius: 16,
+        padding: '22px 20px',
+        display: 'flex', flexDirection: 'column', gap: 10,
+        transition: 'all 0.18s ease',
+        boxShadow: hovered ? '0 6px 20px rgba(74,52,18,0.1)' : 'none',
+        transform: hovered ? 'translateY(-2px)' : 'none',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 32, height: 32,
           background: 'var(--sf-amber-soft)',
           border: '1px solid var(--sf-amber-line)',
-          borderRadius: 'var(--sf-r-pill)',
-        }}>{step.num}</span>
+          borderRadius: 10,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'var(--sf-font-mono)', fontSize: 11,
+          color: 'var(--sf-amber)', letterSpacing: '0.1em', fontWeight: 600,
+        }}>{step.num}</div>
         {!isLast && (
           <span style={{
             flex: 1, height: 1,
-            background: 'linear-gradient(to right, var(--sf-line-strong), transparent)',
+            background: 'linear-gradient(to right, var(--sf-line), transparent)',
           }} />
         )}
       </div>
       <h3 style={{
-        margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--sf-fg)',
-        fontFamily: 'var(--sf-font-sans)',
+        margin: 0, fontSize: 15.5, fontWeight: 700, color: 'var(--sf-fg)',
+        fontFamily: 'var(--sf-font-sans)', letterSpacing: '-0.01em',
       }}>{step.title}</h3>
       <p style={{
-        margin: 0, fontSize: 12.5, lineHeight: 1.55,
+        margin: 0, fontSize: 12.5, lineHeight: 1.6,
         color: 'var(--sf-fg-muted)',
       }}>{step.desc}</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 2 }}>
         {step.bullets.map((b, i) => (
           <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
+            display: 'flex', alignItems: 'center', gap: 7,
             fontSize: 11, color: 'var(--sf-fg-dim)',
             fontFamily: 'var(--sf-font-mono)',
           }}>
-            <span style={{ color: 'var(--sf-cyan)' }}>›</span>
+            <span style={{
+              width: 4, height: 4, borderRadius: '50%',
+              background: 'var(--sf-cyan)', flexShrink: 0,
+            }} />
             {b}
           </div>
         ))}
@@ -852,44 +950,49 @@ function SectionLabel({ num, title }: { num: string; title: string }) {
 }
 
 function TypeCard({ active, glyph, label, desc, onClick }: { active: boolean; glyph: string; label: string; desc: string; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  const on = active || hovered
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6,
-        padding: '14px 16px',
-        background: active ? 'var(--sf-amber-soft)' : 'var(--sf-bg-2)',
-        border: `1px solid ${active ? 'var(--sf-amber-line)' : 'var(--sf-line)'}`,
-        borderRadius: 'var(--sf-r-md)',
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8,
+        padding: '16px 16px 14px',
+        background: active ? 'var(--sf-amber-soft)' : hovered ? 'var(--sf-bg-3)' : 'var(--sf-bg-2)',
+        border: `1.5px solid ${active ? 'var(--sf-amber)' : hovered ? 'var(--sf-line-strong)' : 'var(--sf-line)'}`,
+        borderRadius: 14,
         cursor: 'pointer', textAlign: 'left',
-        transition: 'all var(--sf-dur) var(--sf-ease)',
-      }}
-      onMouseEnter={ev => {
-        if (!active) {
-          ev.currentTarget.style.borderColor = 'var(--sf-line-strong)'
-          ev.currentTarget.style.background = 'var(--sf-bg-3)'
-        }
-      }}
-      onMouseLeave={ev => {
-        if (!active) {
-          ev.currentTarget.style.borderColor = 'var(--sf-line)'
-          ev.currentTarget.style.background = 'var(--sf-bg-2)'
-        }
+        transition: 'all 0.18s ease',
+        boxShadow: active
+          ? '0 4px 16px rgba(200,117,21,0.15)'
+          : hovered
+          ? '0 4px 14px rgba(74,52,18,0.1)'
+          : 'none',
+        transform: on ? 'translateY(-1px)' : 'none',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          fontSize: 16, color: active ? 'var(--sf-amber)' : 'var(--sf-cyan)',
-          fontFamily: 'var(--sf-font-mono)',
-        }}>{glyph}</span>
-        <span style={{
-          fontSize: 14, fontWeight: 600,
-          color: active ? 'var(--sf-amber)' : 'var(--sf-fg)',
-        }}>{label}</span>
-      </div>
-      <span style={{
-        fontSize: 12, color: 'var(--sf-fg-dim)',
+      <div style={{
+        width: 36, height: 36,
+        background: active ? 'var(--sf-amber)' : hovered ? 'var(--sf-bg-4)' : 'var(--sf-bg-3)',
+        border: `1px solid ${active ? 'transparent' : 'var(--sf-line)'}`,
+        borderRadius: 10,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.18s ease',
+        fontSize: 17,
+        color: active ? '#fff' : hovered ? 'var(--sf-cyan)' : 'var(--sf-fg-dim)',
         fontFamily: 'var(--sf-font-mono)',
+      }}>{glyph}</div>
+      <span style={{
+        fontSize: 13.5, fontWeight: 600, lineHeight: 1.2,
+        color: active ? 'var(--sf-amber)' : 'var(--sf-fg)',
+        fontFamily: 'var(--sf-font-sans)',
+      }}>{label}</span>
+      <span style={{
+        fontSize: 11.5, color: 'var(--sf-fg-dim)',
+        fontFamily: 'var(--sf-font-mono)',
+        lineHeight: 1.4,
       }}>{desc}</span>
     </button>
   )

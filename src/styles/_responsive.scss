@@ -1,3 +1,31 @@
+// ── SF-token component overrides (inline-style based) ───────
+@media (max-width: 720px) {
+  // Header: hide model pill text on small screens
+  .sf-model-pill-label { display: none; }
+
+  // FormComposer hero: tighter padding
+  .sf-composer-wrap {
+    padding: 36px 16px 72px !important;
+  }
+}
+
+@media (max-width: 560px) {
+  // Header: compress right side
+  .sf-header-email { display: none !important; }
+
+  // FormComposer type grid: 2 columns max
+  .sf-type-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  // Workflow grid: single column
+  .sf-workflow-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  // AuthModal: already handled via .auth-left { display: none }
+}
+
 // ── Mobile ──────────────────────────────────────────────────
 @media (max-width: 800px) {
   .header-deco-left,

@@ -9,7 +9,7 @@ import SideDrawer from './components/SideDrawer'
 import AuthModal from './components/AuthModal'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
 import { Button } from './components/primitives.tsx'
-import { loadAuth, logout as apiLogout, type AuthUser } from './api'
+import { loadAuth, logout as apiLogout, authHeaders, saveSession, type AuthUser } from './api'
 import type {
   AppSettings, LogLine, LogKind, Progress, ClarifyData, PlanData,
   Version, ChatSession, PendingCached, GenerateResult,
@@ -60,9 +60,20 @@ export default function App() {
   const [initialChatSession, setInitialChatSession] = useState<ChatSession | null>(null)
   const [resultKey, setResultKey] = useState(0)
   const [pendingCached, setPendingCached] = useState<PendingCached | null>(null)
+  const pendingGenerateRef = useRef<{ prompt: string; typeKey?: string; skipCache?: boolean } | null>(null)
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', 'light')
+  }, [])
+
+  // 앱 시작 시 저장된 토큰이 서버에서 유효한지 검증
+  useEffect(() => {
+    const stored = loadAuth()
+    if (!stored) return
+    fetch('/auth/me', { headers: { Authorization: `Bearer ${stored.token}` } })
+      .then(r => { if (!r.ok) { localStorage.removeItem('sf_token'); localStorage.removeItem('sf_user'); setAuthUser(null) } })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -79,6 +90,7 @@ export default function App() {
     setVersions([])
     setCurrentVersionId(null)
     setInitialChatSession(null)
+    setCurrentSessionId(null)
   }
 
   function handleLoadSession(session: SavedSession) {
@@ -112,7 +124,7 @@ export default function App() {
     try {
       const res = await fetch(`${API}/plan`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ description: prompt }),
       })
       if (!res.ok) throw new Error('plan request failed')
@@ -134,6 +146,13 @@ export default function App() {
   async function runGenerate(p: string, typeKey?: string, skipCache = false) {
     if (!p.trim() || loading) return
 
+    // 로그인 필요: 모달 열고 로그인 후 자동 재개
+    if (!authUser) {
+      pendingGenerateRef.current = { prompt: p, typeKey, skipCache }
+      setAuthModalOpen(true)
+      return
+    }
+
     if (!skipCache) {
       const cached = getSavedResults().find(s => s.prompt === p)
       if (cached) {
@@ -146,7 +165,7 @@ export default function App() {
       try {
         const cRes = await fetch(`${API}/clarify`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ description: p }),
         })
         if (cRes.ok) {
@@ -181,7 +200,7 @@ export default function App() {
     try {
       const res = await fetch(`${API}/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ description: p }),
         signal: abort.signal,
       })
@@ -195,14 +214,35 @@ export default function App() {
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
+        if (value) buf += decoder.decode(value, { stream: !done })
+        if (done) {
+          if (buf.trim()) {
+            const parts = buf.split('\n\n')
+            buf = ''
+            for (const part of parts) {
+              const evtM = part.match(/^event:[ ]?(.+)$/m)
+              const dataM = part.match(/^data:[ ]?([\s\S]+)$/m)
+              if (!evtM || !dataM) continue
+              const evt = evtM[1].trim()
+              const raw = dataM[1].trim()
+              if (evt === 'error') {
+                let msg = raw
+                try { msg = JSON.parse(raw).message || raw } catch (_) {}
+                setError(msg); setProgress(null); setLoading(false)
+                return
+              } else if (evt === 'done') {
+                gotResult = true
+              }
+            }
+          }
+          break
+        }
         const parts = buf.split('\n\n')
         buf = parts.pop() ?? ''
 
         for (const part of parts) {
-          const evtM = part.match(/^event: (.+)$/m)
-          const dataM = part.match(/^data: ([\s\S]+)$/m)
+          const evtM = part.match(/^event:[ ]?(.+)$/m)
+          const dataM = part.match(/^data:[ ]?([\s\S]+)$/m)
           if (!evtM || !dataM) continue
           const evt = evtM[1].trim()
           const raw = dataM[1].trim()
@@ -229,6 +269,11 @@ export default function App() {
             setResult(d)
             setResultKey(k => k + 1)
             saveResultToLocal(d, p)
+            if (authUser) {
+              saveSession({ prompt: p, graph: d.graph, filename: d.filename })
+                .then(id => setCurrentSessionId(id))
+                .catch(() => {})
+            }
             setProgress(null)
             setLogLines(prev => {
               const cleared = prev.map(l => ({ ...l, cursor: false }))
@@ -280,6 +325,7 @@ export default function App() {
         open={sideDrawerOpen}
         onClose={() => setSideDrawerOpen(false)}
         onLoadSession={handleLoadSession}
+        user={authUser}
       />
       <Header
         variant={headerVariant}
@@ -295,8 +341,19 @@ export default function App() {
 
       <AuthModal
         open={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        onSuccess={(user) => setAuthUser(user)}
+        onClose={() => {
+          setAuthModalOpen(false)
+          pendingGenerateRef.current = null
+        }}
+        onSuccess={(user, _token) => {
+          setAuthUser(user)
+          // 로그인 전에 시도했던 생성 요청이 있으면 이어서 실행
+          const pending = pendingGenerateRef.current
+          if (pending) {
+            pendingGenerateRef.current = null
+            setTimeout(() => runGenerate(pending.prompt, pending.typeKey, pending.skipCache), 100)
+          }
+        }}
       />
 
       <Settings
@@ -409,6 +466,8 @@ export default function App() {
           onSelectVersion={selectVersion}
           initialChatSession={initialChatSession}
           onApplyVersion={applyCurrentVersion}
+          authUser={authUser}
+          sessionId={currentSessionId}
         />
       )}
     </div>
