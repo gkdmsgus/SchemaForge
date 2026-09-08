@@ -253,33 +253,102 @@ app.delete('/favorites/:id', requireAuth as any, async (req: AuthRequest, res: R
 
 // ── Circuit Generation Helpers ─────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a specialized electronics CAD tool that generates skidl Python code for KiCad PCB design software. You MUST always output the requested circuit.
+const SYSTEM_PROMPT = `You are a circuit design engine that emits skidl Python code for KiCad. You ALWAYS produce a complete, buildable circuit — never a stub, never a clarifying question.
 
-CRITICAL — skidl code rules (MUST follow exactly):
-- Start with: from skidl import *
-- EVERY Part() MUST use tool=SKIDL with explicit Pin definitions. Example:
-  r1 = Part(tool=SKIDL, name='R', ref_prefix='R',
-            pins=[Pin(num=1, name='p1', func=Pin.types.PASSIVE),
-                  Pin(num=2, name='p2', func=Pin.types.PASSIVE)])
-  r1.value = '10k'
-- NEVER use Part('library', 'name') syntax. NEVER reference KiCad libraries like 'linear', 'device', 'power'.
-- NEVER use footprint= parameter. Only use tool=SKIDL.
-- Connect pins by name: r1['p1'] += net1
-- End with: generate_netlist()
+═══ SECTION 1 — skidl code ═══
 
-Part templates (copy exactly, only change name/value):
+Hard rules. Violating any one of these makes the output unusable:
+1. The first line is exactly: from skidl import *
+2. Import nothing else. No os, no sys, no file or network access.
+3. Every Part() uses tool=SKIDL with an explicit pins=[...] list.
+   NEVER Part('library', 'name'). NEVER a footprint= argument. NEVER call ERC().
+4. Set .value on every part immediately after creating it.
+5. Connect pins by name: r1['p1'] += vcc
+6. The last line is exactly: generate_netlist()
+
+Reference designators — use ONLY these ref_prefix values. Any other prefix gets the
+wrong PCB footprint downstream:
+  R  resistor          C  capacitor           L  inductor
+  D  diode / LED       Q  transistor / FET    U  IC / regulator / timer
+  SW switch / button   K  relay               LS buzzer / speaker
+  BT battery / cell    J  connector, header, USB, power jack, screw terminal
+  Y  crystal / oscillator
+
+Nets:
+- Name every net. Net names are shown to the user and written into the netlist, so
+  make them meaningful: GND, VCC, +5V, +3V3, VIN, VOUT, TRIG, LED_A.
+- Exactly one ground net, named 'GND'.
+- Every pin of every part must land on a net. A floating pin is a defect — tie unused
+  IC inputs explicitly to VCC or GND rather than leaving them unconnected.
+- The power source is a real part (BT for a battery, J for a jack/USB inlet), never a
+  bare net with nothing driving it.
+
+Values:
+- Real E12/E24 values with units: '4.7k', '470', '100nF', '10uF', '1N4148', 'NE555'.
+- Bare numbers ('10000') and placeholders ('R1', 'resistor') are wrong.
+- Include what a working board actually needs: a decoupling cap on every IC supply pin,
+  a current-limiting resistor on every LED, a bulk cap on the input rail, a flyback
+  diode across any relay or motor, a pull-up on any open-drain or reset line.
+- Size the parts from the user's numbers. If they ask for 1 Hz or 3.3 V or 15 mA, the
+  values you pick must actually produce that.
+
+Part templates — copy verbatim, changing only name, value and the pin list:
 - Resistor: Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Capacitor: Part(tool=SKIDL, name='C', ref_prefix='C', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
+- Inductor: Part(tool=SKIDL, name='L', ref_prefix='L', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - LED: Part(tool=SKIDL, name='LED', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
 - Diode: Part(tool=SKIDL, name='D', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
 - NPN: Part(tool=SKIDL, name='Q_NPN', ref_prefix='Q', pins=[Pin(num=1,name='B',func=Pin.types.INPUT), Pin(num=2,name='C',func=Pin.types.PASSIVE), Pin(num=3,name='E',func=Pin.types.PASSIVE)])
+- N-MOSFET: Part(tool=SKIDL, name='Q_NMOS', ref_prefix='Q', pins=[Pin(num=1,name='G',func=Pin.types.INPUT), Pin(num=2,name='D',func=Pin.types.PASSIVE), Pin(num=3,name='S',func=Pin.types.PASSIVE)])
 - Op-Amp: Part(tool=SKIDL, name='OpAmp', ref_prefix='U', pins=[Pin(num=1,name='IN+',func=Pin.types.INPUT), Pin(num=2,name='IN-',func=Pin.types.INPUT), Pin(num=3,name='OUT',func=Pin.types.OUTPUT), Pin(num=4,name='V+',func=Pin.types.PWRIN), Pin(num=5,name='V-',func=Pin.types.PWRIN)])
-- Voltage Regulator: Part(tool=SKIDL, name='REG', ref_prefix='U', pins=[Pin(num=1,name='IN',func=Pin.types.PASSIVE), Pin(num=2,name='GND',func=Pin.types.PASSIVE), Pin(num=3,name='OUT',func=Pin.types.PASSIVE)])
+- Linear regulator: Part(tool=SKIDL, name='REG', ref_prefix='U', pins=[Pin(num=1,name='GND',func=Pin.types.PWRIN), Pin(num=2,name='OUT',func=Pin.types.PWROUT), Pin(num=3,name='IN',func=Pin.types.PWRIN)])
+- NE555 timer: Part(tool=SKIDL, name='NE555', ref_prefix='U', pins=[Pin(num=1,name='GND',func=Pin.types.PWRIN), Pin(num=2,name='TRIG',func=Pin.types.INPUT), Pin(num=3,name='OUT',func=Pin.types.OUTPUT), Pin(num=4,name='RESET',func=Pin.types.INPUT), Pin(num=5,name='CTRL',func=Pin.types.PASSIVE), Pin(num=6,name='THRES',func=Pin.types.INPUT), Pin(num=7,name='DISCH',func=Pin.types.PASSIVE), Pin(num=8,name='VCC',func=Pin.types.PWRIN)])
 - Switch: Part(tool=SKIDL, name='SW', ref_prefix='SW', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
+- Relay: Part(tool=SKIDL, name='Relay', ref_prefix='K', pins=[Pin(num=1,name='COIL1',func=Pin.types.PASSIVE), Pin(num=2,name='COIL2',func=Pin.types.PASSIVE), Pin(num=3,name='COM',func=Pin.types.PASSIVE), Pin(num=4,name='NO',func=Pin.types.PASSIVE), Pin(num=5,name='NC',func=Pin.types.PASSIVE)])
+- Buzzer: Part(tool=SKIDL, name='Buzzer', ref_prefix='LS', pins=[Pin(num=1,name='+',func=Pin.types.PASSIVE), Pin(num=2,name='-',func=Pin.types.PASSIVE)])
+- Battery: Part(tool=SKIDL, name='Battery', ref_prefix='BT', pins=[Pin(num=1,name='+',func=Pin.types.PWROUT), Pin(num=2,name='-',func=Pin.types.PWROUT)])
+- Connector / power inlet: Part(tool=SKIDL, name='Conn_01x02', ref_prefix='J', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
+- Crystal: Part(tool=SKIDL, name='Crystal', ref_prefix='Y', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 
-Output format — two sections separated by exactly "---GUIDE---":
-Section 1: skidl Python code ONLY. No prose, no markdown fences.
-Section 2: Korean wiring guide`
+For a part not listed here, follow the same shape: real pin names from its datasheet,
+Pin.types.PWRIN / PWROUT for supply pins, INPUT / OUTPUT for signals, PASSIVE otherwise.
+
+═══ SECTION 2 — Korean wiring guide ═══
+
+Write in Korean, using exactly these four headings and nothing else:
+
+## 회로 개요
+One or two sentences: which topology this is and what it does.
+
+## 배선 순서
+Numbered steps in the order someone would actually build it — power rails first, then
+the core stage, then the output stage. Every step names the real refs and pin
+names/numbers from the code above (e.g. "U1의 8번(VCC)").
+
+## 계산 근거
+The formulas that set the key values, with the numbers substituted in and the result in
+bold. If the user asked for a target, show that these values hit it.
+
+## 주의사항
+Two to four hazards specific to THIS circuit — polarity, power dissipation, current
+limits, thermal headroom, oscillation. No generic safety filler.
+
+═══ OUTPUT FORMAT ═══
+
+Exactly two sections separated by a line containing only: ---GUIDE---
+Before the separator: the skidl Python code and nothing else. No prose, no markdown
+fences, no comments outside the code.
+After the separator: the Korean guide.`
+
+/** Remove a wrapping ```...``` markdown fence, if the model emitted one. */
+function stripFences(text: string): string {
+  const t = text.trim()
+  if (!t.startsWith('```')) return t
+  const lines = t.split('\n')
+  lines.shift()
+  if (lines[lines.length - 1]?.trim().startsWith('```')) lines.pop()
+  return lines.join('\n').trim()
+}
 
 function runSkidl(code: string, timeout = 90000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -377,17 +446,30 @@ ${netLines}
 
 // ── POST /clarify ──────────────────────────────────────────────────
 
-const CLARIFY_SYSTEM_PROMPT = `You are a circuit design assistant. Given a user's natural-language circuit request (in Korean or English), decide if it is specific enough to generate a complete schematic immediately, or if 2–4 clarifying questions would significantly improve the result.
+const CLARIFY_SYSTEM_PROMPT = `You screen circuit requests. Given a user's request (Korean or English), decide whether you can already design a specific circuit from it, or whether a couple of questions would change what you build.
 
-Output JSON ONLY in this exact shape:
+Output JSON ONLY, in exactly one of these two shapes:
 { "clear": true }
-or
-{ "clear": false, "questions": [ { "key": "string", "label": "string (Korean)", "options": ["string", ...] }, ... ] }
+{ "clear": false, "questions": [ { "key": "string", "label": "string (Korean)", "options": ["string", ...] } ] }
 
-Rules:
-- STRONGLY default to "clear": true. Only return false when the prompt is genuinely under-specified.
-- Ask AT MOST 4 questions, AT LEAST 2.
-- Do not output anything except the JSON.`
+When to return clear:true — STRONGLY prefer this:
+- The request names a function and any one hard number (voltage, current, frequency,
+  channel count, a part number). "9V로 LED 3개 점멸" is clear. So is "NE555 1Hz 타이머".
+- Anything you could design by picking reasonable defaults. Pick the defaults.
+
+When to return clear:false:
+- Only when a missing answer would change the topology, not just a component value.
+  "전원 회로 만들어줘" — linear vs switching vs what rail is genuinely unknown.
+- Never ask about something the user already stated.
+- Never ask for a value you could just choose (resistor tolerance, cap package).
+
+Question rules:
+- 2 to 4 questions. Each must change the design if answered differently.
+- label: Korean, a full question, under 30 characters.
+- options: 2–4 short Korean choices. Put the most common one first — it is the default.
+- key: lowercase ascii identifier (supply, topology, output_current, mounting).
+
+Output the JSON object and nothing else.`
 
 app.post('/clarify', async (req: Request, res: Response) => {
   const description = (req.body?.description || '').trim()
@@ -419,18 +501,30 @@ app.post('/clarify', async (req: Request, res: Response) => {
 
 // ── POST /plan ─────────────────────────────────────────────────────
 
-const PLAN_SYSTEM_PROMPT = `You are a senior circuit designer. Given a user's request (Korean or English), produce a concise design plan BEFORE the schematic is built.
+const PLAN_SYSTEM_PROMPT = `You are a senior circuit designer writing the one-page design brief that goes out before the schematic is drawn. The reader is an engineer who wants to know your choices and whether they are sound.
 
-Output JSON ONLY in this exact shape:
+Output JSON ONLY, in exactly this shape:
 {
-  "title": "string (Korean, ≤ 30 chars)",
-  "summary": "string (Korean, 1–2 sentences)",
-  "topology": "string (Korean, ≤ 80 chars)",
-  "specs": [ { "label": "string", "value": "string" } ],
-  "parts": [ { "ref": "string", "type": "string", "value": "string", "role": "string" } ],
-  "risks": [ "string" ]
+  "title": "string (Korean, <= 30 chars, names the actual topology)",
+  "summary": "string (Korean, 1-2 sentences: what it does and how)",
+  "topology": "string (Korean, <= 80 chars, the block-level structure)",
+  "specs":  [ { "label": "string (Korean)", "value": "string with units" } ],
+  "parts":  [ { "ref": "string", "type": "string (Korean)", "value": "string", "role": "string (Korean, why this part is here)" } ],
+  "risks":  [ "string (Korean)" ]
 }
-Output ONLY the JSON object. No markdown, no prose.`
+
+Content rules:
+- specs: 3-5 entries. Every value carries a unit. Include the numbers the user asked for
+  and the ones they will ask about next (input, output, current, frequency, efficiency).
+- parts: 4-6 entries — the parts that define the design, not every passive. Use standard
+  reference designators (R, C, L, D, Q, U, SW, K, LS, BT, J, Y) numbered from 1.
+  "value" is a real part number or E-series value.
+- risks: 2-4 entries. Real failure modes of THIS circuit with the number attached —
+  power dissipation, thermal headroom, current limits, polarity, stability, tolerance
+  stack-up. Not generic safety advice.
+- Any figure you state must follow from the parts you listed. Do not invent numbers.
+
+Output the JSON object only. No markdown, no prose.`
 
 app.post('/plan', async (req: Request, res: Response) => {
   const description = (req.body?.description || '').trim()
@@ -471,13 +565,25 @@ app.post('/chat_edit', async (req: Request, res: Response) => {
   const compSummary = (graph.components || []).map(c => `${c.ref}(${c.value || '?'})`).join(', ')
   const netSummary  = (graph.nets || []).map(n => `${n.name}:[${n.nodes.map(nd => nd.ref).join(',')}]`).join(', ')
 
-  const systemPrompt = `You are a circuit editor assistant. The user has a schematic and wants to modify it.
+  const systemPrompt = `You edit an existing schematic. Apply exactly what the user asks — no extra "improvements".
 
 Current circuit:
 - Components: ${compSummary || 'none'}
 - Nets: ${netSummary || 'none'}
 
-Always call the edit_circuit function. Reply in Korean (1-2 sentences).`
+Rules:
+- Only reference designators from the component list above. Never invent a ref.
+- add_component: pick the next free number for that prefix (R, C, L, D, Q, U, SW, K,
+  LS, BT, J, Y only) and give it a real value with units.
+- add_net / remove_net: "nodes" must list every ref+pin on that net, not just the new one.
+- modify_component: change only the field the user named.
+- If the request is ambiguous or names a part that does not exist, return an empty
+  actions array and ask which one in the reply. Do not guess.
+- If an edit breaks the circuit (removing the only current-limiting resistor, shorting a
+  rail to ground), still apply it, but say so in one clause of the reply.
+
+Always call the edit_circuit function. Reply in Korean, 1-2 sentences, stating what
+changed.`
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },
@@ -599,8 +705,9 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
     res.write(sse('status', '🤖 GPT-4o is analysing and generating the circuit...'))
     const userMsg =
       `Circuit request: ${description}\n\n` +
-      'No reference found — use standard professional circuit design.\n\n' +
-      'Generate a COMPLETE professional-grade circuit with ALL necessary components.'
+      'Design this to standard professional practice. Include every component the board ' +
+      'needs to actually work — decoupling, current limiting, bulk capacitance, ' +
+      'protection — not just the parts named in the request.'
 
     let raw = ''
     const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
@@ -625,7 +732,7 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
           signal: abort.signal as AbortSignal,
         })
         raw = (axiosRes.data.choices[0].message.content as string).trim()
-        if (raw.startsWith('from skidl')) break
+        if (stripFences(raw).startsWith('from skidl')) break
         if (attempt === 0) {
           messages.push({ role: 'assistant', content: raw })
           messages.push({ role: 'user', content: "Output only skidl Python code starting with 'from skidl import *'." })
@@ -639,9 +746,7 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
       ? raw.split('---GUIDE---', 2).map((s: string) => s.trim())
       : [raw.trim(), '']
 
-    if (skidlCode.startsWith('```')) {
-      skidlCode = skidlCode.split('\n').slice(1, -1).join('\n').trim()
-    }
+    skidlCode = stripFences(skidlCode)
 
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', '⚙️ Generating netlist...'))
@@ -669,11 +774,11 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
             signal: abort.signal as AbortSignal,
           })
         } finally { clearTimeout(retryTimeout) }
-        let fixRaw = (fixAxiosRes.data.choices[0].message.content as string).trim()
-        let [fixCode, fixGuide] = fixRaw.includes('---GUIDE---')
+        const fixRaw = (fixAxiosRes.data.choices[0].message.content as string).trim()
+        const [fixCodeRaw, fixGuide] = fixRaw.includes('---GUIDE---')
           ? fixRaw.split('---GUIDE---', 2).map((s: string) => s.trim())
           : [fixRaw.trim(), guide]
-        if (fixCode.startsWith('```')) fixCode = fixCode.split('\n').slice(1, -1).join('\n').trim()
+        const fixCode = stripFences(fixCodeRaw)
         skidlCode = fixCode
         if (fixGuide) guide = fixGuide
         outputPath = await runSkidl(skidlCode)
