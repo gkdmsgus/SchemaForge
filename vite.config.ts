@@ -38,6 +38,10 @@ export default defineConfig({
       },
       '/clarify': 'http://localhost:8080',
       '/plan': 'http://localhost:8080',
+      '/auth': 'http://localhost:8080',
+      '/sessions': 'http://localhost:8080',
+      '/favorites': 'http://localhost:8080',
+      '/health': 'http://localhost:8080',
     }
   }
 })
