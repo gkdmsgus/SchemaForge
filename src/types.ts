@@ -30,6 +30,48 @@ export interface PcbSummary {
   style: 'smd' | 'tht'
   board: { w: number; h: number }
   boardJson: string
+  hpwl?: number
+  hpwl_shelf?: number
+  rotated?: number
+}
+
+// ── Board model streamed by /generate_pcb_stream (server/pcb/board.py) ─────────
+// mm, y down, rot in degrees CCW on screen (KiCad convention).
+
+export interface BoardPad {
+  num: string
+  type: string            // smd | thru_hole | np_thru_hole
+  shape: string           // rect | roundrect | circle | oval | trapezoid | custom
+  x: number               // footprint-local
+  y: number
+  angle: number
+  w: number
+  h: number
+  drill: number | null
+  net: string | null
+}
+
+export interface BoardPart {
+  ref: string
+  value: string
+  part: string
+  footprint: string
+  bbox: [number, number, number, number]   // local courtyard
+  pads: BoardPad[]
+}
+
+/** One placement snapshot: ref -> [x, y, rot]. */
+export interface BoardFrame {
+  iter: number
+  phase: 'force' | 'legalize' | 'refine'
+  hpwl: number
+  parts: Record<string, [number, number, number]>
+}
+
+export interface BoardModel {
+  outline: [number, number, number, number]
+  parts: (BoardPart & { x: number; y: number; rot: number })[]
+  nets: string[]
 }
 
 export interface GenerateResult {

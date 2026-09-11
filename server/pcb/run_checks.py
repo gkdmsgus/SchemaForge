@@ -10,7 +10,8 @@ import argparse, json, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from board import generate, parse_netlist  # noqa: E402
+from board import generate, parse_netlist, BOARD_MARGIN  # noqa: E402
+from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
 
@@ -117,6 +118,61 @@ def check_one(name, style, work, cli):
     files = os.listdir(gdir)
     res['6 gerber'] = (g.returncode == 0 and dr.returncode == 0 and any(f.endswith('.drl') for f in files),
                        f'{len(files)} files')
+
+    # ── stage 1: placement ──
+    # 8. placement beats the stage-0 shelf layout
+    res['8 hpwl<shelf'] = (summary['hpwl'] < summary['hpwl_shelf'],
+                           f"shelf={summary['hpwl_shelf']} force={summary['hpwl']} "
+                           f"(-{(1 - summary['hpwl'] / summary['hpwl_shelf']) * 100:.0f}%)")
+
+    # 9. connectors sit on the board edge (keep-out box within BOARD_MARGIN of the outline)
+    far = []
+    for ref, p in parts.items():
+        if ref.rstrip('0123456789') in ('J', 'BT'):
+            c = p['keepout']
+            gap = min(c[0] - ox1, c[1] - oy1, ox2 - c[2], oy2 - c[3])
+            if gap > BOARD_MARGIN + 0.01:
+                far.append(f'{ref}:{gap:.2f}mm')
+    res['9 connectors@edge'] = (not far, str(far or ''))
+
+    # 10. our pad positions and orientations = KiCad's (proves the rotation math)
+    kp = kicad_pad_positions(cli, pcb)
+    worst, missing, rot_bad = 0.0, 0, []
+    for ref, p in parts.items():
+        local = {pad['num']: pad for pad in p['pads']}
+        for pa in p['pads_abs']:
+            k = kp.get((ref, pa['num']))
+            if k is None:
+                missing += 1
+                continue
+            worst = max(worst, abs(k[0] - pa['x']), abs(k[1] - pa['y']))
+            want_r = (360 - int(round(local[pa['num']]['angle'] + p['rot']))) % 360
+            if k[2] != want_r:
+                rot_bad.append(f"{ref}.{pa['num']}")
+    rotated = sum(1 for p in parts.values() if p['rot'])
+    res['10 pads=KiCad'] = (worst <= 0.01 and not rot_bad and missing < len(kp),
+                            f'worst={worst:.4f}mm rotated_parts={rotated} angle_bad={rot_bad[:4]}')
+
+    # 11. deterministic: a second run gives the same layout
+    pcb2 = os.path.join(work, f'{name}_{style}_again.kicad_pcb')
+    generate(net_path, pcb2, style)
+    model2 = json.load(open(pcb2.replace('.kicad_pcb', '.board.json'), encoding='utf-8'))
+    same = [(p['x'], p['y'], p['rot']) for p in model['parts']] == [(p['x'], p['y'], p['rot']) for p in model2['parts']]
+    res['11 deterministic'] = (same, '')
+
+    # 12. stream: every line JSON, parts -> init -> frames -> done
+    sp = subprocess.run([sys.executable, os.path.join(SERVER, 'pcb_generator.py'), net_path,
+                         os.path.join(work, f'{name}_{style}_stream.kicad_pcb'), '--style', style, '--stream'],
+                        capture_output=True)
+    try:
+        events = [json.loads(l) for l in sp.stdout.decode('utf-8').splitlines() if l.strip()]
+        kinds = [e['type'] for e in events]
+        frames = kinds.count('frame')
+        ok = (sp.returncode == 0 and kinds[:2] == ['parts', 'init'] and kinds[-1] == 'done' and frames > 20
+              and events[-1]['board']['parts'][0]['x'] == model['parts'][0]['x'])
+        res['12 stream'] = (ok, f'{len(events)} events, {frames} frames, {len(sp.stdout)} bytes')
+    except (ValueError, KeyError, IndexError) as e:
+        res['12 stream'] = (False, f'bad stream: {e}')
 
     return res, summary, unconn
 
