@@ -947,6 +947,71 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
   }
 })
 
+// ── POST /generate_pcb_stream (SSE) ────────────────────────────────
+// Streams the placement as it happens: parts (local geometry) → init → frame… → done.
+// Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
+
+app.post('/generate_pcb_stream', (req: Request, res: Response) => {
+  const { filename, graph, baseName, style } = req.body || {}
+  let netPath: string
+  let pcbFilename: string
+  if (graph) {
+    const netFilename = `${(baseName as string) || 'edited'}_${randomUUID().slice(0, 8)}.net`
+    netPath = join(OUTPUTS_DIR, netFilename)
+    writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
+    pcbFilename = netFilename.replace('.net', '.kicad_pcb')
+  } else if (filename) {
+    netPath = join(OUTPUTS_DIR, basename(filename as string))
+    if (!existsSync(netPath)) return res.status(404).json({ error: 'Netlist file not found.' })
+    pcbFilename = basename(filename as string, '.net') + '.kicad_pcb'
+  } else {
+    return res.status(400).json({ error: 'filename or graph required' })
+  }
+  const pcbPath = join(OUTPUTS_DIR, pcbFilename)
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+  if (res.socket) res.socket.setNoDelay(true)
+
+  const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
+    '--style', pcbStyle(style), '--stream'])
+  let buf = ''
+  let stderr = ''
+  let finished = false
+  const end = (event: string, data: unknown) => {
+    if (finished) return
+    finished = true
+    clearTimeout(timer)
+    res.write(sse(event, JSON.stringify(data)))
+    res.end()
+  }
+  const timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
+  res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); proc.kill() } })
+
+  proc.stdout.on('data', (d: Buffer) => {
+    buf += d.toString()
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.trim() || finished) continue
+      try {
+        const ev = JSON.parse(line) as { type: string }
+        if (ev.type === 'done') end('done', { ...ev, pcbFilename })
+        else res.write(sse(ev.type, line))
+      } catch { /* not an event line */ }
+    }
+  })
+  proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+  proc.on('error', (e: Error) => end('error', { error: e.message }))
+  proc.on('close', (code: number | null) => {
+    if (code !== 0) end('error', { error: stderr || 'PCB generation failed' })
+    else end('error', { error: 'PCB generator ended without a result' })
+  })
+})
+
 // ── GET /download_pcb/:filename ────────────────────────────────────
 
 app.get('/download_pcb/:filename', (req: Request, res: Response) => {

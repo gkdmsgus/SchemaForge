@@ -13,7 +13,11 @@ import {
   Button, Input,
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
 } from './primitives.tsx'
-import type { GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary } from '../types'
+import type {
+  GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary,
+  BoardPart, BoardFrame, BoardModel,
+} from '../types'
+import BoardView from './BoardView'
 
 const API = ''
 
@@ -74,6 +78,10 @@ export default function ResultPanel({
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
   const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
+  const [board, setBoard] = useState<{
+    parts: BoardPart[]; frames: BoardFrame[]; target: [number, number, number, number] | null
+    final: BoardModel | null; status: 'streaming' | 'done' | 'error'
+  } | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
   const [activeTab, setActiveTab] = useState('Netlist')
@@ -119,35 +127,56 @@ export default function ResultPanel({
     })
   }
 
+  // Streams the placement (/generate_pcb_stream): parts → init → frame… → done.
   async function generatePCB() {
+    // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
+    const body = localGraph
+      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style: pcbStyle }
+      : result?.filename ? { filename: result.filename, style: pcbStyle } : null
+    if (!body) { setPcbStatus('error'); return }
+
     setPcbStatus('loading')
+    setBoard({ parts: [], frames: [], target: null, final: null, status: 'streaming' })
+    setGerberStatus(null)
+    setGerberInfo(null)
+    setViewMode('pcb')
     try {
-      let data
-      if (localGraph) {
-        // AI-edited graph: generate netlist on the fly then build PCB
-        const baseName = result?.filename?.replace('.net', '') || 'circuit'
-        const res = await fetch(`${API}/generate_pcb_from_graph`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ graph: localGraph, baseName, style: pcbStyle }),
-        })
-        data = await res.json()
-      } else {
-        if (!result?.filename) { setPcbStatus('error'); return }
-        const res = await fetch(`${API}/generate_pcb`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ filename: result.filename, style: pcbStyle }),
-        })
-        data = await res.json()
+      const res = await fetch(`${API}/generate_pcb_stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let done = false
+      while (!done) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        buf += decoder.decode(chunk.value, { stream: true })
+        const blocks = buf.split('\n\n')
+        buf = blocks.pop() ?? ''
+        for (const block of blocks) {
+          const ev = /^event: (\w+)/m.exec(block)?.[1]
+          const raw = /^data: (.*)$/m.exec(block)?.[1]
+          if (!ev || !raw) continue
+          const data = JSON.parse(raw)
+          if (ev === 'parts') setBoard(b => b && { ...b, parts: data.parts })
+          else if (ev === 'init') setBoard(b => b && { ...b, target: data.frame })
+          else if (ev === 'frame') setBoard(b => b && { ...b, frames: [...b.frames, data] })
+          else if (ev === 'done') {
+            setBoard(b => b && { ...b, final: data.board, status: 'done' })
+            setPcbFilename(data.pcbFilename)
+            setPcbSummary(data.summary || null)
+            setPcbStatus('done')
+            done = true
+          } else if (ev === 'error') throw new Error(data.error)
+        }
       }
-      if (data.error) throw new Error(data.error)
-      setPcbFilename(data.pcbFilename)
-      setPcbSummary(data.summary || null)
-      setGerberStatus(null)
-      setGerberInfo(null)
-      setPcbStatus('done')
+      if (!done) throw new Error('stream ended without a result')
     } catch (e) {
+      setBoard(b => b && { ...b, status: 'error' })
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
     }
@@ -582,7 +611,16 @@ export default function ResultPanel({
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
-              : <PCBLayout graph={effectiveGraph} />}
+              : board
+                ? <BoardView parts={board.parts} frames={board.frames} target={board.target}
+                    final={board.final} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
+                : <>
+                    <PCBLayout graph={effectiveGraph} />
+                    <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '6px 10px', borderRadius: 6,
+                      background: 'var(--sf-bg-2)', color: 'var(--sf-fg-dim)', fontSize: 11 }}>
+                      간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
+                    </div>
+                  </>}
           </div>
         </div>
 
