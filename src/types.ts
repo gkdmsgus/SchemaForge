@@ -33,6 +33,12 @@ export interface PcbSummary {
   hpwl?: number
   hpwl_shelf?: number
   rotated?: number
+  connections?: number
+  tracks?: number
+  vias?: number
+  track_length?: number
+  route_ms?: number
+  unrouted?: { net: string; from: string; to: string }[]
 }
 
 // ── Board model streamed by /generate_pcb_stream (server/pcb/board.py) ─────────
@@ -68,10 +74,34 @@ export interface BoardFrame {
   parts: Record<string, [number, number, number]>
 }
 
+export interface BoardTrack {
+  net: string
+  layer: 'F.Cu' | 'B.Cu'
+  width: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+export interface BoardVia {
+  net: string
+  x: number
+  y: number
+}
+
+/** Routing events in stream order: a connection routed, or a net ripped up to make room. */
+export type RouteEvent =
+  | { type: 'route'; net: string; segments: BoardTrack[]; vias: BoardVia[] }
+  | { type: 'rip'; net: string }
+
 export interface BoardModel {
   outline: [number, number, number, number]
   parts: (BoardPart & { x: number; y: number; rot: number })[]
   nets: string[]
+  tracks?: BoardTrack[]
+  vias?: BoardVia[]
+  unrouted?: { net: string; from: string; to: string }[]
 }
 
 export interface GenerateResult {

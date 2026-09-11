@@ -107,8 +107,9 @@ def check_one(name, style, work, cli):
         unconn = len(d['unconnected_items'])
         viol = [v['type'] for v in d['violations']]
         expected = sum(len(n['nodes']) - 1 for n in nets if len(n['nodes']) > 1)
-        res['5 drc'] = (not viol and unconn == expected and unconn > 0,
-                        f'violations={viol} unconnected={unconn} expected={expected}')
+        # stage 2: the board is routed, so KiCad must find nothing left to connect
+        res['5 drc'] = (not viol and unconn == 0,
+                        f'violations={viol} unconnected={unconn} (before routing: {expected})')
 
     # 6. gerbers + drill export
     gdir = os.path.join(work, f'{name}_{style}_gerber')
@@ -168,11 +169,39 @@ def check_one(name, style, work, cli):
         events = [json.loads(l) for l in sp.stdout.decode('utf-8').splitlines() if l.strip()]
         kinds = [e['type'] for e in events]
         frames = kinds.count('frame')
+        routes, rips = kinds.count('route'), kinds.count('rip')
+        last_frame = max(i for i, k in enumerate(kinds) if k == 'frame')
+        first_route = min((i for i, k in enumerate(kinds) if k == 'route'), default=len(kinds))
         ok = (sp.returncode == 0 and kinds[:2] == ['parts', 'init'] and kinds[-1] == 'done' and frames > 20
-              and events[-1]['board']['parts'][0]['x'] == model['parts'][0]['x'])
-        res['12 stream'] = (ok, f'{len(events)} events, {frames} frames, {len(sp.stdout)} bytes')
+              and events[-1]['board']['parts'][0]['x'] == model['parts'][0]['x']
+              and last_frame < first_route and routes >= summary['connections'])
+        res['12 stream'] = (ok, f'{len(events)} events, {frames} frames, {routes} routes, {rips} rips, '
+                                f'{len(sp.stdout)} bytes')
     except (ValueError, KeyError, IndexError) as e:
         res['12 stream'] = (False, f'bad stream: {e}')
+
+    # ── stage 2: routing ──
+    # 13. every connection routed
+    res['13 unrouted=0'] = (not summary['unrouted'],
+                            f"{summary['connections']} connections, {summary['tracks']} segments, "
+                            f"{summary['vias']} vias, {summary['track_length']} mm {summary['unrouted'] or ''}")
+
+    # 14. file, model and summary agree on the copper
+    root = parse(open(pcb, encoding='utf-8').read())
+    seg_n, via_n = len(find_all(root, 'segment')), len(find_all(root, 'via'))
+    res['14 copper counts'] = (seg_n == len(model['tracks']) == summary['tracks'] and
+                               via_n == len(model['vias']) == summary['vias'],
+                               f'file segments={seg_n} vias={via_n}')
+
+    # 15. the gerbers really carry the tracks (draw commands on the copper layers)
+    draws = 0
+    for f in files:
+        if f.endswith(('-F_Cu.gtl', '-B_Cu.gbl')):
+            draws += open(os.path.join(gdir, f), encoding='utf-8', errors='replace').read().count('D01*')
+    res['15 gerber copper'] = (draws >= summary['tracks'], f'D01 draws={draws} segments={summary["tracks"]}')
+
+    # 16. routing time
+    res['16 route time'] = (summary['route_ms'] <= 10000, f"{summary['route_ms']} ms")
 
     return res, summary, unconn
 

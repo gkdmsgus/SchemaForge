@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { BoardFrame, BoardModel, BoardPart, BoardPad } from '../types'
+import type { BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent } from '../types'
 
-// Draws the real board model (mm) streamed by /generate_pcb_stream and plays the
-// placement frames back as an animation. Coordinates follow KiCad: y down,
-// rot in degrees counter-clockwise on screen — i.e. SVG rotate(-rot).
+// Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
+// back: placement frames first, then routing events one connection at a time.
+// Coordinates follow KiCad: y down, rot in degrees counter-clockwise on screen —
+// i.e. SVG rotate(-rot).
 
 const PCB_GREEN = '#0c2418'
 const EDGE = '#e8c97a'
@@ -13,9 +14,12 @@ const HOLE = '#081a11'
 const RATSNEST = '#7fd1ff'
 const SILK = '#dfe5dd'
 const COURTYARD = 'rgba(223, 229, 221, 0.18)'
+const LAYER_COLOR: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#4d7fc4' }
+const VIA_SIZE = 0.8, VIA_DRILL = 0.4
 
-const FRAME_MS = 30          // playback: one frame every 30 ms (~70 frames ≈ 2 s)
+const FRAME_MS = 30          // placement playback: one frame every 30 ms (~70 frames ≈ 2 s)
 const FIT_MS = 600           // camera move from the scatter view to the finished board
+const ROUTE_MS = 140         // routing playback: one connection every 140 ms
 
 const PHASE_LABEL: Record<string, string> = {
   force: '부품 모으는 중',
@@ -28,6 +32,7 @@ type Box = [number, number, number, number]
 interface Props {
   parts: BoardPart[]
   frames: BoardFrame[]
+  routes: RouteEvent[]
   target: Box | null            // frame the placer aims for (from the init event)
   final: BoardModel | null      // board.json after "done"
   hpwlShelf?: number
@@ -56,6 +61,8 @@ function union(boxes: Box[]): Box {
 function pad(b: Box, m: number): Box {
   return [b[0] - m, b[1] - m, b[2] + m, b[3] + m]
 }
+
+const segLen = (t: BoardTrack) => Math.hypot(t.x2 - t.x1, t.y2 - t.y1)
 
 /** Prim's minimum spanning tree over points (Euclidean) — the ratsnest of one net. */
 function mst(pts: [number, number][]): [number, number][] {
@@ -97,25 +104,44 @@ function PadShape({ p, hi }: { p: BoardPad; hi: boolean }) {
   )
 }
 
-export default function BoardView({ parts, frames, target, final, hpwlShelf, status }: Props) {
+function Track({ t, frac = 1 }: { t: BoardTrack; frac?: number }) {
+  const x2 = t.x1 + (t.x2 - t.x1) * frac, y2 = t.y1 + (t.y2 - t.y1) * frac
+  return <line data-track={t.layer} x1={t.x1} y1={t.y1} x2={x2} y2={y2} stroke={LAYER_COLOR[t.layer]}
+    strokeWidth={t.width} strokeLinecap="round" opacity={t.layer === 'B.Cu' ? 0.85 : 0.95} />
+}
+
+function Via({ v }: { v: BoardVia }) {
+  return (
+    <g data-via="1">
+      <circle cx={v.x} cy={v.y} r={VIA_SIZE / 2} fill={EDGE} />
+      <circle cx={v.x} cy={v.y} r={VIA_DRILL / 2} fill={HOLE} />
+    </g>
+  )
+}
+
+export default function BoardView({ parts, frames, routes, target, final, hpwlShelf, status }: Props) {
   const [playhead, setPlayhead] = useState(0)          // fractional frame index
+  const [routeHead, setRouteHead] = useState(0)        // fractional routing-event index
   const [fit, setFit] = useState(0)                    // 0 = scatter view, 1 = fitted to the board
   const [hoverNet, setHoverNet] = useState<string | null>(null)
+  const [show, setShow] = useState<Record<string, boolean>>({ 'F.Cu': true, 'B.Cu': true })
   const [zoom, setZoom] = useState(1)
   const [panXY, setPanXY] = useState<[number, number]>([0, 0])
   const dragRef = useRef<{ x: number; y: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
-  const framesRef = useRef(frames)
-  framesRef.current = frames
+  const live = useRef({ frames: frames.length, routes: routes.length, fitted: false })
+  live.current.frames = frames.length
+  live.current.routes = routes.length
 
-  // playback clock: advance toward the newest frame, one frame per FRAME_MS
+  // one clock: placement frames first; once the camera has fitted the board, routing events
   useEffect(() => {
     let raf = 0
     let last = performance.now()
     const tick = (now: number) => {
       const dt = now - last
       last = now
-      setPlayhead(ph => Math.min(ph + dt / FRAME_MS, Math.max(framesRef.current.length - 1, 0)))
+      setPlayhead(ph => Math.min(ph + dt / FRAME_MS, Math.max(live.current.frames - 1, 0)))
+      if (live.current.fitted) setRouteHead(rh => Math.min(rh + dt / ROUTE_MS, live.current.routes))
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -123,21 +149,22 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
   }, [])
 
   const atEnd = frames.length > 0 && playhead >= frames.length - 1
-  const finished = status === 'done' && atEnd && !!final
+  const placed = status === 'done' && atEnd && !!final
 
-  // camera: after the last frame plays, glide to the finished board
+  // camera: after the last frame plays, glide to the finished board, then start routing
   useEffect(() => {
-    if (!finished) { setFit(0); return }
+    if (!placed) { setFit(0); live.current.fitted = false; return }
     const start = performance.now()
     let raf = 0
     const step = (now: number) => {
       const t = Math.min((now - start) / FIT_MS, 1)
       setFit(1 - (1 - t) * (1 - t))
       if (t < 1) raf = requestAnimationFrame(step)
+      else live.current.fitted = true
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [finished])
+  }, [placed])
 
   const byRef = useMemo(() => Object.fromEntries(parts.map(p => [p.ref, p])), [parts])
 
@@ -154,6 +181,41 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
     }
     return out
   }, [frames, playhead])
+
+  // copper after applying routing events up to the route head (the current one drawn partly)
+  const copper = useMemo(() => {
+    const done = Math.floor(routeHead)
+    const frac = routeHead - done
+    const tracks: { t: BoardTrack; net: string }[] = []
+    let vias: BoardVia[] = []
+    const routedCount: Record<string, number> = {}
+    for (let k = 0; k < Math.min(done, routes.length); k++) {
+      const ev = routes[k]
+      if (ev.type === 'rip') {
+        for (let i = tracks.length - 1; i >= 0; i--) if (tracks[i].net === ev.net) tracks.splice(i, 1)
+        vias = vias.filter(v => v.net !== ev.net)
+        routedCount[ev.net] = 0
+      } else {
+        ev.segments.forEach(t => tracks.push({ t, net: ev.net }))
+        vias.push(...ev.vias)
+        routedCount[ev.net] = (routedCount[ev.net] || 0) + 1
+      }
+    }
+    // the connection being drawn right now: segments grow along their total length
+    const partial: { t: BoardTrack; frac: number }[] = []
+    const cur = routes[done]
+    if (cur && cur.type === 'route' && frac > 0) {
+      const total = cur.segments.reduce((s, t) => s + segLen(t), 0) || 1
+      let left = frac * total
+      for (const t of cur.segments) {
+        const L = segLen(t)
+        if (left <= 0) break
+        partial.push({ t, frac: Math.min(1, left / (L || 1)) })
+        left -= L
+      }
+    }
+    return { tracks, vias, partial, routedCount }
+  }, [routes, routeHead])
 
   // views: everything the scatter touches vs the finished board
   const first = frames[0]
@@ -178,7 +240,16 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
   const vw = (base[2] - base[0]) / zoom, vh = (base[3] - base[1]) / zoom
   const viewBox = `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`
 
-  // absolute pads -> ratsnest
+  // absolute pads -> ratsnest for nets that are not routed yet
+  const padCount = useMemo(() => {
+    const c: Record<string, number> = {}
+    parts.forEach(p => p.pads.forEach(pd => { if (pd.net) c[pd.net] = (c[pd.net] || 0) + 1 }))
+    return c
+  }, [parts])
+  const connections = Object.values(padCount).reduce((s, n) => s + Math.max(n - 1, 0), 0)
+  // routed connections right now (a rip-up sets its net back to 0)
+  const routedNow = Object.entries(copper.routedCount)
+    .reduce((s, [net, k]) => s + Math.min(k, Math.max((padCount[net] || 0) - 1, 0)), 0)
   const nets = useMemo(() => {
     const pts: Record<string, [number, number][]> = {}
     for (const [ref, [x, y, r]] of Object.entries(poses)) {
@@ -186,17 +257,21 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
       if (!p) continue
       for (const pd of p.pads) {
         if (!pd.net) continue
+        if ((copper.routedCount[pd.net] || 0) >= (padCount[pd.net] || 0) - 1) continue   // fully routed
         const [dx, dy] = rotate(pd.x, pd.y, r)
         ;(pts[pd.net] ||= []).push([x + dx, y + dy])
       }
     }
     return Object.entries(pts).map(([net, list]) => ({ net, list, edges: mst(list) }))
-  }, [poses, byRef])
+  }, [poses, byRef, copper.routedCount, padCount])
 
   const cur = frames.length ? frames[Math.min(Math.round(playhead), frames.length - 1)] : null
-  const hpwlNow = cur?.hpwl
   const hpwlFinal = final && frames.length ? frames[frames.length - 1].hpwl : null
   const saving = hpwlFinal != null && hpwlShelf ? Math.round((1 - hpwlFinal / hpwlShelf) * 100) : null
+  const routing = placed && fit >= 1 && routes.length > 0
+  const routedAll = placed && routes.length > 0 && routeHead >= routes.length
+  const trackLen = copper.tracks.reduce((s, x) => s + segLen(x.t), 0)
+  const unrouted = final?.unrouted || []
 
   // sparkline of HPWL up to the playhead
   const spark = useMemo(() => {
@@ -225,10 +300,21 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
     setPanXY(([px, py]) => [px - (e.clientX - d.x) * scale, py - (e.clientY - d.y) * scale])
     dragRef.current = { x: e.clientX, y: e.clientY }
   }
-  function replay() { setPlayhead(0); setZoom(1); setPanXY([0, 0]) }
+  function replay() { setPlayhead(0); setRouteHead(0); setZoom(1); setPanXY([0, 0]) }
 
   const outline = final?.outline
-  const label = status === 'error' ? '오류' : finished ? '배치 완료' : (cur ? PHASE_LABEL[cur.phase] : '준비 중')
+  const label = status === 'error' ? '오류'
+    : routedAll ? (unrouted.length ? '배선 끝 (미배선 있음)' : '배선 완료')
+    : routing ? '배선 중'
+    : placed ? '배치 완료'
+    : (cur ? PHASE_LABEL[cur.phase] : '준비 중')
+
+  const drawTracks = (layer: string) => show[layer] && (
+    <g>
+      {copper.tracks.filter(x => x.t.layer === layer).map((x, k) => <Track key={k} t={x.t} />)}
+      {copper.partial.filter(x => x.t.layer === layer).map((x, k) => <Track key={`p${k}`} t={x.t} frac={x.frac} />)}
+    </g>
+  )
 
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'var(--sf-bg-inverse)', overflow: 'hidden' }}>
@@ -246,6 +332,9 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
               fill={PCB_GREEN} fillOpacity={0.55 * (1 - fit)} stroke={EDGE} strokeOpacity={0.5 * (1 - fit)}
               strokeWidth={0.12} strokeDasharray="0.8 0.6" />
           : null}
+
+        {/* bottom copper under the parts */}
+        {drawTracks('B.Cu')}
 
         {/* parts */}
         {Object.entries(poses).map(([ref, [x, y, r]]) => {
@@ -267,7 +356,11 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
           )
         })}
 
-        {/* ratsnest */}
+        {/* top copper and vias over the pads */}
+        {drawTracks('F.Cu')}
+        {copper.vias.map((v, k) => <Via key={k} v={v} />)}
+
+        {/* ratsnest of what is still to route */}
         {nets.map(({ net, list, edges }) => edges.map(([a, b], k) => (
           <line key={`${net}-${k}`} x1={list[a][0]} y1={list[a][1]} x2={list[b][0]} y2={list[b][1]}
             stroke={RATSNEST} strokeWidth={hoverNet === net ? 0.22 : 0.1}
@@ -281,29 +374,48 @@ export default function BoardView({ parts, frames, target, final, hpwlShelf, sta
       {/* overlay */}
       <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '8px 10px', borderRadius: 8,
         background: 'rgba(8, 26, 17, 0.82)', color: 'var(--sf-fg-inverse)', fontFamily: 'var(--sf-font-mono)',
-        fontSize: 11, lineHeight: 1.5, minWidth: 170 }}>
-        <div data-testid="board-phase" style={{ fontWeight: 700, color: finished ? '#5dc8a3' : EDGE }}>{label}</div>
-        {cur && <div style={{ opacity: 0.75 }}>반복 {cur.iter} · 선 길이 추정 {hpwlNow?.toFixed(1)} mm</div>}
-        {spark && <svg width={120} height={28} style={{ display: 'block', marginTop: 4 }}>
+        fontSize: 11, lineHeight: 1.5, minWidth: 190 }}>
+        <div data-testid="board-phase" style={{ fontWeight: 700, color: routedAll && !unrouted.length ? '#5dc8a3' : EDGE }}>{label}</div>
+        {!placed && cur && <div style={{ opacity: 0.75 }}>반복 {cur.iter} · 선 길이 추정 {cur.hpwl.toFixed(1)} mm</div>}
+        {!placed && spark && <svg width={120} height={28} style={{ display: 'block', marginTop: 4 }}>
           <path d={spark} fill="none" stroke={RATSNEST} strokeWidth={1.2} />
         </svg>}
-        {finished && saving != null && (
-          <div data-testid="board-saving" style={{ marginTop: 4, color: '#5dc8a3' }}>
-            격자 배치 대비 −{saving}% ({hpwlShelf?.toFixed(0)} → {hpwlFinal?.toFixed(0)} mm)
+        {placed && saving != null && (
+          <div data-testid="board-saving" style={{ color: '#5dc8a3' }}>
+            배치: 격자 대비 −{saving}% ({hpwlShelf?.toFixed(0)} → {hpwlFinal?.toFixed(0)} mm)
           </div>
         )}
-        {finished && outline && (
+        {placed && routes.length > 0 && (
+          <div data-testid="board-routing">
+            배선 {routedNow}/{connections} · 비아 {copper.vias.length} · 트랙 {trackLen.toFixed(0)} mm
+          </div>
+        )}
+        {routedAll && unrouted.length > 0 && (
+          <div style={{ color: '#ff8a80' }}>미배선: {unrouted.map(u => `${u.net} (${u.from}–${u.to})`).join(', ')}</div>
+        )}
+        {placed && outline && (
           <div style={{ opacity: 0.75 }}>기판 {(outline[2] - outline[0]).toFixed(1)} × {(outline[3] - outline[1]).toFixed(1)} mm</div>
         )}
         {hoverNet && <div style={{ color: RATSNEST }}>넷: {hoverNet}</div>}
       </div>
-      {finished && (
-        <button onClick={replay} data-testid="board-replay"
-          style={{ position: 'absolute', right: 12, top: 12, padding: '4px 10px', borderRadius: 6,
-            border: '1px solid rgba(232, 201, 122, 0.5)', background: 'rgba(8, 26, 17, 0.82)',
-            color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
-          ↺ 다시 보기
-        </button>
+      {placed && (
+        <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6 }}>
+          {(['F.Cu', 'B.Cu'] as const).map(L => (
+            <button key={L} onClick={() => setShow(s => ({ ...s, [L]: !s[L] }))}
+              title={L === 'F.Cu' ? '윗면 구리' : '아랫면 구리'}
+              style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${LAYER_COLOR[L]}`,
+                background: show[L] ? LAYER_COLOR[L] : 'rgba(8, 26, 17, 0.82)', color: show[L] ? '#fff' : LAYER_COLOR[L],
+                fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              {L === 'F.Cu' ? 'F' : 'B'}
+            </button>
+          ))}
+          <button onClick={replay} data-testid="board-replay"
+            style={{ padding: '4px 10px', borderRadius: 6,
+              border: '1px solid rgba(232, 201, 122, 0.5)', background: 'rgba(8, 26, 17, 0.82)',
+              color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+            ↺ 다시 보기
+          </button>
+        </div>
       )}
     </div>
   )
