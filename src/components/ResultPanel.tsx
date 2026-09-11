@@ -15,7 +15,7 @@ import {
 } from './primitives.tsx'
 import type {
   GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary,
-  BoardPart, BoardFrame, BoardModel,
+  BoardPart, BoardFrame, BoardModel, RouteEvent,
 } from '../types'
 import BoardView from './BoardView'
 
@@ -79,7 +79,7 @@ export default function ResultPanel({
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
   const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
   const [board, setBoard] = useState<{
-    parts: BoardPart[]; frames: BoardFrame[]; target: [number, number, number, number] | null
+    parts: BoardPart[]; frames: BoardFrame[]; routes: RouteEvent[]; target: [number, number, number, number] | null
     final: BoardModel | null; status: 'streaming' | 'done' | 'error'
   } | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
@@ -127,7 +127,7 @@ export default function ResultPanel({
     })
   }
 
-  // Streams the placement (/generate_pcb_stream): parts → init → frame… → done.
+  // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
   async function generatePCB() {
     // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
@@ -136,7 +136,7 @@ export default function ResultPanel({
     if (!body) { setPcbStatus('error'); return }
 
     setPcbStatus('loading')
-    setBoard({ parts: [], frames: [], target: null, final: null, status: 'streaming' })
+    setBoard({ parts: [], frames: [], routes: [], target: null, final: null, status: 'streaming' })
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
@@ -165,6 +165,7 @@ export default function ResultPanel({
           if (ev === 'parts') setBoard(b => b && { ...b, parts: data.parts })
           else if (ev === 'init') setBoard(b => b && { ...b, target: data.frame })
           else if (ev === 'frame') setBoard(b => b && { ...b, frames: [...b.frames, data] })
+          else if (ev === 'route' || ev === 'rip') setBoard(b => b && { ...b, routes: [...b.routes, data] })
           else if (ev === 'done') {
             setBoard(b => b && { ...b, final: data.board, status: 'done' })
             setPcbFilename(data.pcbFilename)
@@ -612,7 +613,7 @@ export default function ResultPanel({
             {viewMode === 'schematic'
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
               : board
-                ? <BoardView parts={board.parts} frames={board.frames} target={board.target}
+                ? <BoardView parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
                     final={board.final} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>
                     <PCBLayout graph={effectiveGraph} />

@@ -430,10 +430,18 @@ def footprint_for_board(p):
     return fp
 
 
-def write_kicad_pcb(parts, box, path):
+def write_kicad_pcb(parts, box, path, routing=None):
     body = [HEADER]
     for p in parts:
         body.append(_indent(dumps(footprint_for_board(p))) + '\n')
+    if routing:
+        from router import RULES
+        for t in routing['tracks']:
+            body.append(f'\t(segment\n\t\t(start {_fmt(t["x1"])} {_fmt(t["y1"])})\n\t\t(end {_fmt(t["x2"])} {_fmt(t["y2"])})\n'
+                        f'\t\t(width {_fmt(t["width"])})\n\t\t(layer "{t["layer"]}")\n\t\t(net {_q(t["net"])})\n\t)\n')
+        for v in routing['vias']:
+            body.append(f'\t(via\n\t\t(at {_fmt(v["x"])} {_fmt(v["y"])})\n\t\t(size {_fmt(RULES["via_size"])})\n'
+                        f'\t\t(drill {_fmt(RULES["via_drill"])})\n\t\t(layers "F.Cu" "B.Cu")\n\t\t(net {_q(v["net"])})\n\t)\n')
     x1, y1, x2, y2 = box
     body.append(f'\t(gr_rect\n\t\t(start {x1:.4f} {y1:.4f})\n\t\t(end {x2:.4f} {y2:.4f})\n'
                 f'\t\t(stroke\n\t\t\t(width 0.05)\n\t\t\t(type default)\n\t\t)\n\t\t(fill no)\n'
@@ -441,6 +449,10 @@ def write_kicad_pcb(parts, box, path):
     body.append(')\n')
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write(''.join(body))
+
+
+def _q(s):
+    return '"' + str(s).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _indent(text):
@@ -471,7 +483,7 @@ def board_json(parts, nets, box, style, unmapped, warnings):
             'nets': [n['name'] for n in nets], 'unmapped': unmapped, 'warnings': warnings}
 
 
-def generate(net_path, pcb_path, style='smd', placer='force', on_event=None):
+def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True):
     """Build, place, write. on_event(dict) receives init / frame events when streaming."""
     with open(net_path, encoding='utf-8') as f:
         components, nets = parse_netlist(f.read())
@@ -487,8 +499,15 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None):
         force_place(parts, nets, on_event=on_event)
 
     box = outline(parts)
-    write_kicad_pcb(parts, box, pcb_path)
+    routing = None
+    if route:
+        from router import route as run_router
+        routing = run_router(parts, box, on_event=on_event)
+    write_kicad_pcb(parts, box, pcb_path, routing)
     model = board_json(parts, nets, box, style, unmapped, warnings)
+    if routing:
+        model.update({'version': 3, 'tracks': routing['tracks'], 'vias': routing['vias'],
+                      'unrouted': routing['unrouted']})
     json_path = re.sub(r'\.kicad_pcb$', '', pcb_path) + '.board.json'
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(model, f, ensure_ascii=False, indent=1)
@@ -508,4 +527,8 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None):
         'board': {'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
                   'w': round(box[2] - box[0], 2), 'h': round(box[3] - box[1], 2)},
         'boardJson': os.path.basename(json_path),
+        **({'connections': routing['connections'], 'unrouted': routing['unrouted'],
+            'tracks': len(routing['tracks']), 'vias': len(routing['vias']),
+            'track_length': routing['track_length'], 'route_ms': routing['route_ms']}
+           if routing else {}),
     }
