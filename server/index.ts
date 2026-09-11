@@ -295,6 +295,7 @@ Values:
 Part templates — copy verbatim, changing only name, value and the pin list:
 - Resistor: Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Capacitor: Part(tool=SKIDL, name='C', ref_prefix='C', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
+- Electrolytic capacitor (polarized, use for 1uF and above): Part(tool=SKIDL, name='CP', ref_prefix='C', pins=[Pin(num=1,name='+',func=Pin.types.PASSIVE), Pin(num=2,name='-',func=Pin.types.PASSIVE)])
 - Inductor: Part(tool=SKIDL, name='L', ref_prefix='L', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - LED: Part(tool=SKIDL, name='LED', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
 - Diode: Part(tool=SKIDL, name='D', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
@@ -362,6 +363,7 @@ function runSkidl(code: string, timeout = 90000): Promise<string> {
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
 
     const timer = setTimeout(() => { proc.kill(); reject(new Error('skidl execution timed out')) }, timeout)
+    proc.on('error', (e: Error) => { clearTimeout(timer); reject(e) })
 
     proc.on('close', (code: number | null) => {
       clearTimeout(timer)
@@ -381,10 +383,18 @@ function parseNetlist(text: string): NetGraph {
   const nets: NetEntry[] = []
 
   const compRe = /\(comp\s*\(ref\s+"([^"]+)"\)\s*\(value\s+"([^"]*)"\)/g
+  const compStarts: { idx: number; ref: string; value: string }[] = []
   let m: RegExpExecArray | null
   while ((m = compRe.exec(text)) !== null) {
-    components.push({ ref: m[1], value: m[2] })
+    compStarts.push({ idx: m.index, ref: m[1], value: m[2] })
   }
+  // The part template name (libsource part) picks the PCB footprint downstream.
+  const netsIdx = text.search(/\(nets\b/)
+  compStarts.forEach((c, i) => {
+    const end = i + 1 < compStarts.length ? compStarts[i + 1].idx : (netsIdx >= 0 ? netsIdx : text.length)
+    const part = /\(part\s+"([^"]+)"\)/.exec(text.slice(c.idx, end))
+    components.push(part ? { ref: c.ref, value: c.value, name: part[1] } : { ref: c.ref, value: c.value })
+  })
 
   const netSectionMatch = text.match(/\(nets[\s\S]*$/)
   if (netSectionMatch) {
@@ -419,6 +429,7 @@ function graphToNetlist(graph: NetGraph): string {
     `    (comp (ref "${c.ref}") (value "${c.value || c.ref}")\n` +
     `      (description "${c.name || ''}")\n` +
     `      (footprint "")\n` +
+    (c.name ? `      (libsource (lib "NO_LIB") (part "${c.name}"))\n` : '') +
     `    )`
   ).join('\n')
 
@@ -574,7 +585,11 @@ Current circuit:
 Rules:
 - Only reference designators from the component list above. Never invent a ref.
 - add_component: pick the next free number for that prefix (R, C, L, D, Q, U, SW, K,
-  LS, BT, J, Y only) and give it a real value with units.
+  LS, BT, J, Y only) and give it a real value with units. Set "name" to the part type
+  exactly as one of: R, C, CP (electrolytic, 1uF and above), L, LED, D, Q_NPN, Q_NMOS,
+  NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Conn_01x02 … Conn_01x10 — the PCB
+  footprint is chosen from this name, and pins are numbered as in those parts
+  (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
 - add_net / remove_net: "nodes" must list every ref+pin on that net, not just the new one.
 - modify_component: change only the field the user named.
 - If the request is ambiguous or names a part that does not exist, return an empty
@@ -856,8 +871,45 @@ app.get('/download/:filename', (req: Request, res: Response) => {
 
 // ── POST /generate_pcb ─────────────────────────────────────────────
 
+type PcbStyle = 'smd' | 'tht'
+
+interface PcbSummary {
+  components: number
+  nets: number
+  unmapped: { ref: string; part: string; reason: string }[]
+  warnings: string[]
+  style: PcbStyle
+  board: { w: number; h: number }
+  boardJson: string
+}
+
+/** Run pcb_generator.py; its last stdout line is a JSON summary. */
+function runPcbGenerator(netPath: string, pcbPath: string, style: PcbStyle): Promise<PcbSummary> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath, '--style', style])
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    const timer = setTimeout(() => { proc.kill(); reject(new Error('PCB generation timed out')) }, 30000)
+    proc.on('error', (e: Error) => { clearTimeout(timer); reject(e) })
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer)
+      if (code !== 0) return reject(new Error(stderr || 'PCB generation failed'))
+      try {
+        const last = stdout.trim().split('\n').pop() || '{}'
+        resolve(JSON.parse(last) as PcbSummary)
+      } catch {
+        reject(new Error('PCB generator returned no summary'))
+      }
+    })
+  })
+}
+
+const pcbStyle = (s: unknown): PcbStyle => (s === 'tht' ? 'tht' : 'smd')
+
 app.post('/generate_pcb', async (req: Request, res: Response) => {
-  const { filename } = req.body || {}
+  const { filename, style } = req.body || {}
   if (!filename) return res.status(400).json({ error: 'No netlist filename provided.' })
 
   const netPath = join(OUTPUTS_DIR, basename(filename as string))
@@ -867,18 +919,8 @@ app.post('/generate_pcb', async (req: Request, res: Response) => {
   const pcbPath = join(OUTPUTS_DIR, pcbFilename)
 
   try {
-    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath])
-    let stderr = ''
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { proc.kill(); reject(new Error('PCB generation timed out')) }, 30000)
-      proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
-        if (code !== 0) return reject(new Error(stderr || 'PCB generation failed'))
-        resolve()
-      })
-    })
-    res.json({ pcbFilename, message: 'PCB layout generated successfully' })
+    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
+    res.json({ pcbFilename, summary, message: 'PCB layout generated successfully' })
   } catch (e) {
     res.status(500).json({ error: (e as Error).message })
   }
@@ -887,7 +929,7 @@ app.post('/generate_pcb', async (req: Request, res: Response) => {
 // ── POST /generate_pcb_from_graph ─────────────────────────────────
 
 app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
-  const { graph, baseName } = req.body || {}
+  const { graph, baseName, style } = req.body || {}
   if (!graph) return res.status(400).json({ error: 'No graph provided.' })
 
   const uid = randomUUID().slice(0, 8)
@@ -898,18 +940,8 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
 
   try {
     writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
-    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath])
-    let stderr = ''
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { proc.kill(); reject(new Error('PCB generation timed out')) }, 30000)
-      proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
-        if (code !== 0) return reject(new Error(stderr || 'PCB generation failed'))
-        resolve()
-      })
-    })
-    res.json({ pcbFilename, message: 'PCB layout generated from edited graph' })
+    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
+    res.json({ pcbFilename, summary, message: 'PCB layout generated from edited graph' })
   } catch (e) {
     res.status(500).json({ error: (e as Error).message })
   }
@@ -1019,7 +1051,28 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
 
 // ── POST /generate_gerber (local KiCad CLI only) ───────────────────
 
-const KICAD_CLI = process.env.KICAD_CLI_PATH || 'kicad-cli'
+// KICAD_CLI_PATH wins; otherwise the per-user Windows install, otherwise PATH.
+const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
+const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
+
+function runKicadCli(args: string[], label: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(KICAD_CLI, args)
+    let stderr = ''
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    const timer = setTimeout(() => { proc.kill(); reject(new Error(`${label} timed out`)) }, 30000)
+    // Without this handler a missing kicad-cli crashes the whole server.
+    proc.on('error', (e: NodeJS.ErrnoException) => {
+      clearTimeout(timer)
+      reject(new Error(e.code === 'ENOENT' ? 'KiCad (kicad-cli) is not installed on this server' : e.message))
+    })
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer)
+      if (code !== 0) return reject(new Error(stderr || `${label} failed`))
+      resolve()
+    })
+  })
+}
 
 app.post('/generate_gerber', async (req: Request, res: Response) => {
   const { pcbFilename } = req.body || {}
@@ -1032,29 +1085,8 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
   if (!existsSync(gerberDir)) mkdirSync(gerberDir)
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(KICAD_CLI, ['pcb', 'export', 'gerbers', '--output', gerberDir, pcbPath])
-      let stderr = ''
-      proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-      const timer = setTimeout(() => { proc.kill(); reject(new Error('Gerber export timed out')) }, 30000)
-      proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
-        if (code !== 0) return reject(new Error(stderr || 'Gerber export failed'))
-        resolve()
-      })
-    })
-
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(KICAD_CLI, ['pcb', 'export', 'drill', '--output', gerberDir + '/', pcbPath])
-      let stderr = ''
-      proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-      const timer = setTimeout(() => { proc.kill(); reject(new Error('Drill export timed out')) }, 30000)
-      proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
-        if (code !== 0) return reject(new Error(stderr || 'Drill export failed'))
-        resolve()
-      })
-    })
+    await runKicadCli(['pcb', 'export', 'gerbers', '--output', gerberDir, pcbPath], 'Gerber export')
+    await runKicadCli(['pcb', 'export', 'drill', '--output', gerberDir + '/', pcbPath], 'Drill export')
 
     const files = readdirSync(gerberDir)
     res.json({ gerberDir: basename(gerberDir), files, message: 'Gerber files generated' })
