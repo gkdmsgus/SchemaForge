@@ -13,7 +13,7 @@ import {
   Button, Input,
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
 } from './primitives.tsx'
-import type { GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction } from '../types'
+import type { GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary } from '../types'
 
 const API = ''
 
@@ -72,6 +72,8 @@ export default function ResultPanel({
   const chatEndRef = useRef<HTMLDivElement>(null)
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
+  const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
+  const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
   const [activeTab, setActiveTab] = useState('Netlist')
@@ -127,7 +129,7 @@ export default function ResultPanel({
         const res = await fetch(`${API}/generate_pcb_from_graph`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ graph: localGraph, baseName }),
+          body: JSON.stringify({ graph: localGraph, baseName, style: pcbStyle }),
         })
         data = await res.json()
       } else {
@@ -135,12 +137,15 @@ export default function ResultPanel({
         const res = await fetch(`${API}/generate_pcb`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ filename: result.filename }),
+          body: JSON.stringify({ filename: result.filename, style: pcbStyle }),
         })
         data = await res.json()
       }
       if (data.error) throw new Error(data.error)
       setPcbFilename(data.pcbFilename)
+      setPcbSummary(data.summary || null)
+      setGerberStatus(null)
+      setGerberInfo(null)
       setPcbStatus('done')
     } catch (e) {
       setPcbStatus('error')
@@ -541,6 +546,26 @@ export default function ResultPanel({
             })}
             {/* PCB gen buttons in tab bar */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', marginLeft: 'auto' }}>
+              {pcbStatus !== 'loading' && (['smd', 'tht'] as const).map(s => (
+                <button key={s}
+                  title={s === 'smd' ? '표면실장 부품 (커넥터·릴레이는 구멍 끼움)' : '전부 구멍 끼움 부품 (손납땜 쉬움)'}
+                  onClick={() => { if (s !== pcbStyle) { setPcbStyle(s); if (pcbStatus === 'done') setPcbStatus(null) } }}
+                  style={{ ...ghostBtn, padding: '2px 6px', fontFamily: 'var(--sf-font-mono)', fontSize: 10,
+                    color: pcbStyle === s ? 'var(--sf-cyan)' : 'var(--sf-fg-faint)', opacity: pcbStyle === s ? 1 : 0.6 }}>
+                  {s.toUpperCase()}
+                </button>
+              ))}
+              {pcbStatus === 'done' && pcbSummary && pcbSummary.unmapped.length > 0 && (
+                <span title={pcbSummary.unmapped.map(u => `${u.ref} (${u.part || '?'}): ${u.reason}`).join('\n')}
+                  style={{ ...ghostBtn, color: 'var(--sf-danger)', cursor: 'help' }}>
+                  ⚠ 풋프린트 없는 부품 {pcbSummary.unmapped.length}개: {pcbSummary.unmapped.map(u => u.ref).join(', ')}
+                </span>
+              )}
+              {pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
+                <span title={pcbSummary.warnings.join('\n')} style={{ ...ghostBtn, color: 'var(--sf-fg-dim)', cursor: 'help' }}>
+                  핀 배치 가정 {pcbSummary.warnings.length}건
+                </span>
+              )}
               {pcbStatus === null && <button onClick={generatePCB} style={ghostBtn}><IconLayers size={12} /> PCB 생성</button>}
               {pcbStatus === 'loading' && <span style={{...ghostBtn, opacity:0.6, cursor:'default'}}>생성중…</span>}
               {pcbStatus === 'done' && pcbFilename && <>

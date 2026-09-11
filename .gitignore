@@ -36,3 +36,9 @@ server/.env.*
 *.njsproj
 *.sln
 *.sw?
+
+# Python caches and skidl run artifacts
+__pycache__/
+server/test_circuits/*.net
+server/test_circuits/*.erc
+server/test_circuits/*_sklib.py
