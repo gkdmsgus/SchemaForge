@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound,
 } from '../types'
+import Board3D from './Board3D'
+import type { Camera } from '../lib/board3d'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -141,6 +143,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [panXY, setPanXY] = useState<[number, number]>([0, 0])
   const [focusId, setFocusId] = useState<string | null>(null)
   const [panelOpen, setPanelOpen] = useState(true)
+  const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('2d')
+  const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
+  const [zoom3d, setZoom3d] = useState(1)
+  const drag3d = useRef<{ x: number; y: number } | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const live = useRef({ frames: frames.length, routes: routes.length, fitted: false })
@@ -353,6 +359,35 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   }
   function replay() { setPlayhead(0); setRouteHead(0); setZoom(1); setPanXY([0, 0]) }
 
+  // ── 3D view: same poses, same copper, tilted ───────────────────────────────
+  const cam3d: Camera = useMemo(() => {
+    const b = final?.outline || target || [0, 0, 20, 20]
+    return { yaw: cam.yaw, tilt: cam.tilt, cx: (b[0] + b[2]) / 2, cy: (b[1] + b[3]) / 2 }
+  }, [final, target, cam])
+
+  // tracks drawn in 3D include the connection being drawn right now, cut at the same fraction
+  const tracks3d = useMemo(() => {
+    const out = copper.tracks.map(x => x.t)
+    for (const { t, frac } of copper.partial) {
+      out.push({ ...t, x2: t.x1 + (t.x2 - t.x1) * frac, y2: t.y1 + (t.y2 - t.y1) * frac })
+    }
+    return out
+  }, [copper])
+
+  function on3dDown(e: React.PointerEvent) {
+    drag3d.current = { x: e.clientX, y: e.clientY }
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+  function on3dMove(e: React.PointerEvent) {
+    const d = drag3d.current
+    if (!d) return
+    setCam(c => ({
+      yaw: c.yaw + (e.clientX - d.x) * 0.4,
+      tilt: Math.max(0, Math.min(85, c.tilt - (e.clientY - d.y) * 0.3)),
+    }))
+    drag3d.current = { x: e.clientX, y: e.clientY }
+  }
+
   const outline = final?.outline
   const label = status === 'error' ? '오류'
     : routedAll ? (unrouted.length ? '배선 끝 (미배선 있음)' : '배선 완료')
@@ -369,6 +404,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'var(--sf-bg-inverse)', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+      <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
         onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove}
@@ -442,6 +479,26 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </line>
         )))}
       </svg>
+      </div>
+
+      {/* 3D: the same poses and the same copper, tilted (stage 5) */}
+      {view3d !== '2d' && (
+        <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: drag3d.current ? 'grabbing' : 'grab',
+          borderLeft: view3d === 'both' ? '1px solid rgba(232, 201, 122, 0.25)' : 'none', touchAction: 'none' }}
+          onPointerDown={on3dDown} onPointerMove={on3dMove}
+          onPointerUp={() => { drag3d.current = null }}
+          onWheel={e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
+          <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
+            outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
+            showLayer={show} hoverNet={hoverNet} />
+          <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
+            background: 'rgba(8, 26, 17, 0.82)', color: 'var(--sf-fg-inverse)', opacity: 0.75,
+            fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>
+            끌어서 돌리기 · 기울기 {Math.round(cam.tilt)}° · 부품 높이는 표시용 근사값
+          </div>
+        </div>
+      )}
+      </div>
 
       {/* overlay */}
       <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '8px 10px', borderRadius: 8,
@@ -470,9 +527,19 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         )}
         {hoverNet && <div style={{ color: RATSNEST }}>넷: {hoverNet}</div>}
       </div>
-      {placed && (
+      {frames.length > 0 && (
         <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6 }}>
-          {(['F.Cu', 'B.Cu'] as const).map(L => (
+          {(['2d', 'both', '3d'] as const).map(v => (
+            <button key={v} onClick={() => setView3d(v)} data-testid={`view-${v}`}
+              title={v === '2d' ? '평면' : v === 'both' ? '평면 + 3D' : '3D'}
+              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(232, 201, 122, 0.5)',
+                background: view3d === v ? EDGE : 'rgba(8, 26, 17, 0.82)',
+                color: view3d === v ? '#081a11' : EDGE, fontWeight: view3d === v ? 700 : 400,
+                fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              {v === '2d' ? '2D' : v === 'both' ? '나란히' : '3D'}
+            </button>
+          ))}
+          {placed && (['F.Cu', 'B.Cu'] as const).map(L => (
             <button key={L} onClick={() => setShow(s => ({ ...s, [L]: !s[L] }))}
               title={L === 'F.Cu' ? '윗면 구리' : '아랫면 구리'}
               style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${LAYER_COLOR[L]}`,
@@ -481,12 +548,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               {L === 'F.Cu' ? 'F' : 'B'}
             </button>
           ))}
-          <button onClick={replay} data-testid="board-replay"
+          {placed && <button onClick={replay} data-testid="board-replay"
             style={{ padding: '4px 10px', borderRadius: 6,
               border: '1px solid rgba(232, 201, 122, 0.5)', background: 'rgba(8, 26, 17, 0.82)',
               color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
             ↺ 다시 보기
-          </button>
+          </button>}
         </div>
       )}
 
