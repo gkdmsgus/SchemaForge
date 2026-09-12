@@ -46,7 +46,12 @@ def is_power(net):
     return any(h in n for h in POWER_HINTS) or bool(__import__('re').match(r'^\d+V\d*$', n))
 
 
+NET_WIDTH_OVERRIDE = {}   # {net: mm} — set per run (AI edits, manual rules)
+
+
 def net_width(net):
+    if net in NET_WIDTH_OVERRIDE:
+        return NET_WIDTH_OVERRIDE[net]
     return RULES['power_width'] if is_power(net) else RULES['signal_width']
 
 

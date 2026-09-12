@@ -350,6 +350,22 @@ def shelf_place(parts, nets):
         row_h = max(row_h, h)
 
 
+def overlaps(parts):
+    """[(refA, refB)] whose keep-out boxes intersect — must be empty on a good board."""
+    boxes = [(p['ref'], part_keepout(p)) for p in parts]
+    out = []
+    for i, (ra, a) in enumerate(boxes):
+        for rb, b in boxes[i + 1:]:
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                out.append([ra, rb])
+    return out
+
+
+def _inside(box, outer):
+    return box[0] >= outer[0] - 1e-6 and box[1] >= outer[1] - 1e-6 and \
+        box[2] <= outer[2] + 1e-6 and box[3] <= outer[3] + 1e-6
+
+
 def outline(parts):
     boxes = [part_keepout(p) for p in parts]
     return (round(min(b[0] for b in boxes) - BOARD_MARGIN, 4), round(min(b[1] for b in boxes) - BOARD_MARGIN, 4),
@@ -484,8 +500,13 @@ def board_json(parts, nets, box, style, unmapped, warnings):
             'nets': [n['name'] for n in nets], 'unmapped': unmapped, 'warnings': warnings}
 
 
-def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True):
-    """Build, place, write. on_event(dict) receives init / frame events when streaming."""
+def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True, overrides=None):
+    """Build, place, route, write.
+
+    placer: 'force' (default), 'shelf', or 'fixed' — 'fixed' keeps the positions in
+    overrides['parts'] = {ref: [x, y, rot]}; overrides['net_width'] = {net: mm} widens tracks.
+    on_event(dict) receives parts / init / frame / erc / route events when streaming.
+    """
     with open(net_path, encoding='utf-8') as f:
         components, nets = parse_netlist(f.read())
     parts, unmapped, warnings = build_board(components, nets, style)
@@ -495,9 +516,21 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         on_event({'type': 'parts', 'parts': [part_static(p) for p in parts],
                   'nets': [n['name'] for n in nets]})
 
+    import router as router_mod
+    router_mod.NET_WIDTH_OVERRIDE = dict((overrides or {}).get('net_width') or {})
+
     if placer == 'force':
         from placer import force_place
         force_place(parts, nets, on_event=on_event)
+    elif placer == 'fixed':
+        fixed = (overrides or {}).get('parts') or {}
+        for p in parts:
+            pose = fixed.get(p['ref'])
+            if pose:
+                p['x'], p['y'], p['rot'] = float(pose[0]), float(pose[1]), int(pose[2]) % 360
+        if on_event:
+            on_event({'type': 'frame', 'iter': 0, 'phase': 'refine', 'hpwl': round(hpwl(parts), 2),
+                      'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
 
     import erc as erc_mod
     findings = erc_mod.check(components, nets, parts)
@@ -535,6 +568,9 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
                   'w': round(box[2] - box[0], 2), 'h': round(box[3] - box[1], 2)},
         'boardJson': os.path.basename(json_path),
         'erc': findings,
+        'overlaps': overlaps(parts),
+        'outside': [p['ref'] for p in parts if not _inside(part_keepout(p), box)],
+        'net_width': dict(router_mod.NET_WIDTH_OVERRIDE),
         **({'connections': routing['connections'], 'unrouted': routing['unrouted'],
             'tracks': len(routing['tracks']), 'vias': len(routing['vias']),
             'track_length': routing['track_length'], 'route_ms': routing['route_ms']}

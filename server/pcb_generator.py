@@ -34,12 +34,18 @@ def main():
     ap.add_argument('net')
     ap.add_argument('pcb')
     ap.add_argument('--style', choices=['smd', 'tht'], default='smd')
-    ap.add_argument('--placer', choices=['force', 'shelf'], default='force')
+    ap.add_argument('--placer', choices=['force', 'shelf', 'fixed'], default='force')
+    ap.add_argument('--overrides', help='JSON file: {"parts": {ref: [x, y, rot]}, "net_width": {net: mm}}')
     ap.add_argument('--stream', action='store_true')
     args = ap.parse_args()
 
+    overrides = None
+    if args.overrides:
+        with open(args.overrides, encoding='utf-8') as f:
+            overrides = json.load(f)
+
     summary = board.generate(args.net, args.pcb, args.style, args.placer,
-                             on_event=emit if args.stream else None)
+                             on_event=emit if args.stream else None, overrides=overrides)
     if args.stream:
         json_path = os.path.join(os.path.dirname(os.path.abspath(args.pcb)), summary['boardJson'])
         with open(json_path, encoding='utf-8') as f:

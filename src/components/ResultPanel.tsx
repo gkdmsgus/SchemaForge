@@ -15,7 +15,7 @@ import {
 } from './primitives.tsx'
 import type {
   GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary,
-  BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult,
+  BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
 } from '../types'
 import BoardView from './BoardView'
 
@@ -77,10 +77,11 @@ export default function ResultPanel({
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
+  const [useAi, setUseAi] = useState(false)
   const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
   const [board, setBoard] = useState<{
     parts: BoardPart[]; frames: BoardFrame[]; routes: RouteEvent[]; target: [number, number, number, number] | null
-    final: BoardModel | null; drc: DrcResult | null; status: 'streaming' | 'done' | 'error'
+    final: BoardModel | null; drc: DrcResult | null; ai: AiRound[]; status: 'streaming' | 'done' | 'error'
   } | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
@@ -131,12 +132,12 @@ export default function ResultPanel({
   async function generatePCB() {
     // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
-      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style: pcbStyle }
-      : result?.filename ? { filename: result.filename, style: pcbStyle } : null
+      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style: pcbStyle, ai: useAi }
+      : result?.filename ? { filename: result.filename, style: pcbStyle, ai: useAi } : null
     if (!body) { setPcbStatus('error'); return }
 
     setPcbStatus('loading')
-    setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, status: 'streaming' })
+    setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, ai: [], status: 'streaming' })
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
@@ -167,6 +168,7 @@ export default function ResultPanel({
           else if (ev === 'frame') setBoard(b => b && { ...b, frames: [...b.frames, data] })
           else if (ev === 'route' || ev === 'rip') setBoard(b => b && { ...b, routes: [...b.routes, data] })
           else if (ev === 'drc') setBoard(b => b && { ...b, drc: data })
+          else if (ev === 'ai') setBoard(b => b && { ...b, ai: [...b.ai, data] })
           else if (ev === 'done') {
             setBoard(b => b && { ...b, final: data.board, status: 'done' })
             setPcbFilename(data.pcbFilename)
@@ -597,6 +599,14 @@ export default function ResultPanel({
                   핀 배치 가정 {pcbSummary.warnings.length}건
                 </span>
               )}
+              {pcbStatus !== 'loading' && (
+                <button onClick={() => { setUseAi(v => !v); if (pcbStatus === 'done') setPcbStatus(null) }}
+                  title="AI가 배치·선 굵기에서 고칠 점을 제안합니다. 검사 지표가 좋아질 때만 반영해요 (OpenAI 호출 비용이 듭니다)"
+                  style={{ ...ghostBtn, padding: '2px 6px', fontFamily: 'var(--sf-font-mono)', fontSize: 10,
+                    color: useAi ? 'var(--sf-violet)' : 'var(--sf-fg-faint)', opacity: useAi ? 1 : 0.6 }}>
+                  AI 다듬기 {useAi ? 'ON' : 'OFF'}
+                </button>
+              )}
               {pcbStatus === null && <button onClick={generatePCB} style={ghostBtn}><IconLayers size={12} /> PCB 생성</button>}
               {pcbStatus === 'loading' && <span style={{...ghostBtn, opacity:0.6, cursor:'default'}}>생성중…</span>}
               {pcbStatus === 'done' && pcbFilename && <>
@@ -615,7 +625,7 @@ export default function ResultPanel({
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
               : board
                 ? <BoardView parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
-                    final={board.final} drc={board.drc} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
+                    final={board.final} drc={board.drc} ai={board.ai} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>
                     <PCBLayout graph={effectiveGraph} />
                     <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '6px 10px', borderRadius: 6,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult,
+  BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound,
 } from '../types'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
@@ -38,6 +38,7 @@ interface Props {
   target: Box | null            // frame the placer aims for (from the init event)
   final: BoardModel | null      // board.json after "done"
   drc: DrcResult | null         // KiCad design rule check, run by the server after the board is written
+  ai?: AiRound[]                // AI improvement rounds (stage 4), empty when the toggle is off
   hpwlShelf?: number
   status: 'streaming' | 'done' | 'error'
 }
@@ -130,7 +131,7 @@ function Via({ v }: { v: BoardVia }) {
   )
 }
 
-export default function BoardView({ parts, frames, routes, target, final, drc, hpwlShelf, status }: Props) {
+export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], hpwlShelf, status }: Props) {
   const [playhead, setPlayhead] = useState(0)          // fractional frame index
   const [routeHead, setRouteHead] = useState(0)        // fractional routing-event index
   const [fit, setFit] = useState(0)                    // 0 = scatter view, 1 = fitted to the board
@@ -486,6 +487,35 @@ export default function BoardView({ parts, frames, routes, target, final, drc, h
               color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
             ↺ 다시 보기
           </button>
+        </div>
+      )}
+
+      {/* AI improvement rounds */}
+      {placed && ai.length > 0 && (
+        <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: 320, maxWidth: '48%',
+          borderRadius: 8, background: 'rgba(8, 26, 17, 0.88)', color: 'var(--sf-fg-inverse)',
+          fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
+          <div style={{ padding: '7px 10px', fontWeight: 700, color: '#b39ddb' }}>
+            AI 다듬기 · 채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {ai.map(r => {
+              const d = r.after ? r.after.hpwl - r.before.hpwl : 0
+              return (
+                <div key={r.round} style={{ padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.08)',
+                  color: r.kept ? '#5dc8a3' : 'var(--sf-fg-dim)' }}>
+                  <div>{r.round > 0 ? `${r.round}라운드` : ''} {r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'} — {r.reason}</div>
+                  {r.after && (
+                    <div style={{ opacity: 0.75 }}>
+                      선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
+                      비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
+                    </div>
+                  )}
+                  {r.note && <div style={{ opacity: 0.6 }}>{r.note}</div>}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
