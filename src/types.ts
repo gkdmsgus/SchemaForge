@@ -116,6 +116,32 @@ export interface ErcFinding {
   net: string | null
 }
 
+/** One round of the AI improvement loop (stage 4): the model proposes, the server judges. */
+export interface AiRound {
+  round: number
+  reason: string
+  actions: {
+    moves?: { ref: string; dx: number; dy: number }[]
+    rotations?: { ref: string; deg: number }[]
+    net_widths?: { net: string; mm: number }[]
+    stop?: boolean
+  }
+  before: AiMetrics
+  after?: AiMetrics
+  kept: boolean
+  note?: string
+}
+
+export interface AiMetrics {
+  drcErrors: number
+  unrouted: number
+  hpwl: number
+  vias: number
+  trackLength: number
+  overlaps: number
+  outside: number
+}
+
 /** Routing events in stream order: a connection routed, or a net ripped up to make room. */
 export type RouteEvent =
   | { type: 'route'; net: string; segments: BoardTrack[]; vias: BoardVia[] }

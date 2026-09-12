@@ -10,6 +10,10 @@ import { join, basename } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
+import {
+  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, metricsOf, readBoard, runGenerator,
+  type AiRound, type Metrics, type Overrides,
+} from './ai_layout'
 import { tavily } from '@tavily/core'
 import axios from 'axios'
 import { createClient } from '@supabase/supabase-js'
@@ -979,12 +983,79 @@ async function runDrc(pcbPath: string): Promise<DrcResult> {
   }
 }
 
+/**
+ * Stage 4: let the model improve the finished board, but keep a round only when the
+ * numbers improve. Returns the final done payload and DRC, or null if nothing was kept.
+ */
+async function runAiLoop(
+  netPath: string, pcbPath: string, style: PcbStyle,
+  doneEvent: Record<string, unknown>, drc: DrcResult,
+  emit: (r: AiRound) => void,
+): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
+  const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
+  try {
+    let board = readBoard(jsonPath)
+    let summary = (doneEvent.summary || {}) as Record<string, unknown>
+    let best = metricsOf(summary, drc.errors ?? 0)
+    let bestDrc = drc
+    let bestDone = doneEvent
+    const ov: Overrides = {
+      parts: Object.fromEntries(board.parts.map(p => [p.ref, [p.x, p.y, p.rot] as [number, number, number]])),
+      net_width: { ...((summary.net_width as Record<string, number>) || {}) },
+    }
+    const history: string[] = []
+    let kept = false
+
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      const drcTypes = (bestDrc.violations || []).map(v => v.type)
+      const edit = await askModel(describeBoard(board, best, drcTypes), history)
+      history.push(edit.reason || '')
+      if (edit.stop) {
+        emit({ round, reason: edit.reason || '더 고칠 것이 없습니다', actions: edit, before: best, kept: false, note: 'stop' })
+        break
+      }
+      const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
+      const notes = applyEdit(trial, edit, board)
+      const restore = backup([pcbPath, jsonPath])
+      let after: Metrics | undefined
+      let note = notes.join(', ')
+      try {
+        const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
+        const drc2 = await runDrc(pcbPath)
+        after = metricsOf(s2, drc2.errors ?? 0)
+        if (better(after, best)) {
+          best = after
+          bestDrc = drc2
+          bestDone = { ...doneEvent, summary: s2, board: readBoard(jsonPath) }
+          board = readBoard(jsonPath)
+          ov.parts = trial.parts
+          ov.net_width = trial.net_width
+          kept = true
+          emit({ round, reason: edit.reason || '', actions: edit, before: best, after, kept: true, note })
+          continue
+        }
+        note = note ? `${note} · 개선 없음` : '개선 없음'
+      } catch (e) {
+        note = `적용 실패: ${(e as Error).message}`
+      }
+      restore()                                   // put the previous board back
+      emit({ round, reason: edit.reason || '', actions: edit, before: best, after, kept: false, note })
+    }
+    return kept ? { done: bestDone, drc: bestDrc } : null
+  } catch (e) {
+    emit({ round: 0, reason: `AI 다듬기를 건너뜁니다: ${(e as Error).message}`, actions: {},
+           before: metricsOf((doneEvent.summary || {}) as Record<string, unknown>, drc.errors ?? 0), kept: false })
+    return null
+  }
+}
+
 // ── POST /generate_pcb_stream (SSE) ────────────────────────────────
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
 // Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
 
 app.post('/generate_pcb_stream', (req: Request, res: Response) => {
-  const { filename, graph, baseName, style } = req.body || {}
+  const { filename, graph, baseName, style, ai } = req.body || {}
+  const useAi = ai === true && (process.env.SF_AI_STUB === '1' || !!process.env.OPENAI_API_KEY)
   let netPath: string
   let pcbFilename: string
   if (graph) {
@@ -1036,10 +1107,21 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
           // KiCad checks the finished board; the generator itself stays KiCad-free.
           // The python process exits while DRC runs, so hold the close handler back.
           awaitingDrc = true
-          runDrc(pcbPath).then(drc => {
+          runDrc(pcbPath).then(async drc => {
             if (finished) return
             res.write(sse('drc', JSON.stringify(drc)))
-            end('done', { ...ev, pcbFilename, drc })
+            let final = ev as Record<string, unknown>
+            let lastDrc = drc
+            if (useAi) {
+              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc,
+                                          r => res.write(sse('ai', JSON.stringify(r))))
+              if (out) {
+                final = out.done
+                lastDrc = out.drc
+                res.write(sse('drc', JSON.stringify(lastDrc)))
+              }
+            }
+            end('done', { ...final, pcbFilename, drc: lastDrc })
           })
         } else res.write(sse(ev.type, line))
       } catch { /* not an event line */ }
