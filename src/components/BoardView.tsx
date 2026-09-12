@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent } from '../types'
+import type {
+  BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult,
+} from '../types'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -35,8 +37,17 @@ interface Props {
   routes: RouteEvent[]
   target: Box | null            // frame the placer aims for (from the init event)
   final: BoardModel | null      // board.json after "done"
+  drc: DrcResult | null         // KiCad design rule check, run by the server after the board is written
   hpwlShelf?: number
   status: 'streaming' | 'done' | 'error'
+}
+
+interface Finding {
+  id: string
+  source: 'DRC' | '회로'
+  severity: 'error' | 'warning'
+  text: string
+  pos?: { x: number; y: number }
 }
 
 function rotate(px: number, py: number, rot: number): [number, number] {
@@ -119,7 +130,7 @@ function Via({ v }: { v: BoardVia }) {
   )
 }
 
-export default function BoardView({ parts, frames, routes, target, final, hpwlShelf, status }: Props) {
+export default function BoardView({ parts, frames, routes, target, final, drc, hpwlShelf, status }: Props) {
   const [playhead, setPlayhead] = useState(0)          // fractional frame index
   const [routeHead, setRouteHead] = useState(0)        // fractional routing-event index
   const [fit, setFit] = useState(0)                    // 0 = scatter view, 1 = fitted to the board
@@ -127,6 +138,8 @@ export default function BoardView({ parts, frames, routes, target, final, hpwlSh
   const [show, setShow] = useState<Record<string, boolean>>({ 'F.Cu': true, 'B.Cu': true })
   const [zoom, setZoom] = useState(1)
   const [panXY, setPanXY] = useState<[number, number]>([0, 0])
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const [panelOpen, setPanelOpen] = useState(true)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const live = useRef({ frames: frames.length, routes: routes.length, fitted: false })
@@ -265,6 +278,43 @@ export default function BoardView({ parts, frames, routes, target, final, hpwlSh
     return Object.entries(pts).map(([net, list]) => ({ net, list, edges: mst(list) }))
   }, [poses, byRef, copper.routedCount, padCount])
 
+  // checks: KiCad DRC (from the server) + netlist checks (from the generator), in one list
+  const findings = useMemo((): Finding[] => {
+    const out: Finding[] = []
+    ;(drc?.violations || []).forEach((v, i) => {
+      const pos = v.items.find(it => it.pos)?.pos
+      out.push({ id: `drc${i}`, source: 'DRC', severity: v.severity === 'error' ? 'error' : 'warning',
+        text: v.description, pos })
+    })
+    const pos = (ref: string, pin: string) => {
+      const p = final?.parts.find(q => q.ref === ref)
+      const pd = p?.pads.find(q => q.num === pin)
+      if (!p || !pd) return undefined
+      const [dx, dy] = rotate(pd.x, pd.y, p.rot)
+      return { x: p.x + dx, y: p.y + dy }
+    }
+    ;(final?.erc || []).forEach((f, i) => {
+      out.push({ id: `erc${i}`, source: '회로', severity: f.severity, text: f.message,
+        pos: f.refs[0] ? pos(f.refs[0].ref, f.refs[0].pin) : undefined })
+    })
+    ;(final?.unrouted || []).forEach((u, i) => {
+      out.push({ id: `unr${i}`, source: '회로', severity: 'error',
+        text: `넷 '${u.net}'의 ${u.from} – ${u.to} 연결을 배선하지 못했습니다` })
+    })
+    return out
+  }, [drc, final])
+
+  const errorCount = findings.filter(f => f.severity === 'error').length
+  const warnCount = findings.length - errorCount
+
+  function focusOn(f: Finding) {
+    setFocusId(f.id)
+    if (!f.pos) return
+    // show roughly 14 mm around the spot, whatever the board size
+    setZoom(Math.min(6, Math.max(1, (base[2] - base[0]) / 14)))
+    setPanXY([f.pos.x - (base[0] + base[2]) / 2 + panXY[0], f.pos.y - (base[1] + base[3]) / 2 + panXY[1]])
+  }
+
   const cur = frames.length ? frames[Math.min(Math.round(playhead), frames.length - 1)] : null
   const hpwlFinal = final && frames.length ? frames[frames.length - 1].hpwl : null
   const saving = hpwlFinal != null && hpwlShelf ? Math.round((1 - hpwlFinal / hpwlShelf) * 100) : null
@@ -360,6 +410,27 @@ export default function BoardView({ parts, frames, routes, target, final, hpwlSh
         {drawTracks('F.Cu')}
         {copper.vias.map((v, k) => <Via key={k} v={v} />)}
 
+        {/* check markers */}
+        {findings.filter(f => f.pos).map(f => {
+          const on = focusId === f.id
+          const c = f.severity === 'error' ? '#ff5252' : '#ffb74d'
+          const r = on ? 1.6 : 1.1
+          return (
+            <g key={f.id} data-marker={f.severity} onClick={() => focusOn(f)} style={{ cursor: 'pointer' }}>
+              <circle cx={f.pos!.x} cy={f.pos!.y} r={r} fill="none" stroke={c} strokeWidth={0.18}>
+                {on && <animate attributeName="r" values={`${r};${r * 1.8};${r}`} dur="1s" repeatCount="indefinite" />}
+              </circle>
+              {f.severity === 'error' && (
+                <g stroke={c} strokeWidth={0.18}>
+                  <line x1={f.pos!.x - r * 0.6} y1={f.pos!.y - r * 0.6} x2={f.pos!.x + r * 0.6} y2={f.pos!.y + r * 0.6} />
+                  <line x1={f.pos!.x - r * 0.6} y1={f.pos!.y + r * 0.6} x2={f.pos!.x + r * 0.6} y2={f.pos!.y - r * 0.6} />
+                </g>
+              )}
+              <title>{f.text}</title>
+            </g>
+          )
+        })}
+
         {/* ratsnest of what is still to route */}
         {nets.map(({ net, list, edges }) => edges.map(([a, b], k) => (
           <line key={`${net}-${k}`} x1={list[a][0]} y1={list[a][1]} x2={list[b][0]} y2={list[b][1]}
@@ -415,6 +486,47 @@ export default function BoardView({ parts, frames, routes, target, final, hpwlSh
               color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
             ↺ 다시 보기
           </button>
+        </div>
+      )}
+
+      {/* checks: KiCad DRC + netlist checks */}
+      {placed && (drc || final?.erc) && (
+        <div data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
+          borderRadius: 8, background: 'rgba(8, 26, 17, 0.88)', color: 'var(--sf-fg-inverse)',
+          fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
+          <button onClick={() => setPanelOpen(o => !o)}
+            style={{ width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', cursor: 'pointer',
+              background: 'transparent', color: findings.length ? (errorCount ? '#ff8a80' : '#ffb74d') : '#5dc8a3',
+              fontFamily: 'inherit', fontSize: 11, fontWeight: 700 }}>
+            {drc && !drc.available
+              ? '검사 도구 없음 (KiCad 미설치)'
+              : findings.length === 0
+                ? '검사 통과 · 위반 0'
+                : `오류 ${errorCount} · 경고 ${warnCount}`}
+            <span style={{ float: 'right', opacity: 0.7 }}>{panelOpen ? '▾' : '▸'}</span>
+          </button>
+          {panelOpen && (
+            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+              {drc && !drc.available && (
+                <div style={{ padding: '6px 10px', opacity: 0.8 }}>{drc.reason} — 기판 파일은 정상 생성됐어요.</div>
+              )}
+              {drc?.available && (
+                <div style={{ padding: '4px 10px', opacity: 0.7 }}>
+                  KiCad 검사: 위반 {(drc.violations || []).length} · 미연결 {drc.unconnected}
+                </div>
+              )}
+              {findings.map(f => (
+                <button key={f.id} onClick={() => focusOn(f)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', cursor: 'pointer',
+                    border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', fontFamily: 'inherit', fontSize: 11,
+                    background: focusId === f.id ? 'rgba(255,255,255,0.10)' : 'transparent',
+                    color: f.severity === 'error' ? '#ff8a80' : '#ffb74d' }}>
+                  <span style={{ opacity: 0.6 }}>[{f.source}]</span> {f.text}
+                  {f.pos && <span style={{ opacity: 0.5 }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

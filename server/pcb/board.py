@@ -105,7 +105,8 @@ def parse_netlist(text):
     nets = []
     for net in find_all(find(root, 'nets') or [], 'net'):
         name = str(find(net, 'name')[1])
-        nodes = [{'ref': str(find(n, 'ref')[1]), 'pin': str(find(n, 'pin')[1])}
+        nodes = [{'ref': str(find(n, 'ref')[1]), 'pin': str(find(n, 'pin')[1]),
+                  'pintype': str(find(n, 'pintype')[1]) if find(n, 'pintype') else ''}
                  for n in find_all(net, 'node')]
         if nodes:
             nets.append({'name': name, 'nodes': nodes})
@@ -498,6 +499,11 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         from placer import force_place
         force_place(parts, nets, on_event=on_event)
 
+    import erc as erc_mod
+    findings = erc_mod.check(components, nets, parts)
+    if on_event:
+        on_event({'type': 'erc', 'findings': findings})
+
     box = outline(parts)
     routing = None
     if route:
@@ -505,6 +511,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         routing = run_router(parts, box, on_event=on_event)
     write_kicad_pcb(parts, box, pcb_path, routing)
     model = board_json(parts, nets, box, style, unmapped, warnings)
+    model['erc'] = findings
     if routing:
         model.update({'version': 3, 'tracks': routing['tracks'], 'vias': routing['vias'],
                       'unrouted': routing['unrouted']})
@@ -527,6 +534,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         'board': {'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
                   'w': round(box[2] - box[0], 2), 'h': round(box[3] - box[1], 2)},
         'boardJson': os.path.basename(json_path),
+        'erc': findings,
         **({'connections': routing['connections'], 'unrouted': routing['unrouted'],
             'tracks': len(routing['tracks']), 'vias': len(routing['vias']),
             'track_length': routing['track_length'], 'route_ms': routing['route_ms']}

@@ -15,7 +15,7 @@ import {
 } from './primitives.tsx'
 import type {
   GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary,
-  BoardPart, BoardFrame, BoardModel, RouteEvent,
+  BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult,
 } from '../types'
 import BoardView from './BoardView'
 
@@ -80,7 +80,7 @@ export default function ResultPanel({
   const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
   const [board, setBoard] = useState<{
     parts: BoardPart[]; frames: BoardFrame[]; routes: RouteEvent[]; target: [number, number, number, number] | null
-    final: BoardModel | null; status: 'streaming' | 'done' | 'error'
+    final: BoardModel | null; drc: DrcResult | null; status: 'streaming' | 'done' | 'error'
   } | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
@@ -136,7 +136,7 @@ export default function ResultPanel({
     if (!body) { setPcbStatus('error'); return }
 
     setPcbStatus('loading')
-    setBoard({ parts: [], frames: [], routes: [], target: null, final: null, status: 'streaming' })
+    setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, status: 'streaming' })
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
@@ -166,6 +166,7 @@ export default function ResultPanel({
           else if (ev === 'init') setBoard(b => b && { ...b, target: data.frame })
           else if (ev === 'frame') setBoard(b => b && { ...b, frames: [...b.frames, data] })
           else if (ev === 'route' || ev === 'rip') setBoard(b => b && { ...b, routes: [...b.routes, data] })
+          else if (ev === 'drc') setBoard(b => b && { ...b, drc: data })
           else if (ev === 'done') {
             setBoard(b => b && { ...b, final: data.board, status: 'done' })
             setPcbFilename(data.pcbFilename)
@@ -614,7 +615,7 @@ export default function ResultPanel({
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
               : board
                 ? <BoardView parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
-                    final={board.final} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
+                    final={board.final} drc={board.drc} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>
                     <PCBLayout graph={effectiveGraph} />
                     <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '6px 10px', borderRadius: 6,
