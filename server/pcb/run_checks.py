@@ -203,11 +203,35 @@ def check_one(name, style, work, cli):
     # 16. routing time
     res['16 route time'] = (summary['route_ms'] <= 10000, f"{summary['route_ms']} ms")
 
+    # ── stage 3: checks ──
+    # 17. a good circuit produces no netlist findings
+    res['17 erc clean'] = (not summary['erc'], str([f['rule'] for f in summary['erc']]))
+
+    # 18. the stream carries erc and drc-worthy data before done
+    try:
+        kinds2 = [e['type'] for e in events]
+        res['18 erc in stream'] = (kinds2.count('erc') == 1 and kinds2.index('erc') < kinds2.index('done'),
+                                   f"erc events={kinds2.count('erc')}")
+    except (NameError, ValueError):
+        res['18 erc in stream'] = (False, 'stream not parsed')
+
     return res, summary, unconn
 
 
 def _overlap(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def check_broken_circuit(work, cli):
+    """19. the netlist checks must catch a deliberately broken circuit (and only its faults)."""
+    net_path = build_netlist('broken_floating', work)
+    pcb = os.path.join(work, 'broken.kicad_pcb')
+    summary = generate(net_path, pcb, 'smd')
+    rules = {f['rule'] for f in summary['erc']}
+    refs = {(r['ref'], r['pin']) for f in summary['erc'] for r in f['refs']}
+    nets = {f['net'] for f in summary['erc'] if f['net']}
+    ok = (rules == {'floating_pin', 'single_pin_net'} and ('R2', '2') in refs and 'TEST' in nets)
+    return ok, f'rules={sorted(rules)} refs={sorted(refs)} nets={sorted(nets)}'
 
 
 def check_templates():
@@ -245,6 +269,11 @@ def main():
                 print(f'   {"ok  " if passed else "FAIL"} {k}  {info}')
             for w in summary['warnings']:
                 print(f'   warn {w}')
+    b_dir = os.path.join(work_root, 'broken')
+    os.makedirs(b_dir, exist_ok=True)
+    b_ok, b_info = check_broken_circuit(b_dir, cli)
+    all_ok &= b_ok
+    print(f'== broken circuit caught {"PASS" if b_ok else "FAIL"}  {b_info}')
     t_ok, t_info = check_templates()
     all_ok &= t_ok
     print(f'== templates {"PASS" if t_ok else "FAIL"}  {t_info}')

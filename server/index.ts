@@ -4,7 +4,7 @@ import cors from 'cors'
 import { spawn } from 'child_process'
 import {
   mkdirSync, existsSync, copyFileSync,
-  readdirSync, writeFileSync, readFileSync,
+  readdirSync, writeFileSync, readFileSync, unlinkSync,
 } from 'fs'
 import { join, basename } from 'path'
 import { tmpdir } from 'os'
@@ -920,7 +920,7 @@ app.post('/generate_pcb', async (req: Request, res: Response) => {
 
   try {
     const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, message: 'PCB layout generated successfully' })
+    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated successfully' })
   } catch (e) {
     res.status(500).json({ error: (e as Error).message })
   }
@@ -941,11 +941,43 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
   try {
     writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
     const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, message: 'PCB layout generated from edited graph' })
+    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated from edited graph' })
   } catch (e) {
     res.status(500).json({ error: (e as Error).message })
   }
 })
+
+interface DrcResult {
+  available: boolean
+  reason?: string
+  violations?: { type: string; severity: string; description: string; items: { description: string; pos?: { x: number; y: number } }[] }[]
+  unconnected?: number
+  errors?: number
+  warnings?: number
+}
+
+/** Run KiCad's design rule check on a finished board. Never throws. */
+async function runDrc(pcbPath: string): Promise<DrcResult> {
+  const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
+  try {
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--output', out, pcbPath], 'DRC')
+    const d = JSON.parse(readFileSync(out, 'utf8')) as {
+      violations: { severity: string }[]; unconnected_items: unknown[]
+    }
+    const violations = d.violations as DrcResult['violations']
+    return {
+      available: true,
+      violations,
+      unconnected: Array.isArray(d.unconnected_items) ? d.unconnected_items.length : 0,
+      errors: (violations || []).filter(v => v.severity === 'error').length,
+      warnings: (violations || []).filter(v => v.severity === 'warning').length,
+    }
+  } catch (e) {
+    return { available: false, reason: (e as Error).message }
+  } finally {
+    try { unlinkSync(out) } catch { /* nothing to clean up */ }
+  }
+}
 
 // ── POST /generate_pcb_stream (SSE) ────────────────────────────────
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
@@ -981,6 +1013,7 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
   let buf = ''
   let stderr = ''
   let finished = false
+  let awaitingDrc = false
   const end = (event: string, data: unknown) => {
     if (finished) return
     finished = true
@@ -999,14 +1032,23 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
       if (!line.trim() || finished) continue
       try {
         const ev = JSON.parse(line) as { type: string }
-        if (ev.type === 'done') end('done', { ...ev, pcbFilename })
-        else res.write(sse(ev.type, line))
+        if (ev.type === 'done') {
+          // KiCad checks the finished board; the generator itself stays KiCad-free.
+          // The python process exits while DRC runs, so hold the close handler back.
+          awaitingDrc = true
+          runDrc(pcbPath).then(drc => {
+            if (finished) return
+            res.write(sse('drc', JSON.stringify(drc)))
+            end('done', { ...ev, pcbFilename, drc })
+          })
+        } else res.write(sse(ev.type, line))
       } catch { /* not an event line */ }
     }
   })
   proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
   proc.on('error', (e: Error) => end('error', { error: e.message }))
   proc.on('close', (code: number | null) => {
+    if (awaitingDrc) return          // the done event is on its way out after DRC
     if (code !== 0) end('error', { error: stderr || 'PCB generation failed' })
     else end('error', { error: 'PCB generator ended without a result' })
   })

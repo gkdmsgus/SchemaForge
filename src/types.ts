@@ -90,6 +90,32 @@ export interface BoardVia {
   y: number
 }
 
+/** One KiCad DRC violation; items carry the position on the board (mm). */
+export interface DrcViolation {
+  type: string
+  severity: 'error' | 'warning' | string
+  description: string
+  items: { description: string; pos?: { x: number; y: number } }[]
+}
+
+export interface DrcResult {
+  available: boolean
+  reason?: string
+  violations?: DrcViolation[]
+  unconnected?: number
+  errors?: number
+  warnings?: number
+}
+
+/** One finding from the netlist checks (server/pcb/erc.py). */
+export interface ErcFinding {
+  rule: string
+  severity: 'error' | 'warning'
+  message: string
+  refs: { ref: string; pin: string }[]
+  net: string | null
+}
+
 /** Routing events in stream order: a connection routed, or a net ripped up to make room. */
 export type RouteEvent =
   | { type: 'route'; net: string; segments: BoardTrack[]; vias: BoardVia[] }
@@ -102,6 +128,7 @@ export interface BoardModel {
   tracks?: BoardTrack[]
   vias?: BoardVia[]
   unrouted?: { net: string; from: string; to: string }[]
+  erc?: ErcFinding[]
 }
 
 export interface GenerateResult {
