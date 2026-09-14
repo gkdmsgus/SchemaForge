@@ -1296,8 +1296,19 @@ app.get('/download_gerber_file/:dir/:filename', (req: Request, res: Response) =>
 
 // ── GET /health ────────────────────────────────────────────────────
 
+// Asked once at startup: a deploy without KiCad still serves boards, but gerbers
+// and DRC need kicad-cli, so the health check says which one this server is.
+let kicadVersion: string | null = null
+{
+  const proc = spawn(KICAD_CLI, ['version'])
+  let out = ''
+  proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
+  proc.on('error', () => { kicadVersion = null })
+  proc.on('close', (code: number | null) => { kicadVersion = code === 0 ? out.trim() || null : null })
+}
+
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL })
+  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion })
 })
 
 // ── SPA fallback ───────────────────────────────────────────────────
