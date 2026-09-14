@@ -1,0 +1,25 @@
+# Secrets never go into an image — set them as deploy variables instead.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Rebuilt inside the image
+node_modules
+**/node_modules
+dist
+
+# Local-only
+.git
+.claude
+.vscode
+.idea
+**/__pycache__
+server/outputs
+outputs
+*.log
+
+# Test circuit run artifacts
+server/test_circuits/*.net
+server/test_circuits/*.erc
+server/test_circuits/*_sklib.py
