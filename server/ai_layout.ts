@@ -28,7 +28,7 @@ export interface Metrics {
   outside: number
   /** Sum of decoupling-capacitor distances to the nearest IC pin on the same supply net (mm). */
   decap: number
-  /** Power nets feeding a relay, motor or regulator whose narrowest track is under HEAVY_POWER_WIDTH_MM. */
+  /** Nets carrying relay / motor / regulator / driver current (supply, ground and the path between) with a track under HEAVY_POWER_WIDTH_MM. */
   powerWidth: number
 }
 
@@ -172,34 +172,43 @@ function conductingPads(p: BoardPart): BoardPart['pads'] | null {
   return null
 }
 
-export interface HeavyNet { net: string; parts: string[]; width: number | null }
+/** False for a transistor whose control pin is unknown: its pads may include the gate, so nets reached
+ *  through it are trusted only when they are power nets. */
+const rolesKnown = (p: BoardPart) => !/^Q\d/i.test(p.ref) || (CONTROL_PIN[p.part] !== undefined && !!p.pad_pins)
+
+/** power: a supply or ground net on the load path. path: a signal-named net the load current runs through (MOT_LOW, SENSE). */
+export interface HeavyNet { net: string; kind: 'power' | 'path'; parts: string[]; width: number | null }
 
 /**
- * Power nets that carry a relay, motor, regulator or driver's current, and the narrowest track currently on
- * each (null = no tracks). From every non-power net of a heavy part the current path is followed through
- * series elements — transistor channels (not gates or bases), current-sense shunts, inductors, fuses — for up
- * to MAX_PATH_HOPS steps, and the power nets it reaches are included. Labels show the path, e.g. "Q1 > R2 for J2".
+ * Nets that carry a relay, motor, regulator or driver's current, and the narrowest track currently on each
+ * (null = no tracks). From every non-power net of a heavy part the current path is followed through series
+ * elements — transistor channels (not gates or bases), current-sense shunts, inductors, fuses — for up to
+ * MAX_PATH_HOPS steps. The power nets it reaches are "power"; the nets in between, and a net joining two heavy
+ * parts (a driver output to a motor connector), are "path". Labels show the path, e.g. "Q1 > R2 for J2".
  */
 export function heavyPowerNets(board: BoardJson): HeavyNet[] {
-  const byNet = new Map<string, Set<string>>()
-  const add = (net: string, label: string) => {
-    if (!byNet.has(net)) byNet.set(net, new Set())
-    byNet.get(net)!.add(label)
+  const byNet = new Map<string, { kind: 'power' | 'path'; labels: Set<string> }>()
+  const add = (net: string, label: string, kind: 'power' | 'path' = isPowerNet(net) ? 'power' : 'path') => {
+    if (!byNet.has(net)) byNet.set(net, { kind, labels: new Set() })
+    byNet.get(net)!.labels.add(label)
   }
+  const onNet = (net: string, pred: (p: BoardPart) => boolean) => board.parts.some(p => pred(p) && p.pads.some(pd => pd.net === net))
   for (const src of board.parts) {
     if (!HEAVY_PART(src)) continue
     const driver = DRIVER_IC.test(`${src.part} ${src.value}`)
     const seen = new Set<string>()
-    let frontier: { net: string; path: string[] }[] = []
+    let frontier: { net: string; path: string[]; sure: boolean }[] = []
     for (const pad of src.pads) {
       if (!pad.net || seen.has(pad.net)) continue
       seen.add(pad.net)
-      if (isPowerNet(pad.net) || (driver && DRIVER_SUPPLY.test(pad.net))) add(pad.net, src.ref)
-      else frontier.push({ net: pad.net, path: [] })
+      if (isPowerNet(pad.net) || (driver && DRIVER_SUPPLY.test(pad.net))) { add(pad.net, src.ref, 'power'); continue }
+      const conducts = onNet(pad.net, p => p.ref !== src.ref && !!conductingPads(p))
+      if (conducts || onNet(pad.net, p => p.ref !== src.ref && HEAVY_PART(p))) add(pad.net, src.ref, 'path')
+      frontier.push({ net: pad.net, path: [], sure: true })
     }
     for (let hop = 0; hop < MAX_PATH_HOPS && frontier.length; hop++) {
       const next: typeof frontier = []
-      for (const { net, path } of frontier) {
+      for (const { net, path, sure } of frontier) {
         for (const el of board.parts) {
           if (el.ref === src.ref) continue
           const pads = conductingPads(el)
@@ -208,17 +217,18 @@ export function heavyPowerNets(board: BoardJson): HeavyNet[] {
             if (!pd.net || pd.net === net || seen.has(pd.net)) continue
             seen.add(pd.net)
             const via = [...path, el.ref]
-            if (isPowerNet(pd.net)) add(pd.net, `${via.join(' > ')} for ${src.ref}`)
-            else next.push({ net: pd.net, path: via })
+            const certain = sure && rolesKnown(el)
+            if (isPowerNet(pd.net) || certain) add(pd.net, `${via.join(' > ')} for ${src.ref}`)
+            if (!isPowerNet(pd.net)) next.push({ net: pd.net, path: via, sure: certain })
           }
         }
       }
       frontier = next
     }
   }
-  return [...byNet].map(([net, parts]) => {
+  return [...byNet].map(([net, { kind, labels }]) => {
     const widths = (board.tracks || []).filter(t => t.net === net).map(t => t.width)
-    return { net, parts: [...parts], width: widths.length ? Math.min(...widths) : null }
+    return { net, kind, parts: [...labels], width: widths.length ? Math.min(...widths) : null }
   })
 }
 
@@ -335,10 +345,10 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
         decap.map(d => `${d.cap} on ${d.net}: ${d.dist.toFixed(1)} mm to ${d.ic} pin ${d.pin}`).join('\n')
       : 'Decoupling capacitors: none found',
     heavy.length
-      ? `Power nets feeding a relay, motor or regulator (recommended track width >= ${HEAVY_POWER_WIDTH_MM} mm):\n` +
-        heavy.map(h => `${h.net} (${h.parts.join(', ')}): narrowest track ${h.width === null ? 'none' : `${h.width} mm`}`).join('\n')
-      : 'Power nets feeding a relay, motor or regulator: none',
-    `Metrics: decoupling distance total ${m.decap.toFixed(1)} mm, heavy power nets below ${HEAVY_POWER_WIDTH_MM} mm ${m.powerWidth}, HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
+      ? `Nets carrying load current from a relay, motor, regulator or driver (recommended track width >= ${HEAVY_POWER_WIDTH_MM} mm):\n` +
+        heavy.map(h => `${h.net} [${h.kind}] (${h.parts.join(', ')}): narrowest track ${h.width === null ? 'none' : `${h.width} mm`}`).join('\n')
+      : 'Nets carrying load current: none',
+    `Metrics: decoupling distance total ${m.decap.toFixed(1)} mm, load-current nets below ${HEAVY_POWER_WIDTH_MM} mm ${m.powerWidth}, HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
       `unrouted ${m.unrouted}, DRC errors ${m.drcErrors}${drcTypes.length ? ` (${drcTypes.join(', ')})` : ''}`,
     board.erc?.length ? `Circuit findings: ${board.erc.map(f => f.message).join(' / ')}` : 'Circuit findings: none',
   ].join('\n')
@@ -346,7 +356,7 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
 
 function metricLine(m: Metrics): string {
   return `DRC errors ${m.drcErrors}, unrouted ${m.unrouted}, overlaps ${m.overlaps}, outside ${m.outside}, ` +
-    `decoupling ${(m.decap ?? 0).toFixed(1)} mm, narrow heavy power nets ${m.powerWidth ?? 0}, ` +
+    `decoupling ${(m.decap ?? 0).toFixed(1)} mm, narrow load-current nets ${m.powerWidth ?? 0}, ` +
     `HPWL ${m.hpwl.toFixed(1)} mm, vias ${m.vias}, track length ${m.trackLength.toFixed(1)} mm`
 }
 
@@ -372,9 +382,10 @@ Rules you follow:
   next to that IC's supply pin.
 - Connectors (J*) and batteries (BT*) belong on the board edge; do not pull them inward.
 - Power nets (GND, VCC, +5V, VIN...) carry current: 0.5 mm is the default, widen to 0.8-1.0 mm when a
-  motor, relay or regulator is on the net. Never widen a signal net above 0.4 mm.
-  The listed "power nets feeding a relay, motor or regulator" are scored: widening one to 0.8 mm or more
-  counts as an improvement when DRC, routing and overlaps stay clean.
+  motor, relay or regulator is on the net. Never widen a signal net above 0.4 mm — except the nets listed as
+  carrying load current: a [path] net (e.g. MOT_LOW, SENSE) carries the same current as its supply.
+  Every listed load-current net is scored: widening one to 0.8 mm or more counts as an improvement when DRC,
+  routing and overlaps stay clean.
 - Keep every part inside the board outline. Moves are in millimetres and should be small (under 6 mm).
 - Each part lists its keep-out box (courtyard + silkscreen + reference text) and the gap to its nearest
   neighbour. A moved part's keep-out box must not overlap any other; leave at least 0.5 mm. The box moves
