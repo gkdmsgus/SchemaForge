@@ -62,10 +62,14 @@ def check_loop(port):
     board = json.load(open(os.path.join(SERVER, 'outputs', 'ai_check.board.json'), encoding='utf-8'))
 
     res = {}
+    # A bad move is rolled back either after rerouting (numbers got worse) or before it,
+    # by the courtyard/outline precheck (note says so, no `after`).
+    bad = [r for r in rounds if not r['kept'] and not r['actions'].get('stop')]
     res['21 bad round rolled back'] = (
-        any(not r['kept'] and r.get('after') and r['after']['hpwl'] > r['before']['hpwl'] for r in rounds)
+        any((r.get('after') and r['after']['hpwl'] > r['before']['hpwl']) or '사전 검사' in (r.get('note') or '')
+            for r in bad)
         and max(p['x'] for p in board['parts']) < board['outline'][2],
-        f'rounds kept={[r["kept"] for r in rounds]}')
+        f'rounds kept={[r["kept"] for r in rounds]} notes={[r.get("note") for r in bad]}')
     gnd = {t['width'] for t in board['tracks'] if t['net'] == 'GND'}
     res['22 good round kept'] = (
         any(r['kept'] for r in rounds) and gnd == {0.8} and done['summary']['net_width'].get('GND') == 0.8,

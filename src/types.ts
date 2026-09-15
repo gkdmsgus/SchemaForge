@@ -140,6 +140,8 @@ export interface AiMetrics {
   trackLength: number
   overlaps: number
   outside: number
+  /** decoupling-capacitor distance to the IC supply pin, summed (mm) */
+  decap?: number
 }
 
 /** Routing events in stream order: a connection routed, or a net ripped up to make room. */

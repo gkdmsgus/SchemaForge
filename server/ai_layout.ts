@@ -26,6 +26,8 @@ export interface Metrics {
   trackLength: number
   overlaps: number
   outside: number
+  /** Sum of decoupling-capacitor distances to the nearest IC pin on the same supply net (mm). */
+  decap: number
 }
 
 export interface BoardEdit {
@@ -51,31 +53,48 @@ export interface Overrides {
   net_width: Record<string, number>
 }
 
+type Box = [number, number, number, number]
+
+interface BoardPart {
+  ref: string; value: string; part: string; x: number; y: number; rot: number
+  pads: { num: string; net: string | null }[]
+  courtyard?: Box
+  /** courtyard + silkscreen + reference text: what the generator's overlap check uses */
+  keepout?: Box
+  pads_abs?: { num: string; x: number; y: number; net: string | null }[]
+}
+
 interface BoardJson {
-  parts: { ref: string; value: string; part: string; x: number; y: number; rot: number
-    pads: { num: string; net: string | null }[] }[]
+  parts: BoardPart[]
   nets: string[]
   outline: [number, number, number, number]
   unrouted?: unknown[]
   erc?: { severity: string; message: string }[]
 }
 
-/** Lower is better, compared field by field in this order. */
-export function score(m: Metrics): number[] {
-  return [m.drcErrors, m.unrouted, m.overlaps, m.outside,
-          Math.round(m.hpwl * 100), m.vias, Math.round(m.trackLength * 100)]
-}
+/** A decoupling change smaller than this is treated as no change, so it cannot buy a longer route. */
+export const DECAP_STEP_MM = 1.0
 
+/**
+ * Lower is better, compared in order: DRC errors, unrouted, overlaps, outside, then decoupling
+ * distance (only when it moves by DECAP_STEP_MM or more), then HPWL, vias, track length.
+ * Decoupling goes ahead of wire length because the rule it measures (cap right at the IC supply
+ * pin) is worth a slightly longer route — but not for a fraction of a millimetre.
+ */
 export function better(a: Metrics, b: Metrics): boolean {
-  const x = score(a), y = score(b)
-  for (let i = 0; i < x.length; i++) {
-    if (x[i] !== y[i]) return x[i] < y[i]
-  }
-  return false
+  const hard = (m: Metrics) => [m.drcErrors, m.unrouted, m.overlaps, m.outside]
+  const soft = (m: Metrics) => [Math.round(m.hpwl * 100), m.vias, Math.round(m.trackLength * 100)]
+  const cmp = (x: number[], y: number[]) => { for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? 1 : -1; return 0 }
+  const h = cmp(hard(a), hard(b))
+  if (h) return h > 0
+  const d = (a.decap ?? 0) - (b.decap ?? 0)
+  if (Math.abs(d) >= DECAP_STEP_MM - 1e-9) return d < 0
+  return cmp(soft(a), soft(b)) > 0
 }
 
-export function metricsOf(summary: Record<string, unknown>, drcErrors: number): Metrics {
+export function metricsOf(summary: Record<string, unknown>, drcErrors: number, board?: BoardJson): Metrics {
   return {
+    decap: board ? Math.round(decouplingPairs(board).reduce((a, d) => a + d.dist, 0) * 100) / 100 : 0,
     drcErrors,
     unrouted: (summary.unrouted as unknown[] | undefined)?.length ?? 0,
     hpwl: (summary.hpwl as number) ?? 0,
@@ -86,20 +105,121 @@ export function metricsOf(summary: Record<string, unknown>, drcErrors: number): 
   }
 }
 
-/** What the model sees: refs with positions, nets with pin counts, and the current numbers. */
+const GND_NET = /^(GND|VSS|AGND|DGND|PGND)$/i
+const SUPPLY_NET = /^(VCC|VDD|VIN|VBAT|VBUS|VPP|V\+|3V3|\+?\d+(\.\d+)?V\d*)$/i
+
+/** Gap between two boxes in mm (0 when they touch or overlap). */
+export function boxGap(a: Box, b: Box): number {
+  const dx = Math.max(0, Math.max(a[0], b[0]) - Math.min(a[2], b[2]))
+  const dy = Math.max(0, Math.max(a[1], b[1]) - Math.min(a[3], b[3]))
+  return Math.hypot(dx, dy)
+}
+
+export function boxesOverlap(a: Box, b: Box): boolean {
+  return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+export interface DecapPair { cap: string; net: string; ic: string; pin: string; dist: number }
+
+/** Two-pad capacitors between a supply net and ground, and how far each sits from the nearest IC pin on that supply. */
+export function decouplingPairs(board: BoardJson): DecapPair[] {
+  const out: DecapPair[] = []
+  for (const c of board.parts) {
+    if (!/^C\d/i.test(c.ref) || !c.pads_abs || c.pads_abs.length !== 2) continue
+    const supply = c.pads_abs.find(p => p.net && SUPPLY_NET.test(p.net))
+    const ground = c.pads_abs.find(p => p.net && GND_NET.test(p.net))
+    if (!supply || !ground) continue
+    let best: DecapPair | null = null
+    for (const u of board.parts) {
+      if (!/^U\d/i.test(u.ref)) continue
+      for (const p of u.pads_abs || []) {
+        if (p.net !== supply.net) continue
+        const dist = Math.hypot(p.x - supply.x, p.y - supply.y)
+        if (!best || dist < best.dist) best = { cap: c.ref, net: supply.net as string, ic: u.ref, pin: p.num, dist }
+      }
+    }
+    if (best) out.push({ ...best, dist: Math.round(best.dist * 100) / 100 })
+  }
+  return out
+}
+
+/** The box neighbours must stay out of — the same one pcb/board.py `overlaps()` uses. */
+const areaOf = (p: BoardPart): Box | undefined => p.keepout ?? p.courtyard
+
+/** Keep-out box a part would have at (x, y) with rotation rot, turning its current box about its origin. */
+function movedArea(p: BoardPart, x: number, y: number, rot: number): Box | null {
+  const area = areaOf(p)
+  if (!area) return null
+  const [x1, y1, x2, y2] = area
+  const turn = (((rot - p.rot) % 360) + 360) % 360
+  const corners = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([cx, cy]) => {
+    let rx = cx - p.x, ry = cy - p.y
+    for (let t = 0; t < turn; t += 90) [rx, ry] = [ry, -rx]   // 90-degree steps only
+    return [x + rx, y + ry]
+  })
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1])
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
+/**
+ * Cheap geometric check before the reroute: would a moved or rotated part's keep-out box overlap
+ * another one or leave the board? Returns readable problems (empty = go ahead).
+ */
+export function precheck(board: BoardJson, ov: Overrides): string[] {
+  const boxes = new Map<string, Box>()
+  const changed = new Set<string>()
+  for (const p of board.parts) {
+    const pose = ov.parts[p.ref]
+    const moved = !!pose && (Math.abs(pose[0] - p.x) > 1e-6 || Math.abs(pose[1] - p.y) > 1e-6 || pose[2] !== p.rot)
+    const box = moved ? movedArea(p, pose[0], pose[1], pose[2]) : areaOf(p)
+    if (box) boxes.set(p.ref, box)
+    if (moved) changed.add(p.ref)
+  }
+  const problems: string[] = []
+  const [bx1, by1, bx2, by2] = board.outline
+  for (const ref of changed) {
+    const a = boxes.get(ref)
+    if (!a) continue
+    for (const [other, b] of boxes) {
+      if (other !== ref && boxesOverlap(a, b)) problems.push(`${ref} would overlap ${other}`)
+    }
+    if (a[0] < bx1 || a[1] < by1 || a[2] > bx2 || a[3] > by2) problems.push(`${ref} would leave the board outline`)
+  }
+  return problems
+}
+
+/** What the model sees: parts with keep-out box and nearest neighbour, nets, decoupling distances and the current numbers. */
 export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]): string {
   const netPins: Record<string, number> = {}
   board.parts.forEach(p => p.pads.forEach(pd => { if (pd.net) netPins[pd.net] = (netPins[pd.net] || 0) + 1 }))
   const parts = board.parts
-    .map(p => `${p.ref}(${p.value || p.part}) at ${p.x.toFixed(1)},${p.y.toFixed(1)} rot ${p.rot}`)
+    .map(p => {
+      let line = `${p.ref}(${p.value || p.part}) at ${p.x.toFixed(1)},${p.y.toFixed(1)} rot ${p.rot}`
+      const cy = areaOf(p)
+      if (cy) {
+        line += `, keep-out ${cy[0].toFixed(1)},${cy[1].toFixed(1)} to ${cy[2].toFixed(1)},${cy[3].toFixed(1)}` +
+          ` (${(cy[2] - cy[0]).toFixed(1)} x ${(cy[3] - cy[1]).toFixed(1)} mm)`
+        const near = board.parts
+          .filter(o => o.ref !== p.ref && areaOf(o))
+          .map(o => ({ ref: o.ref, gap: boxGap(cy, areaOf(o) as Box) }))
+          .sort((a, b) => a.gap - b.gap)[0]
+        if (near) line += `, nearest ${near.ref} gap ${near.gap.toFixed(1)} mm`
+      }
+      return line
+    })
     .join('\n')
+  const decap = decouplingPairs(board)
   const nets = Object.entries(netPins).map(([n, c]) => `${n}: ${c} pins`).join(', ')
   const [x1, y1, x2, y2] = board.outline
   return [
     `Board outline: ${x1.toFixed(1)},${y1.toFixed(1)} to ${x2.toFixed(1)},${y2.toFixed(1)} mm`,
     `Parts:\n${parts}`,
     `Nets: ${nets}`,
-    `Metrics: HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
+    decap.length
+      ? `Decoupling capacitors (distance from the cap's supply pad to the nearest IC pin on that net):\n` +
+        decap.map(d => `${d.cap} on ${d.net}: ${d.dist.toFixed(1)} mm to ${d.ic} pin ${d.pin}`).join('\n')
+      : 'Decoupling capacitors: none found',
+    `Metrics: decoupling distance total ${m.decap.toFixed(1)} mm, HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
       `unrouted ${m.unrouted}, DRC errors ${m.drcErrors}${drcTypes.length ? ` (${drcTypes.join(', ')})` : ''}`,
     board.erc?.length ? `Circuit findings: ${board.erc.map(f => f.message).join(' / ')}` : 'Circuit findings: none',
   ].join('\n')
@@ -107,16 +227,17 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
 
 function metricLine(m: Metrics): string {
   return `DRC errors ${m.drcErrors}, unrouted ${m.unrouted}, overlaps ${m.overlaps}, outside ${m.outside}, ` +
+    `decoupling ${(m.decap ?? 0).toFixed(1)} mm, ` +
     `HPWL ${m.hpwl.toFixed(1)} mm, vias ${m.vias}, track length ${m.trackLength.toFixed(1)} mm`
 }
 
 /** One line per finished round, so the next proposal knows what was kept and what was rolled back. */
 export function describeOutcome(round: number, edit: BoardEdit, before: Metrics, after: Metrics | undefined,
-                                kept: boolean): string {
+                                kept: boolean, why?: string): string {
   const change = JSON.stringify({ moves: edit.moves, rotations: edit.rotations, net_widths: edit.net_widths })
   const result = after
     ? `${kept ? 'KEPT' : 'ROLLED BACK (the board got worse or did not improve)'}. before: ${metricLine(before)}; after: ${metricLine(after)}`
-    : 'ROLLED BACK (the change could not be applied or checked)'
+    : `ROLLED BACK (${why || 'the change could not be applied or checked'})`
   return `Round ${round} proposal ${change} -> ${result}`
 }
 
@@ -134,6 +255,12 @@ Rules you follow:
 - Power nets (GND, VCC, +5V, VIN...) carry current: 0.5 mm is the default, widen to 0.8-1.0 mm when a
   motor, relay or regulator is on the net. Never widen a signal net above 0.4 mm.
 - Keep every part inside the board outline. Moves are in millimetres and should be small (under 6 mm).
+- Each part lists its keep-out box (courtyard + silkscreen + reference text) and the gap to its nearest
+  neighbour. A moved part's keep-out box must not overlap any other; leave at least 0.5 mm. The box moves
+  with the part by the same dx, dy. Check the target spot against every nearby box first.
+- The decoupling distance is scored: bringing a decoupling capacitor at least 1 mm closer to its IC supply pin
+  counts as an improvement even if the route gets a little longer, as long as nothing overlaps and routing still
+  completes. A smaller gain is judged on wire length and vias instead, so do not trade those for a few tenths.
 - Change at most 3 things per round; a smaller, well-argued change is better than a big guess.
 - If the board already follows these rules, set stop: true instead of inventing work.
 - You are told what happened to your earlier proposals. Never repeat a change that was rolled back;
