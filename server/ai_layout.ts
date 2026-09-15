@@ -28,6 +28,8 @@ export interface Metrics {
   outside: number
   /** Sum of decoupling-capacitor distances to the nearest IC pin on the same supply net (mm). */
   decap: number
+  /** Power nets feeding a relay, motor or regulator whose narrowest track is under HEAVY_POWER_WIDTH_MM. */
+  powerWidth: number
 }
 
 export interface BoardEdit {
@@ -70,6 +72,7 @@ interface BoardJson {
   outline: [number, number, number, number]
   unrouted?: unknown[]
   erc?: { severity: string; message: string }[]
+  tracks?: { net: string; width: number }[]
 }
 
 /** A decoupling change smaller than this is treated as no change, so it cannot buy a longer route. */
@@ -77,7 +80,8 @@ export const DECAP_STEP_MM = 1.0
 
 /**
  * Lower is better, compared in order: DRC errors, unrouted, overlaps, outside, then decoupling
- * distance (only when it moves by DECAP_STEP_MM or more), then HPWL, vias, track length.
+ * distance (only when it moves by DECAP_STEP_MM or more), then narrow heavy power nets, then HPWL,
+ * vias, track length.
  * Decoupling goes ahead of wire length because the rule it measures (cap right at the IC supply
  * pin) is worth a slightly longer route — but not for a fraction of a millimetre.
  */
@@ -89,12 +93,15 @@ export function better(a: Metrics, b: Metrics): boolean {
   if (h) return h > 0
   const d = (a.decap ?? 0) - (b.decap ?? 0)
   if (Math.abs(d) >= DECAP_STEP_MM - 1e-9) return d < 0
+  const w = (a.powerWidth ?? 0) - (b.powerWidth ?? 0)
+  if (w) return w < 0
   return cmp(soft(a), soft(b)) > 0
 }
 
 export function metricsOf(summary: Record<string, unknown>, drcErrors: number, board?: BoardJson): Metrics {
   return {
     decap: board ? Math.round(decouplingPairs(board).reduce((a, d) => a + d.dist, 0) * 100) / 100 : 0,
+    powerWidth: board ? heavyPowerNets(board).filter(n => n.width !== null && n.width < HEAVY_POWER_WIDTH_MM - 1e-9).length : 0,
     drcErrors,
     unrouted: (summary.unrouted as unknown[] | undefined)?.length ?? 0,
     hpwl: (summary.hpwl as number) ?? 0,
@@ -107,6 +114,39 @@ export function metricsOf(summary: Record<string, unknown>, drcErrors: number, b
 
 const GND_NET = /^(GND|VSS|AGND|DGND|PGND)$/i
 const SUPPLY_NET = /^(VCC|VDD|VIN|VBAT|VBUS|VPP|V\+|3V3|\+?\d+(\.\d+)?V\d*)$/i
+
+/** Recommended minimum track width on a power net that feeds a relay, motor or regulator (mm). */
+export const HEAVY_POWER_WIDTH_MM = 0.8
+
+/** Same test as pcb/router.py is_power(), so "power net" means what the router widens by default. */
+export function isPowerNet(net: string): boolean {
+  const n = net.toUpperCase()
+  return ['GND', 'VCC', 'VDD', 'VIN', 'VBAT', 'VEE', 'VSS', '+', 'PWR'].some(h => n.includes(h)) || /^\d+V\d*$/.test(n)
+}
+
+/** Parts that draw real current: relays (K), motors (M), and regulators recognised by name. */
+const HEAVY_PART = (p: BoardPart) =>
+  /^(K|M)\d/i.test(p.ref) ||
+  /REG|LDO|^78\d\d|^79\d\d|LM317|AMS1117|LM2596|MP1584/i.test(`${p.part} ${p.value}`)
+
+export interface HeavyNet { net: string; parts: string[]; width: number | null }
+
+/** Power nets with a relay, motor or regulator on them, and the narrowest track currently on each (null = no tracks). */
+export function heavyPowerNets(board: BoardJson): HeavyNet[] {
+  const byNet = new Map<string, Set<string>>()
+  for (const p of board.parts) {
+    if (!HEAVY_PART(p)) continue
+    for (const pad of p.pads) {
+      if (!pad.net || !isPowerNet(pad.net)) continue
+      if (!byNet.has(pad.net)) byNet.set(pad.net, new Set())
+      byNet.get(pad.net)!.add(p.ref)
+    }
+  }
+  return [...byNet].map(([net, parts]) => {
+    const widths = (board.tracks || []).filter(t => t.net === net).map(t => t.width)
+    return { net, parts: [...parts], width: widths.length ? Math.min(...widths) : null }
+  })
+}
 
 /** Gap between two boxes in mm (0 when they touch or overlap). */
 export function boxGap(a: Box, b: Box): number {
@@ -209,6 +249,7 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
     })
     .join('\n')
   const decap = decouplingPairs(board)
+  const heavy = heavyPowerNets(board)
   const nets = Object.entries(netPins).map(([n, c]) => `${n}: ${c} pins`).join(', ')
   const [x1, y1, x2, y2] = board.outline
   return [
@@ -219,7 +260,11 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
       ? `Decoupling capacitors (distance from the cap's supply pad to the nearest IC pin on that net):\n` +
         decap.map(d => `${d.cap} on ${d.net}: ${d.dist.toFixed(1)} mm to ${d.ic} pin ${d.pin}`).join('\n')
       : 'Decoupling capacitors: none found',
-    `Metrics: decoupling distance total ${m.decap.toFixed(1)} mm, HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
+    heavy.length
+      ? `Power nets feeding a relay, motor or regulator (recommended track width >= ${HEAVY_POWER_WIDTH_MM} mm):\n` +
+        heavy.map(h => `${h.net} (${h.parts.join(', ')}): narrowest track ${h.width === null ? 'none' : `${h.width} mm`}`).join('\n')
+      : 'Power nets feeding a relay, motor or regulator: none',
+    `Metrics: decoupling distance total ${m.decap.toFixed(1)} mm, heavy power nets below ${HEAVY_POWER_WIDTH_MM} mm ${m.powerWidth}, HPWL ${m.hpwl.toFixed(1)} mm, track length ${m.trackLength.toFixed(1)} mm, vias ${m.vias}, ` +
       `unrouted ${m.unrouted}, DRC errors ${m.drcErrors}${drcTypes.length ? ` (${drcTypes.join(', ')})` : ''}`,
     board.erc?.length ? `Circuit findings: ${board.erc.map(f => f.message).join(' / ')}` : 'Circuit findings: none',
   ].join('\n')
@@ -227,7 +272,7 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
 
 function metricLine(m: Metrics): string {
   return `DRC errors ${m.drcErrors}, unrouted ${m.unrouted}, overlaps ${m.overlaps}, outside ${m.outside}, ` +
-    `decoupling ${(m.decap ?? 0).toFixed(1)} mm, ` +
+    `decoupling ${(m.decap ?? 0).toFixed(1)} mm, narrow heavy power nets ${m.powerWidth ?? 0}, ` +
     `HPWL ${m.hpwl.toFixed(1)} mm, vias ${m.vias}, track length ${m.trackLength.toFixed(1)} mm`
 }
 
@@ -254,6 +299,8 @@ Rules you follow:
 - Connectors (J*) and batteries (BT*) belong on the board edge; do not pull them inward.
 - Power nets (GND, VCC, +5V, VIN...) carry current: 0.5 mm is the default, widen to 0.8-1.0 mm when a
   motor, relay or regulator is on the net. Never widen a signal net above 0.4 mm.
+  The listed "power nets feeding a relay, motor or regulator" are scored: widening one to 0.8 mm or more
+  counts as an improvement when DRC, routing and overlaps stay clean.
 - Keep every part inside the board outline. Moves are in millimetres and should be small (under 6 mm).
 - Each part lists its keep-out box (courtyard + silkscreen + reference text) and the gap to its nearest
   neighbour. A moved part's keep-out box must not overlap any other; leave at least 0.5 mm. The box moves

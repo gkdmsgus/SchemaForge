@@ -142,6 +142,8 @@ export interface AiMetrics {
   outside: number
   /** decoupling-capacitor distance to the IC supply pin, summed (mm) */
   decap?: number
+  /** power nets feeding a relay/motor/regulator with a track under 0.8 mm */
+  powerWidth?: number
 }
 
 /** Routing events in stream order: a connection routed, or a net ripped up to make room. */
