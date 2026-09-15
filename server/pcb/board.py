@@ -290,7 +290,7 @@ def build_board(components, nets, style='smd'):
         if assumed and value and assumed.upper() not in value.upper():
             warnings.append(f'{ref} ({value}): wired with the {assumed} pinout for {style.upper()}')
 
-        pad_net = {}
+        pad_net, pad_pin = {}, {}
         for (r, pin), net in node_net.items():
             if r != ref or not pin.isdigit():
                 continue
@@ -299,9 +299,10 @@ def build_board(components, nets, style='smd'):
                 warnings.append(f'{ref} pin {pin} has no pad in {fp_id}')
                 continue
             pad_net[pad] = net
+            pad_pin[pad] = int(pin)
 
         parts.append({'ref': ref, 'value': value, 'part': part, 'footprint': fp_id,
-                      'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': pad_net,
+                      'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': pad_net, 'pad_pin': pad_pin,
                       'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
                       'pads': local_pads(fp, pad_net), 'x': 0.0, 'y': 0.0, 'rot': 0})
 
@@ -492,6 +493,8 @@ def board_json(parts, nets, box, style, unmapped, warnings):
         d.update({'x': round(p['x'], 4), 'y': round(p['y'], 4), 'rot': p['rot'] % 360,
                   'courtyard': [round(v, 4) for v in cb],
                   'keepout': [round(v, 4) for v in part_keepout(p)],
+                  # symbol pin number per footprint pad, so later steps can tell a gate from a drain
+                  'pad_pins': {pad: pin for pad, pin in p.get('pad_pin', {}).items()},
                   'pads_abs': [{'num': n, 'x': round(px, 4), 'y': round(py, 4), 'net': net}
                                for n, px, py, net in pad_positions(p)]})
         out_parts.append(d)
