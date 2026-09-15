@@ -131,15 +131,27 @@ const HEAVY_PART = (p: BoardPart) =>
 
 export interface HeavyNet { net: string; parts: string[]; width: number | null }
 
-/** Power nets with a relay, motor or regulator on them, and the narrowest track currently on each (null = no tracks). */
+/**
+ * Power nets that carry a relay, motor or regulator's current — the ones the part sits on, plus the
+ * power net of a transistor switching it — and the narrowest track currently on each (null = no tracks).
+ */
 export function heavyPowerNets(board: BoardJson): HeavyNet[] {
   const byNet = new Map<string, Set<string>>()
+  const add = (net: string, label: string) => {
+    if (!byNet.has(net)) byNet.set(net, new Set())
+    byNet.get(net)!.add(label)
+  }
   for (const p of board.parts) {
     if (!HEAVY_PART(p)) continue
     for (const pad of p.pads) {
-      if (!pad.net || !isPowerNet(pad.net)) continue
-      if (!byNet.has(pad.net)) byNet.set(pad.net, new Set())
-      byNet.get(pad.net)!.add(p.ref)
+      if (!pad.net) continue
+      if (isPowerNet(pad.net)) { add(pad.net, p.ref); continue }
+      // The load current also returns through the switch that drives it: a transistor (Q*) on one of
+      // the heavy part's other nets (e.g. the relay's COIL_LOW) carries it to its own power net (GND).
+      for (const q of board.parts) {
+        if (!/^Q\d/i.test(q.ref) || !q.pads.some(qp => qp.net === pad.net)) continue
+        for (const qp of q.pads) if (qp.net && isPowerNet(qp.net)) add(qp.net, `${q.ref} for ${p.ref}`)
+      }
     }
   }
   return [...byNet].map(([net, parts]) => {
