@@ -12,7 +12,10 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
 
-export const AI_MODEL = 'gpt-4o-mini'
+// SF_AI_MODEL picks another model (e.g. behind an OpenAI-compatible gateway set with OPENAI_BASE_URL).
+// SF_AI_JSON=1 is for gateways that drop `tools`: the model answers with the same object as plain JSON.
+export const AI_MODEL = process.env.SF_AI_MODEL || 'gpt-4o-mini'
+const JSON_MODE = process.env.SF_AI_JSON === '1'
 export const MAX_ROUNDS = 3
 
 export interface Metrics {
@@ -102,6 +105,25 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
   ].join('\n')
 }
 
+function metricLine(m: Metrics): string {
+  return `DRC errors ${m.drcErrors}, unrouted ${m.unrouted}, overlaps ${m.overlaps}, outside ${m.outside}, ` +
+    `HPWL ${m.hpwl.toFixed(1)} mm, vias ${m.vias}, track length ${m.trackLength.toFixed(1)} mm`
+}
+
+/** One line per finished round, so the next proposal knows what was kept and what was rolled back. */
+export function describeOutcome(round: number, edit: BoardEdit, before: Metrics, after: Metrics | undefined,
+                                kept: boolean): string {
+  const change = JSON.stringify({ moves: edit.moves, rotations: edit.rotations, net_widths: edit.net_widths })
+  const result = after
+    ? `${kept ? 'KEPT' : 'ROLLED BACK (the board got worse or did not improve)'}. before: ${metricLine(before)}; after: ${metricLine(after)}`
+    : 'ROLLED BACK (the change could not be applied or checked)'
+  return `Round ${round} proposal ${change} -> ${result}`
+}
+
+export function roundFeedback(lines: string[]): string {
+  return lines.length ? `\n\nEarlier rounds (the board above already reflects only the KEPT ones):\n${lines.join('\n')}` : ''
+}
+
 const SYSTEM = `You improve an already placed and routed two-layer PCB. You do not change the circuit —
 only part positions, part rotations and track widths.
 
@@ -114,6 +136,8 @@ Rules you follow:
 - Keep every part inside the board outline. Moves are in millimetres and should be small (under 6 mm).
 - Change at most 3 things per round; a smaller, well-argued change is better than a big guess.
 - If the board already follows these rules, set stop: true instead of inventing work.
+- You are told what happened to your earlier proposals. Never repeat a change that was rolled back;
+  if a move broke routing or caused overlaps, try a smaller or different move, or stop.
 
 Answer in Korean in the "reason" field, one sentence, saying what you change and why.
 Always call the edit_board function.`
@@ -168,6 +192,7 @@ export function stubEdit(round: number): BoardEdit {
 export async function askModel(prompt: string, history: string[]): Promise<BoardEdit> {
   if (process.env.SF_AI_STUB === '1') return stubEdit(history.length + 1)
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  if (JSON_MODE) return askModelJson(openai, prompt, history)
   const res = await openai.chat.completions.create({
     model: AI_MODEL,
     temperature: 0.2,
@@ -182,6 +207,27 @@ export async function askModel(prompt: string, history: string[]): Promise<Board
   const call = res.choices[0]?.message?.tool_calls?.[0]
   if (!call || call.type !== 'function') throw new Error('model returned no edit')
   return JSON.parse(call.function.arguments) as BoardEdit
+}
+
+/** Same question without `tools`: the schema goes into the prompt and the reply is parsed as JSON. */
+async function askModelJson(openai: OpenAI, prompt: string, history: string[]): Promise<BoardEdit> {
+  const system = SYSTEM.replace('Always call the edit_board function.',
+    'Reply with ONLY one JSON object, no prose and no code fence, matching this JSON schema:\n' +
+    JSON.stringify(TOOL.function.parameters))
+  const res = await openai.chat.completions.create({
+    model: AI_MODEL,
+    messages: [
+      { role: 'system', content: system },
+      ...history.map(h => ({ role: 'assistant' as const, content: h })),
+      { role: 'user', content: prompt },
+    ],
+  })
+  const text = res.choices[0]?.message?.content || ''
+  const start = text.indexOf('{'), end = text.lastIndexOf('}')
+  if (start < 0 || end <= start) throw new Error('model returned no JSON edit')
+  const edit = JSON.parse(text.slice(start, end + 1)) as BoardEdit
+  if (typeof edit.reason !== 'string') throw new Error('model JSON edit has no reason')
+  return edit
 }
 
 /** Apply an edit to the overrides, clamped to the board outline. */

@@ -11,7 +11,8 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
 import {
-  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, metricsOf, readBoard, runGenerator,
+  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, readBoard,
+  roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { tavily } from '@tavily/core'
@@ -954,6 +955,7 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
 interface DrcResult {
   available: boolean
   reason?: string
+  seconds?: number
   violations?: { type: string; severity: string; description: string; items: { description: string; pos?: { x: number; y: number } }[] }[]
   unconnected?: number
   errors?: number
@@ -963,21 +965,25 @@ interface DrcResult {
 /** Run KiCad's design rule check on a finished board. Never throws. */
 async function runDrc(pcbPath: string): Promise<DrcResult> {
   const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
+  const t0 = Date.now()
+  const seconds = () => Math.round((Date.now() - t0) / 100) / 10
   try {
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--output', out, pcbPath], 'DRC')
+    // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--output', out, pcbPath], 'DRC', 90000)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
     const violations = d.violations as DrcResult['violations']
     return {
       available: true,
+      seconds: seconds(),
       violations,
       unconnected: Array.isArray(d.unconnected_items) ? d.unconnected_items.length : 0,
       errors: (violations || []).filter(v => v.severity === 'error').length,
       warnings: (violations || []).filter(v => v.severity === 'warning').length,
     }
   } catch (e) {
-    return { available: false, reason: (e as Error).message }
+    return { available: false, reason: (e as Error).message, seconds: seconds() }
   } finally {
     try { unlinkSync(out) } catch { /* nothing to clean up */ }
   }
@@ -994,6 +1000,9 @@ async function runAiLoop(
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
   try {
+    // Every round is judged on DRC errors, so an unavailable DRC must not read as "0 errors".
+    if (!drc.available) drc = await runDrc(pcbPath)
+    if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
     let summary = (doneEvent.summary || {}) as Record<string, unknown>
     let best = metricsOf(summary, drc.errors ?? 0)
@@ -1004,12 +1013,13 @@ async function runAiLoop(
       net_width: { ...((summary.net_width as Record<string, number>) || {}) },
     }
     const history: string[] = []
+    const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
     let kept = false
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
-      const edit = await askModel(describeBoard(board, best, drcTypes), history)
-      history.push(edit.reason || '')
+      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history)
+      history.push(JSON.stringify(edit))
       if (edit.stop) {
         emit({ round, reason: edit.reason || '더 고칠 것이 없습니다', actions: edit, before: best, kept: false, note: 'stop' })
         break
@@ -1022,8 +1032,10 @@ async function runAiLoop(
       try {
         const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
         const drc2 = await runDrc(pcbPath)
+        if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
         after = metricsOf(s2, drc2.errors ?? 0)
         if (better(after, best)) {
+          const before = best
           best = after
           bestDrc = drc2
           bestDone = { ...doneEvent, summary: s2, board: readBoard(jsonPath) }
@@ -1031,7 +1043,8 @@ async function runAiLoop(
           ov.parts = trial.parts
           ov.net_width = trial.net_width
           kept = true
-          emit({ round, reason: edit.reason || '', actions: edit, before: best, after, kept: true, note })
+          feedback.push(describeOutcome(round, edit, before, after, true))
+          emit({ round, reason: edit.reason || '', actions: edit, before, after, kept: true, note })
           continue
         }
         note = note ? `${note} · 개선 없음` : '개선 없음'
@@ -1039,6 +1052,7 @@ async function runAiLoop(
         note = `적용 실패: ${(e as Error).message}`
       }
       restore()                                   // put the previous board back
+      feedback.push(describeOutcome(round, edit, best, after, false))
       emit({ round, reason: edit.reason || '', actions: edit, before: best, after, kept: false, note })
     }
     return kept ? { done: bestDone, drc: bestDrc } : null
@@ -1092,7 +1106,7 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
     res.write(sse(event, JSON.stringify(data)))
     res.end()
   }
-  const timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
+  let timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
   res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); proc.kill() } })
 
   proc.stdout.on('data', (d: Buffer) => {
@@ -1107,6 +1121,10 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
           // KiCad checks the finished board; the generator itself stays KiCad-free.
           // The python process exits while DRC runs, so hold the close handler back.
           awaitingDrc = true
+          // The 60 s budget is for generation. DRC and the AI loop (up to MAX_ROUNDS model calls,
+          // each followed by a reroute and DRC) get their own, longer budget.
+          clearTimeout(timer)
+          timer = setTimeout(() => end('error', { error: 'DRC / AI loop timed out' }), useAi ? 420000 : 120000)
           runDrc(pcbPath).then(async drc => {
             if (finished) return
             res.write(sse('drc', JSON.stringify(drc)))
@@ -1244,12 +1262,13 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
 const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
 
-function runKicadCli(args: string[], label: string): Promise<void> {
+function runKicadCli(args: string[], label: string, timeoutMs = 30000): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(KICAD_CLI, args)
     let stderr = ''
+    proc.stdout.on('data', () => { /* drain so a chatty kicad-cli never blocks on a full pipe */ })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error(`${label} timed out`)) }, 30000)
+    const timer = setTimeout(() => { proc.kill(); reject(new Error(`${label} timed out`)) }, timeoutMs)
     // Without this handler a missing kicad-cli crashes the whole server.
     proc.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
