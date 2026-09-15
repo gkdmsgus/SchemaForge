@@ -11,8 +11,8 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
 import {
-  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, readBoard,
-  roundFeedback, runGenerator,
+  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, precheck,
+  readBoard, roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { tavily } from '@tavily/core'
@@ -1005,7 +1005,7 @@ async function runAiLoop(
     if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
     let summary = (doneEvent.summary || {}) as Record<string, unknown>
-    let best = metricsOf(summary, drc.errors ?? 0)
+    let best = metricsOf(summary, drc.errors ?? 0, board)
     let bestDrc = drc
     let bestDone = doneEvent
     const ov: Overrides = {
@@ -1026,6 +1026,15 @@ async function runAiLoop(
       }
       const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
       const notes = applyEdit(trial, edit, board)
+      // Reject collisions before paying for a reroute and DRC, and tell the model exactly what hit what.
+      const problems = precheck(board, trial)
+      if (problems.length) {
+        const why = `rejected before routing: ${problems.join('; ')}`
+        feedback.push(describeOutcome(round, edit, best, undefined, false, why))
+        emit({ round, reason: edit.reason || '', actions: edit, before: best, kept: false,
+               note: [...notes, `사전 검사 불합격: ${problems.join(', ')}`].join(', ') })
+        continue
+      }
       const restore = backup([pcbPath, jsonPath])
       let after: Metrics | undefined
       let note = notes.join(', ')
@@ -1033,7 +1042,7 @@ async function runAiLoop(
         const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
         const drc2 = await runDrc(pcbPath)
         if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
-        after = metricsOf(s2, drc2.errors ?? 0)
+        after = metricsOf(s2, drc2.errors ?? 0, readBoard(jsonPath))
         if (better(after, best)) {
           const before = best
           best = after

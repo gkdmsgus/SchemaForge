@@ -576,6 +576,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                     <div style={{ opacity: 0.75 }}>
                       선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
                       비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
+                      {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
+                        <> · 디커플링 {r.before.decap.toFixed(1)}→{r.after.decap.toFixed(1)} mm</>}
                     </div>
                   )}
                   {r.note && <div style={{ opacity: 0.6 }}>{r.note}</div>}
