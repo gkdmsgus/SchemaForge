@@ -1,11 +1,11 @@
-// Stage-4 checks 25-29: what the model is told and how a proposal is judged, without a model or server.
+// Stage-4 checks 25-32: what the model is told and how a proposal is judged, without a model or server.
 // Uses the NE555 board from test_circuits (generated into a temp dir).
 // Usage (from server/): npx tsx check_ai_layout.ts   — exit 0 only if all pass
 import { execFileSync } from 'child_process'
 import { copyFileSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { better, decouplingPairs, describeBoard, metricsOf, precheck, type Overrides } from './ai_layout'
+import { better, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, precheck, type Overrides } from './ai_layout'
 
 const work = mkdtempSync(join(tmpdir(), 'sf_ailayout_'))
 copyFileSync(join('test_circuits', 'ne555_blink.py'), join(work, 'ne555_blink.py'))
@@ -99,6 +99,35 @@ if (c3) {
   check('30 precheck = generator overlaps', agree,
     rows.map(r => `${r.move}:${r.generator ? 'G' : '-'}${r.precheck ? 'P' : '-'}`).join(' '))
 }
+
+// 31-32. heavy power nets: the relay board's +5V (K1) is found at the router's default 0.5 mm, widening it
+//        to 0.8 mm clears the count, and that change alone is judged an improvement. NE555 has none.
+copyFileSync(join('test_circuits', 'npn_relay.py'), join(work, 'npn_relay.py'))
+execFileSync('python', ['npn_relay.py'], { cwd: work })
+const relayPy = `
+import json, sys
+sys.path.insert(0, 'pcb')
+from board import generate
+net, work = sys.argv[1], sys.argv[2]
+a = generate(net, work + '/r1.kicad_pcb', 'smd')
+ja = json.load(open(work + '/r1.board.json', encoding='utf-8'))
+ov = {'parts': {p['ref']: [p['x'], p['y'], p['rot']] for p in ja['parts']}, 'net_width': {'+5V': 0.8}}
+b = generate(net, work + '/r2.kicad_pcb', 'smd', placer='fixed', overrides=ov)
+print(json.dumps([a, b], default=str))
+`
+const [sa, sb] = JSON.parse(execFileSync('python', ['-c', relayPy, join(work, 'npn_relay.net'), work], { cwd: process.cwd() })
+  .toString().trim().split('\n').pop()!)
+const r1 = JSON.parse(readFileSync(join(work, 'r1.board.json'), 'utf8'))
+const r2 = JSON.parse(readFileSync(join(work, 'r2.board.json'), 'utf8'))
+const heavy1 = heavyPowerNets(r1), heavy2 = heavyPowerNets(r2)
+const m1 = metricsOf(sa, 0, r1), m2 = metricsOf(sb, 0, r2)
+const plus5 = heavy1.find(h => h.net === '+5V')
+check('31 relay +5V found and scored', !!plus5 && plus5.parts.includes('K1') && plus5.width === 0.5 && m1.powerWidth >= 1,
+  heavy1.map(h => `${h.net}(${h.parts}) ${h.width} mm`).join(', ') + ` -> powerWidth ${m1.powerWidth}`)
+check('32 widening kept, NE555 has none', m2.powerWidth === m1.powerWidth - 1 && m2.unrouted === 0 && better(m2, m1)
+  && heavyPowerNets(board).length === 0 && metricsOf({}, 0, board).powerWidth === 0,
+  heavy2.map(h => `${h.net} ${h.width} mm`).join(', ') + ` -> powerWidth ${m2.powerWidth}; unrouted ${m1.unrouted}->${m2.unrouted}; ` +
+  `better=${better(m2, m1)}; ne555 heavy=${heavyPowerNets(board).length}`)
 
 console.log(ok ? 'ALL PASS' : 'SOME CHECKS FAILED')
 process.exit(ok ? 0 : 1)

@@ -578,6 +578,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                       비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
                       {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
                         <> · 디커플링 {r.before.decap.toFixed(1)}→{r.after.decap.toFixed(1)} mm</>}
+                      {r.before.powerWidth != null && r.after.powerWidth != null && (r.before.powerWidth > 0 || r.after.powerWidth > 0) &&
+                        <> · 좁은 전원선 {r.before.powerWidth}→{r.after.powerWidth}</>}
                     </div>
                   )}
                   {r.note && <div style={{ opacity: 0.6 }}>{r.note}</div>}
