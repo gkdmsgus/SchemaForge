@@ -15,7 +15,7 @@ from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
 
-CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay']
+CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor']
 STYLES = ['smd', 'tht']
 # (part, skidl pin that must sit on KiCad pad "1") — polarity checks
 POLARITY = {'LED': '2', 'D': '2', 'CP': '1', 'Battery': '1', 'Buzzer': '1'}

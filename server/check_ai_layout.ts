@@ -1,11 +1,11 @@
-// Stage-4 checks 25-33: what the model is told and how a proposal is judged, without a model or server.
+// Stage-4 checks 25-37: what the model is told and how a proposal is judged, without a model or server.
 // Uses the NE555 board from test_circuits (generated into a temp dir).
 // Usage (from server/): npx tsx check_ai_layout.ts   — exit 0 only if all pass
 import { execFileSync } from 'child_process'
 import { copyFileSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { better, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, precheck, type Overrides } from './ai_layout'
+import { better, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, parseOhms, precheck, type Overrides } from './ai_layout'
 
 const work = mkdtempSync(join(tmpdir(), 'sf_ailayout_'))
 copyFileSync(join('test_circuits', 'ne555_blink.py'), join(work, 'ne555_blink.py'))
@@ -142,6 +142,71 @@ try {
   drcInfo = `errors ${errors.length}, unconnected ${(d.unconnected_items || []).length}`
 } catch (e) { drcInfo = String(e).slice(0, 120) }
 check('33 widened relay board passes DRC', drcOk, drcInfo)
+
+// 34-37. multi-step current paths on the MOSFET motor board (test_circuits/nmos_motor.py):
+//        +12V -> J2 MOTOR -> MOT_LOW -> Q1 drain-source -> SENSE -> R2 0.1 ohm -> GND.
+copyFileSync(join('test_circuits', 'nmos_motor.py'), join(work, 'nmos_motor.py'))
+execFileSync('python', ['nmos_motor.py'], { cwd: work })
+const motorPy = `
+import json, sys
+sys.path.insert(0, 'pcb')
+from board import generate
+net, work = sys.argv[1], sys.argv[2]
+a = generate(net, work + '/m1.kicad_pcb', 'smd')
+ja = json.load(open(work + '/m1.board.json', encoding='utf-8'))
+pos = {p['ref']: [p['x'], p['y'], p['rot']] for p in ja['parts']}
+b = generate(net, work + '/m2.kicad_pcb', 'smd', placer='fixed', overrides={'parts': pos, 'net_width': {'+12V': 0.8, 'GND': 0.8}})
+print(json.dumps([a, b], default=str))
+`
+const [ma, mb] = JSON.parse(execFileSync('python', ['-c', motorPy, join(work, 'nmos_motor.net'), work], { cwd: process.cwd() })
+  .toString().trim().split('\n').pop()!)
+const mot1 = rb('m1'), mot2 = rb('m2')
+const mh = heavyPowerNets(mot1)
+const mm1 = metricsOf(ma, 0, mot1), mm2 = metricsOf(mb, 0, mot2)
+const label = (net: string) => mh.find(h => h.net === net)?.parts.join('; ') || ''
+check('34 motor path through Q1 channel and shunt', label('+12V').includes('J2') && label('GND').includes('Q1 > R2 for J2')
+  && !mh.some(h => ['PWM', 'GATE', 'SENSE', 'MOT_LOW'].includes(h.net)) && mm1.powerWidth === 2 && !!mot1.parts[0].pad_pins,
+  mh.map(h => `${h.net}(${h.parts.join('; ')}) ${h.width} mm`).join(', ') + ` -> powerWidth ${mm1.powerWidth}`)
+
+// 35. what must NOT count: a 10 ohm R2 is not a shunt (path stops, GND only via the 10k gate pull-down which
+//     is not followed), and without pad_pins (older boards) the gate is not trusted but the result is the same
+const clone = () => JSON.parse(JSON.stringify(mot1))
+const noShunt = clone(); noShunt.parts.find((p: { ref: string }) => p.ref === 'R2').value = '10'
+const noPins = clone(); noPins.parts.forEach((p: { pad_pins?: unknown }) => { delete p.pad_pins })
+const hNoShunt = heavyPowerNets(noShunt).map(h => h.net), hNoPins = heavyPowerNets(noPins).map(h => h.net)
+check('35 decoys ignored', !hNoShunt.includes('GND') && hNoShunt.includes('+12V') && hNoPins.includes('GND')
+  && parseOhms('0.1') === 0.1 && parseOhms('R10') === 0.1 && parseOhms('0R1') === 0.1 && parseOhms('100m') === 0.1
+  && parseOhms('10k') === 10000 && Number.isNaN(parseOhms('100nF')),
+  `R2=10 ohm -> [${hNoShunt}]; no pad_pins -> [${hNoPins}]; parseOhms ok`)
+
+// 36. widening both clears the count, is judged better, and the board passes KiCad DRC
+let motorDrc = 'not run'
+let motorDrcOk = false
+try {
+  execFileSync(kicad, ['pcb', 'drc', '--format', 'json', '--severity-all', '--output', join(work, 'm2.drc.json'), join(work, 'm2.kicad_pcb')])
+  const d = JSON.parse(readFileSync(join(work, 'm2.drc.json'), 'utf8'))
+  const errors = (d.violations || []).filter((v: { severity: string }) => v.severity === 'error')
+  motorDrcOk = errors.length === 0 && (d.unconnected_items || []).length === 0
+  motorDrc = `errors ${errors.length}, unconnected ${(d.unconnected_items || []).length}`
+} catch (e) { motorDrc = String(e).slice(0, 120) }
+check('36 motor widening kept, DRC clean', mm2.powerWidth === 0 && mm2.unrouted === 0 && better(mm2, mm1) && motorDrcOk,
+  `powerWidth ${mm1.powerWidth} -> ${mm2.powerWidth}, unrouted ${mm2.unrouted}, DRC ${motorDrc}`)
+
+// 37. driver IC by name (no footprint for one yet, so a synthetic board): DRV8833 motor supply VM and GND count,
+//     the outputs to the motor connector do not
+const drv = {
+  outline: [0, 0, 30, 30], nets: ['VM', 'GND', 'AOUT1', 'AOUT2', 'AIN1'],
+  parts: [
+    { ref: 'U1', value: 'DRV8833', part: 'DRV8833', x: 10, y: 10, rot: 0,
+      pads: [{ num: '1', net: 'VM' }, { num: '2', net: 'GND' }, { num: '3', net: 'AOUT1' }, { num: '4', net: 'AOUT2' }, { num: '5', net: 'AIN1' }] },
+    { ref: 'J1', value: 'MOTOR_A', part: 'Conn_01x02', x: 20, y: 10, rot: 0, pads: [{ num: '1', net: 'AOUT1' }, { num: '2', net: 'AOUT2' }] },
+  ],
+  tracks: [{ net: 'VM', width: 0.5 }, { net: 'GND', width: 0.8 }, { net: 'AOUT1', width: 0.25 }],
+}
+const hd = heavyPowerNets(drv as never)
+check('37 driver IC supply', hd.some(h => h.net === 'VM' && h.parts.includes('U1')) && hd.some(h => h.net === 'GND')
+  && !hd.some(h => h.net.startsWith('AOUT') || h.net === 'AIN1') && metricsOf({}, 0, drv as never).powerWidth === 1,
+  hd.map(h => `${h.net}(${h.parts.join('; ')}) ${h.width} mm`).join(', '))
 
 console.log(ok ? 'ALL PASS' : 'SOME CHECKS FAILED')
 process.exit(ok ? 0 : 1)

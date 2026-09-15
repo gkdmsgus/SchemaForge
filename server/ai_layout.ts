@@ -64,6 +64,8 @@ interface BoardPart {
   /** courtyard + silkscreen + reference text: what the generator's overlap check uses */
   keepout?: Box
   pads_abs?: { num: string; x: number; y: number; net: string | null }[]
+  /** footprint pad -> symbol pin number (boards generated after 2026-09-15) */
+  pad_pins?: Record<string, number>
 }
 
 interface BoardJson {
@@ -124,16 +126,59 @@ export function isPowerNet(net: string): boolean {
   return ['GND', 'VCC', 'VDD', 'VIN', 'VBAT', 'VEE', 'VSS', '+', 'PWR'].some(h => n.includes(h)) || /^\d+V\d*$/.test(n)
 }
 
-/** Parts that draw real current: relays (K), motors (M), and regulators recognised by name. */
+/** Motor / load driver ICs by name: their supply pins carry the load current. */
+const DRIVER_IC = /L298|L293|DRV8\d{2,3}|TB6612|TB67|ULN2[08]0[34]|A49\d\d|BTS79\d\d|VNH\d|MX1508|TMC2\d{3}|IRF\d|BTN79/i
+/** Driver supply pins that the router's power test does not catch (motor supply is often VM / VMOT / VS / VBB). */
+const DRIVER_SUPPLY = /^(VM|VMOT|VMOTOR|VS|VBB|VIN|VCC|VDD|VBAT|PGND|GND)$/i
+
+/** Parts that draw real current: relays (K), motors (M), regulators and driver ICs by name, load connectors by value. */
 const HEAVY_PART = (p: BoardPart) =>
   /^(K|M)\d/i.test(p.ref) ||
-  /REG|LDO|^78\d\d|^79\d\d|LM317|AMS1117|LM2596|MP1584/i.test(`${p.part} ${p.value}`)
+  /REG|LDO|^78\d\d|^79\d\d|LM317|AMS1117|LM2596|MP1584/i.test(`${p.part} ${p.value}`) ||
+  DRIVER_IC.test(`${p.part} ${p.value}`) ||
+  (/^J\d/i.test(p.ref) && /MOTOR|\bMOT\b|FAN|PUMP|SOLENOID|HEATER|LOAD/i.test(p.value || ''))
+
+/** Resistance in ohms from a value like 0.1, 100m, R10, 0R1, 10mR, 2.2k — NaN when it is not a resistance. */
+export function parseOhms(value: string): number {
+  const v = (value || '').trim().replace(/Ω|ohms?/gi, '')
+  let m = v.match(/^(\d*)R(\d+)$/i)                          // 0R1, R10
+  if (m) return Number(`${m[1] || '0'}.${m[2]}`)
+  m = v.match(/^(\d+(?:\.\d+)?)\s*([mkM]?)R?$/)
+  if (!m) return NaN
+  const mult = m[2] === 'm' ? 1e-3 : m[2] === 'k' ? 1e3 : m[2] === 'M' ? 1e6 : 1
+  return Number(m[1]) * mult
+}
+
+/** Symbol pin that controls a transistor (base / gate); current does not flow through it. */
+const CONTROL_PIN: Record<string, number> = { Q_NPN: 1, Q_PNP: 1, Q_NMOS: 1, Q_PMOS: 1 }
+/** A series resistor at or below this is treated as a current-sense shunt that carries the load current. */
+export const SHUNT_MAX_OHMS = 1
+/** How many series elements (switches, shunts, inductors, fuses) a current path may pass through. */
+export const MAX_PATH_HOPS = 4
+
+/**
+ * Pads of a part through which load current flows, or null when the part does not pass load current
+ * (gate resistors, pull-ups, LEDs, diodes...). Transistors conduct between their non-control pins.
+ */
+function conductingPads(p: BoardPart): BoardPart['pads'] | null {
+  if (/^Q\d/i.test(p.ref)) {
+    const ctrl = CONTROL_PIN[p.part]
+    const pins = p.pad_pins
+    if (ctrl === undefined || !pins) return p.pads            // unknown transistor or old board: every pad
+    return p.pads.filter(pd => pins[pd.num] !== ctrl)
+  }
+  if (/^R\d/i.test(p.ref) && parseOhms(p.value) <= SHUNT_MAX_OHMS) return p.pads
+  if (/^(L|F)\d/i.test(p.ref)) return p.pads
+  return null
+}
 
 export interface HeavyNet { net: string; parts: string[]; width: number | null }
 
 /**
- * Power nets that carry a relay, motor or regulator's current — the ones the part sits on, plus the
- * power net of a transistor switching it — and the narrowest track currently on each (null = no tracks).
+ * Power nets that carry a relay, motor, regulator or driver's current, and the narrowest track currently on
+ * each (null = no tracks). From every non-power net of a heavy part the current path is followed through
+ * series elements — transistor channels (not gates or bases), current-sense shunts, inductors, fuses — for up
+ * to MAX_PATH_HOPS steps, and the power nets it reaches are included. Labels show the path, e.g. "Q1 > R2 for J2".
  */
 export function heavyPowerNets(board: BoardJson): HeavyNet[] {
   const byNet = new Map<string, Set<string>>()
@@ -141,17 +186,34 @@ export function heavyPowerNets(board: BoardJson): HeavyNet[] {
     if (!byNet.has(net)) byNet.set(net, new Set())
     byNet.get(net)!.add(label)
   }
-  for (const p of board.parts) {
-    if (!HEAVY_PART(p)) continue
-    for (const pad of p.pads) {
-      if (!pad.net) continue
-      if (isPowerNet(pad.net)) { add(pad.net, p.ref); continue }
-      // The load current also returns through the switch that drives it: a transistor (Q*) on one of
-      // the heavy part's other nets (e.g. the relay's COIL_LOW) carries it to its own power net (GND).
-      for (const q of board.parts) {
-        if (!/^Q\d/i.test(q.ref) || !q.pads.some(qp => qp.net === pad.net)) continue
-        for (const qp of q.pads) if (qp.net && isPowerNet(qp.net)) add(qp.net, `${q.ref} for ${p.ref}`)
+  for (const src of board.parts) {
+    if (!HEAVY_PART(src)) continue
+    const driver = DRIVER_IC.test(`${src.part} ${src.value}`)
+    const seen = new Set<string>()
+    let frontier: { net: string; path: string[] }[] = []
+    for (const pad of src.pads) {
+      if (!pad.net || seen.has(pad.net)) continue
+      seen.add(pad.net)
+      if (isPowerNet(pad.net) || (driver && DRIVER_SUPPLY.test(pad.net))) add(pad.net, src.ref)
+      else frontier.push({ net: pad.net, path: [] })
+    }
+    for (let hop = 0; hop < MAX_PATH_HOPS && frontier.length; hop++) {
+      const next: typeof frontier = []
+      for (const { net, path } of frontier) {
+        for (const el of board.parts) {
+          if (el.ref === src.ref) continue
+          const pads = conductingPads(el)
+          if (!pads || !pads.some(pd => pd.net === net)) continue
+          for (const pd of pads) {
+            if (!pd.net || pd.net === net || seen.has(pd.net)) continue
+            seen.add(pd.net)
+            const via = [...path, el.ref]
+            if (isPowerNet(pd.net)) add(pd.net, `${via.join(' > ')} for ${src.ref}`)
+            else next.push({ net: pd.net, path: via })
+          }
+        }
       }
+      frontier = next
     }
   }
   return [...byNet].map(([net, parts]) => {
