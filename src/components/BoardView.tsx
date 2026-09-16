@@ -56,6 +56,7 @@ interface Props {
   final: BoardModel | null      // board.json after "done"
   drc: DrcResult | null         // KiCad design rule check, run by the server after the board is written
   ai?: AiRound[]                // AI improvement rounds (stage 4), empty when the toggle is off
+  pcbFilename?: string          // board on the server, for KiCad's own 3D render
   hpwlShelf?: number
   status: 'streaming' | 'done' | 'error'
 }
@@ -179,7 +180,7 @@ function Via({ v }: { v: BoardVia }) {
   )
 }
 
-export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], hpwlShelf, status }: Props) {
+export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], pcbFilename, hpwlShelf, status }: Props) {
   const [playhead, setPlayhead] = useState(0)          // fractional frame index
   const [routeHead, setRouteHead] = useState(0)        // fractional routing-event index
   const [fit, setFit] = useState(0)                    // 0 = scatter view, 1 = fitted to the board
@@ -192,6 +193,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   // like a PCB editor with its 3D viewer open: plan on the left, board on the right
   const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('both')
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
+  const [photo, setPhoto] = useState(false)          // KiCad render instead of the SVG boxes
+  const [photoState, setPhotoState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [zoom3d, setZoom3d] = useState(1)
   const drag3d = useRef<{ x: number; y: number } | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
@@ -550,13 +553,34 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           onPointerDown={on3dDown} onPointerMove={on3dMove}
           onPointerUp={() => { drag3d.current = null }}
           onWheel={e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
-          <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
-            outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
-            showLayer={show} hoverNet={hoverNet} />
+          {photo && pcbFilename
+            ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: '#efefe9' }}>
+                <img data-testid="board-photo" alt="KiCad 3D 렌더"
+                  src={`/render_board?pcb=${encodeURIComponent(pcbFilename)}&rot=${Math.round(-cam.tilt)},0,${Math.round(cam.yaw + 53)}`}
+                  onLoad={() => setPhotoState('idle')} onError={() => setPhotoState('error')}
+                  style={{ maxWidth: '100%', maxHeight: '100%', display: photoState === 'error' ? 'none' : 'block' }} />
+                {photoState === 'loading' && <div style={{ position: 'absolute', color: UI_DIM,
+                  fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>KiCad로 3D 렌더 중…</div>}
+                {photoState === 'error' && <div style={{ color: UI_BAD, fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>
+                  렌더 실패 — KiCad가 없는 서버일 수 있어요
+                </div>}
+              </div>
+            : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
+                outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
+                showLayer={show} hoverNet={hoverNet} />}
+          {pcbFilename && placed && (
+            <button data-testid="board-photo-toggle"
+              onClick={() => { setPhoto(v => !v); setPhotoState(photo ? 'idle' : 'loading') }}
+              style={{ position: 'absolute', left: 8, top: 8, padding: '4px 10px', borderRadius: 6,
+                border: `1px solid ${UI_LINE}`, background: photo ? UI_FG : UI_BG, color: photo ? '#fff' : UI_FG,
+                fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              {photo ? '도형으로' : '사진으로'}
+            </button>
+          )}
           <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
             background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
             fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>
-            끌어서 돌리기 · 기울기 {Math.round(cam.tilt)}° · 부품 높이는 표시용 근사값
+            {photo ? 'KiCad 3D 렌더 · 각도는 끌어서 바꾼 뒤 다시 누르면 반영' : '끌어서 돌리기 · 기울기 ' + Math.round(cam.tilt) + '° · 부품 높이는 표시용 근사값'}
           </div>
         </div>
       )}

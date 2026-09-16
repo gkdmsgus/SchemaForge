@@ -28,6 +28,7 @@ function Harness() {
     parts: [], frames: [], routes: [], target: null, final: null, drc: null, ai: [], status: 'streaming',
   })
   const [shelf, setShelf] = useState<number | undefined>()
+  const [pcbFile, setPcbFile] = useState<string | undefined>()
 
   useEffect(() => {
     const body = {
@@ -68,7 +69,7 @@ function Harness() {
               default: return prev
             }
           })
-          if (ev === 'done') setShelf(d.summary?.hpwl_shelf)
+          if (ev === 'done') { setShelf(d.summary?.hpwl_shelf); setPcbFile(d.pcbFilename) }
         }
       }
     })().catch(() => setB(p => ({ ...p, status: 'error' })))
@@ -78,7 +79,7 @@ function Harness() {
 
   return (
     <div style={{ position: 'relative', height: '100%' }}>
-      <BoardView parts={b.parts} frames={b.frames} routes={b.routes} target={b.target}
+      <BoardView pcbFilename={pcbFile} parts={b.parts} frames={b.frames} routes={b.routes} target={b.target}
         final={b.final} drc={b.drc} ai={b.ai} status={b.status} hpwlShelf={shelf} />
     </div>
   )

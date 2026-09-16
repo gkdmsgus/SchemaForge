@@ -624,7 +624,8 @@ export default function ResultPanel({
             {viewMode === 'schematic'
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
               : board
-                ? <BoardView parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
+                ? <BoardView pcbFilename={pcbFilename ?? undefined}
+                    parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
                     final={board.final} drc={board.drc} ai={board.ai} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>
                     <PCBLayout graph={effectiveGraph} />
