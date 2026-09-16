@@ -193,6 +193,43 @@ def silk_bbox(fp):
     return (min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts))
 
 
+def local_silk(fp):
+    """F.SilkS graphics in footprint-local coordinates, so the browser can draw the real outlines.
+
+    Kinds: line (x1,y1,x2,y2) · circle (cx,cy,r) · arc (x1,y1,mx,my,x2,y2) · poly (pts).
+    Each carries its stroke width w in mm.
+    """
+    out = []
+    for item in fp:
+        if not (isinstance(item, list) and item and str(item[0]).startswith('fp_') and item[0] != 'fp_text'):
+            continue
+        layer = find(item, 'layer')
+        if not layer or layer[1] != 'F.SilkS':
+            continue
+        stroke = find(item, 'stroke')
+        width = find(stroke, 'width') if stroke else None
+        w = round(float(width[1]), 4) if width else 0.12
+        kind = item[0]
+        if kind in ('fp_line', 'fp_rect'):
+            (x1, y1), (x2, y2) = _xy(find(item, 'start')), _xy(find(item, 'end'))
+            if kind == 'fp_line':
+                out.append({'t': 'line', 'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2, 'w': w})
+            else:
+                out.append({'t': 'poly', 'pts': [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]], 'w': w})
+        elif kind == 'fp_arc':
+            (x1, y1), (mx, my), (x2, y2) = (_xy(find(item, k)) for k in ('start', 'mid', 'end'))
+            out.append({'t': 'arc', 'x1': x1, 'y1': y1, 'mx': mx, 'my': my, 'x2': x2, 'y2': y2, 'w': w})
+        elif kind == 'fp_circle':
+            cx, cy = _xy(find(item, 'center'))
+            ex, ey = _xy(find(item, 'end'))
+            out.append({'t': 'circle', 'cx': cx, 'cy': cy, 'r': round(math.hypot(ex - cx, ey - cy), 4), 'w': w})
+        elif kind == 'fp_poly':
+            pts = [list(_xy(q)) for q in find_all(find(item, 'pts'), 'xy')]
+            if pts:
+                out.append({'t': 'poly', 'pts': pts, 'w': w})
+    return out
+
+
 def ref_text(fp, ref):
     """Approximate box of the visible silkscreen reference text (KiCad stroke font ~1 char = 1 size)."""
     for prop in find_all(fp, 'property'):
@@ -304,7 +341,8 @@ def build_board(components, nets, style='smd'):
         parts.append({'ref': ref, 'value': value, 'part': part, 'footprint': fp_id,
                       'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': pad_net, 'pad_pin': pad_pin,
                       'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
-                      'pads': local_pads(fp, pad_net), 'x': 0.0, 'y': 0.0, 'rot': 0})
+                      'pads': local_pads(fp, pad_net), 'silk': local_silk(fp),
+                      'x': 0.0, 'y': 0.0, 'rot': 0})
 
     shelf_place(parts, nets)
     return parts, unmapped, warnings
@@ -482,7 +520,9 @@ def part_static(p):
     return {'ref': p['ref'], 'value': p['value'], 'part': p['part'], 'footprint': p['footprint'],
             'bbox': [round(v, 4) for v in p['bbox']],
             'pads': [{k: pad[k] for k in ('num', 'type', 'shape', 'x', 'y', 'angle', 'w', 'h', 'drill', 'net')}
-                     for pad in p['pads']]}
+                     for pad in p['pads']],
+            'silk': p.get('silk', []),
+            'ref_text': p.get('ref_text')}
 
 
 def board_json(parts, nets, box, style, unmapped, warnings):
