@@ -64,17 +64,22 @@ def check_one(name, style, work, cli):
 
     # 2. every netlist node lands on its mapped pad with the same net (read back from the file)
     pads = board_pads(pcb)
+    distinct_pads = lambda ps: len({(r, n) for r, n, net in ps if net})
     pad_net = {(r, n): net for r, n, net in pads if net}
     bad = []
     for n in nets:
         for nd in n['nodes']:
+            if nd['ref'] not in comp_part:           # test point added by the generator
+                continue
             lib_fp = TABLE[(comp_part[nd['ref']], style)]
             pad = lib_fp[2][int(nd['pin'])]
             if pad_net.get((nd['ref'], pad)) != n['name']:
                 bad.append(f"{nd['ref']}.{nd['pin']}")
     nodes = sum(len(n['nodes']) for n in nets)
-    distinct = len({(r, n) for r, n, net in pads if net})
-    res['2 nodes->pads'] = (not bad and distinct == nodes, f'nodes={nodes} pads={distinct} bad={bad}')
+    tps = summary.get('test_points') or []           # probe pads the generator adds on top of the netlist
+    tp_pads = len({(r, n) for r, n, net in pads if net and r in tps})
+    res['2 nodes->pads'] = (not bad and distinct_pads(pads) == nodes + tp_pads,
+                            f'nodes={nodes}+{tp_pads} tp pads={distinct_pads(pads)} bad={bad}')
 
     # 3. polarity: the stated skidl pin is on KiCad pad "1"
     pol_bad = []
@@ -126,12 +131,15 @@ def check_one(name, style, work, cli):
                            f"shelf={summary['hpwl_shelf']} force={summary['hpwl']} "
                            f"(-{(1 - summary['hpwl'] / summary['hpwl_shelf']) * 100:.0f}%)")
 
-    # 9. connectors sit on the board edge (keep-out box within BOARD_MARGIN of the outline)
+    # 9. connectors sit on the edge of the circuit area (the board itself is bigger: it carries
+    #    the mounting-hole ring), so measure against parts_box when the generator reports one
+    pb = summary.get('parts_box')
+    px1, py1, px2, py2 = (pb['x1'], pb['y1'], pb['x2'], pb['y2']) if pb else (ox1, oy1, ox2, oy2)
     far = []
     for ref, p in parts.items():
         if ref.rstrip('0123456789') in ('J', 'BT'):
             c = p['keepout']
-            gap = min(c[0] - ox1, c[1] - oy1, ox2 - c[2], oy2 - c[3])
+            gap = min(c[0] - px1, c[1] - py1, px2 - c[2], py2 - c[3])
             if gap > BOARD_MARGIN + 0.01:
                 far.append(f'{ref}:{gap:.2f}mm')
     res['9 connectors@edge'] = (not far, str(far or ''))

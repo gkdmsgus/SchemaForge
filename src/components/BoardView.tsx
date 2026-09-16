@@ -21,6 +21,7 @@ const SILK = '#4a4a4a'            // F.SilkS graphics and reference text
 const COURTYARD = 'rgba(120, 130, 120, 0.22)'
 const LAYER_COLOR: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#4d7fc4' }
 const PAD_HI = '#f2a33c'
+const POUR_FILL: Record<string, string> = { 'F.Cu': 'rgba(200, 52, 52, 0.16)', 'B.Cu': 'rgba(77, 127, 196, 0.16)' }
 const VIA_RING = '#6f6f6f'
 const VIA_SIZE = 0.6, VIA_DRILL = 0.3
 const PAD_LABEL_MIN = 1.1         // mm: label a pad with its net once it is at least this big
@@ -466,6 +467,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               fill={PCB_FILL} fillOpacity={0.75 * (1 - fit)} stroke={EDGE} strokeOpacity={0.5 * (1 - fit)}
               strokeWidth={0.12} strokeDasharray="0.8 0.6" />
           : null}
+
+        {/* ground fill: preview of the zone the board file carries */}
+        {placed && (final?.pour || []).filter(r => show[r.layer] !== false).map((r, k) => (
+          <rect key={`pour${k}`} data-pour={r.layer} x={r.x1} y={r.y1} width={r.x2 - r.x1} height={r.y2 - r.y1}
+            fill={POUR_FILL[r.layer] || POUR_FILL['B.Cu']} />
+        ))}
 
         {/* bottom copper under the parts */}
         {drawTracks('B.Cu')}

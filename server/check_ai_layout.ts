@@ -44,11 +44,19 @@ const p1 = precheck(board, onTop), p2 = precheck(board, offBoard), p3 = precheck
 check('27 precheck', p1.some(s => s.includes('overlap')) && p2.some(s => s.includes('outline')) && p3.length === 0,
   `onTop=[${p1.join('; ')}] offBoard=[${p2.join('; ')}] none=${p3.length}`)
 
-// 27b. the move gpt-5.4-mini actually proposed on 2026-09-15 (C3 +5.5, -2.5 mm), which broke routing, is caught
-const real = base(); const c3 = part('C3')
-if (c3) real.parts.C3 = [c3.x + 5.5, c3.y - 2.5, c3.rot]
-const p5 = c3 ? precheck(board, real) : []
-check('27b real rolled-back move caught', !!c3 && p5.some(s => s.startsWith('C3 would overlap')), `[${p5.join('; ')}]`)
+// 27b. the failure mode from the 2026-09-15 runs: the model slides a capacitor toward its IC and lands on a
+//      neighbour (then C3 +5.5, -2.5 mm hit R3). Pinning the offset broke when the board grew, so aim at the
+//      nearest part instead and require the move to be caught.
+const c3 = part('C3')
+const near = c3 && board.parts
+  .filter((o: { ref: string; keepout?: number[] }) => o.ref !== 'C3' && o.keepout)
+  .map((o: { ref: string; x: number; y: number }) => ({ o, d: Math.hypot(o.x - c3.x, o.y - c3.y) }))
+  .sort((a: { d: number }, b: { d: number }) => a.d - b.d)[0]?.o
+const real = base()
+if (c3 && near) real.parts.C3 = [(c3.x + near.x) / 2, (c3.y + near.y) / 2, c3.rot]
+const p5 = c3 && near ? precheck(board, real) : []
+check('27b slide onto a neighbour caught', !!near && p5.some(s => s.startsWith('C3 would overlap')),
+  `toward ${near?.ref}: [${p5.join('; ')}]`)
 
 // 28. a 90-degree rotation is checked with the turned courtyard (a square-ish part may pass, a long part near a neighbour may not)
 const turned = base(); const u = board.parts.find((p: { ref: string }) => p.ref.startsWith('U'))
@@ -72,7 +80,11 @@ check('29b small decap gain cannot buy wire length', !better(tiny, m) && better(
 
 // 30. precheck agrees with the generator's own overlap check (pcb/board.py, fixed placement, no routing)
 //     on a grid of C3 moves, including the two the model proposed that precheck used to let through.
-const moves: [number, number][] = [[2, -0.5], [2, 0.5], [2.5, -2.5], [5.5, -2.5], [-1, 0], [0, 1.5], [1, -1], [0, -3]]
+// fractions of the way to the nearest neighbour (collisions) plus small steps away from it (no collision),
+// so the comparison always covers both answers whatever the board looks like
+const toNear: [number, number] = near && c3 ? [near.x - c3.x, near.y - c3.y] : [3, 0]
+const moves: [number, number][] = [0.5, 0.7, 0.85, 1].map(f => [toNear[0] * f, toNear[1] * f] as [number, number])
+  .concat([[-toNear[0] * 0.2, -toNear[1] * 0.2], [0, -0.5], [0.5, 0], [-0.5, 0.5]])
 const py = `
 import json, sys
 sys.path.insert(0, 'pcb')

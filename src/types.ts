@@ -160,6 +160,9 @@ export type RouteEvent =
   | { type: 'route'; net: string; segments: BoardTrack[]; vias: BoardVia[] }
   | { type: 'rip'; net: string }
 
+/** One rectangle of the ground fill preview (the board file carries the zone, KiCad fills it). */
+export interface PourRect { net: string; layer: 'F.Cu' | 'B.Cu'; x1: number; y1: number; x2: number; y2: number }
+
 export interface BoardModel {
   outline: [number, number, number, number]
   parts: (BoardPart & { x: number; y: number; rot: number })[]
@@ -168,6 +171,7 @@ export interface BoardModel {
   vias?: BoardVia[]
   unrouted?: { net: string; from: string; to: string }[]
   erc?: ErcFinding[]
+  pour?: PourRect[]
 }
 
 export interface GenerateResult {
