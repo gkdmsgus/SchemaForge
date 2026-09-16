@@ -148,17 +148,23 @@ print(json.dumps(out, default=str))
 }
 const show = (hs: ReturnType<typeof heavyPowerNets>) => hs.map(h => `${h.net}[${h.kind}](${h.parts.join('; ')}) ${h.width}`).join(', ')
 
-const relay = variants('npn_relay', 'r', [{ '+5V': 0.8 }, { '+5V': 0.8, GND: 0.8 }, { '+5V': 0.8, GND: 0.8, COIL_LOW: 0.8 }])
+const relayWide = { '+5V': 0.8, GND: 0.8, COIL_LOW: 0.8 }
+const relay = variants('npn_relay', 'r', [{ '+5V': 0.8 }, { '+5V': 0.8, GND: 0.8 }, relayWide,
+  { ...relayWide, COM: 0.8, NO: 0.8, NC: 0.8 }])
 const rh = heavyPowerNets(relay[0].board)
 const kindOf = (hs: ReturnType<typeof heavyPowerNets>, net: string) => hs.find(h => h.net === net)?.kind
-check('31 relay load-current nets', kindOf(rh, '+5V') === 'power' && kindOf(rh, 'GND') === 'power' && kindOf(rh, 'COIL_LOW') === 'path'
-  && !rh.some(h => ['IN', 'BASE', 'COM', 'NO', 'NC'].includes(h.net)) && relay[0].metrics.powerWidth === 3,
+// the coil side (+5V, COIL_LOW, GND) and the switched side (COM, NO, NC) both carry load current;
+// the control signals (IN, BASE) do not
+check('31 relay load-current nets', kindOf(rh, '+5V') === 'power' && kindOf(rh, 'GND') === 'power'
+  && kindOf(rh, 'COIL_LOW') === 'path' && ['COM', 'NO', 'NC'].every(n => kindOf(rh, n) === 'path')
+  && !!rh.find(h => h.net === 'COM')?.parts.join().includes('K1 contact')
+  && !rh.some(h => ['IN', 'BASE'].includes(h.net)) && relay[0].metrics.powerWidth === 6,
   `${show(rh)} -> ${relay[0].metrics.powerWidth}`)
 const counts = relay.map((v: { metrics: { powerWidth: number } }) => v.metrics.powerWidth)
-check('32 each widening judged better', counts.join() === '3,2,1,0' && relay[3].metrics.unrouted === 0
-  && [1, 2, 3].every(i => better(relay[i].metrics, relay[i - 1].metrics)) && heavyPowerNets(board).length === 0,
-  `powerWidth ${counts.join(' -> ')}; unrouted ${relay[3].metrics.unrouted}; ne555 heavy=${heavyPowerNets(board).length}`)
-const relayDrc = drcOf(relay[3].pcb)
+check('32 each widening judged better', counts.join() === '6,5,4,3,0' && relay[4].metrics.unrouted === 0
+  && [1, 2, 3, 4].every(i => better(relay[i].metrics, relay[i - 1].metrics)) && heavyPowerNets(board).length === 0,
+  `powerWidth ${counts.join(' -> ')}; unrouted ${relay[4].metrics.unrouted}; ne555 heavy=${heavyPowerNets(board).length}`)
+const relayDrc = drcOf(relay[4].pcb)
 check('33 widened relay board passes DRC', relayDrc.ok, relayDrc.info)
 
 // 34-37. multi-step current path on the MOSFET motor board (test_circuits/nmos_motor.py):
