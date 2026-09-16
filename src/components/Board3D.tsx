@@ -59,7 +59,7 @@ export default function Board3D({ parts, poses, tracks, vias, outline, cam, zoom
 
   return (
     <svg data-testid="board-3d" viewBox={view} width="100%" height="100%"
-      style={{ display: 'block', background: 'var(--sf-bg-inverse)' }}>
+      style={{ display: 'block', background: '#efefe9' }}>
       {faces.map((f, k) => (
         <polygon key={k} data-kind={f.kind} data-ref={f.ref} data-net={f.net}
           points={f.pts.map(p => `${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' ')}
@@ -67,7 +67,7 @@ export default function Board3D({ parts, poses, tracks, vias, outline, cam, zoom
           opacity={hoverNet && f.net && f.net !== hoverNet ? 0.3 : f.opacity} />
       ))}
       {labels.map(l => (
-        <text key={l.ref} data-label={l.ref} x={l.sx} y={l.sy} fontSize={l.size} fill="#dfe5dd"
+        <text key={l.ref} data-label={l.ref} x={l.sx} y={l.sy} fontSize={l.size} fill="#20242a"
           textAnchor="middle" dominantBaseline="central" fontFamily="var(--sf-font-mono)"
           opacity={0.85} style={{ pointerEvents: 'none' }}>{l.ref}</text>
       ))}

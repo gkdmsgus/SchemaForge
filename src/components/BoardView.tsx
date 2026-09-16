@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound,
+  BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
 import Board3D from './Board3D'
 import type { Camera } from '../lib/board3d'
@@ -10,16 +10,30 @@ import type { Camera } from '../lib/board3d'
 // Coordinates follow KiCad: y down, rot in degrees counter-clockwise on screen —
 // i.e. SVG rotate(-rot).
 
-const PCB_GREEN = '#0c2418'
-const EDGE = '#e8c97a'
-const COPPER = '#d9a35a'
-const COPPER_HI = '#ffc56f'
-const HOLE = '#081a11'
-const RATSNEST = '#7fd1ff'
-const SILK = '#dfe5dd'
-const COURTYARD = 'rgba(223, 229, 221, 0.18)'
+// Board colours follow a KiCad layout editor on a light sheet: copper red on the front,
+// blue on the back, silkscreen grey, the board itself near-white.
+const SHEET = '#efefe9'           // paper behind the board
+const PCB_FILL = '#fbfbf7'        // board body
+const EDGE = '#2f2f2f'            // Edge.Cuts
+const HOLE = '#ffffff'            // drill
+const RATSNEST = '#6f9fd8'
+const SILK = '#4a4a4a'            // F.SilkS graphics and reference text
+const COURTYARD = 'rgba(120, 130, 120, 0.22)'
 const LAYER_COLOR: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#4d7fc4' }
-const VIA_SIZE = 0.8, VIA_DRILL = 0.4
+const PAD_HI = '#f2a33c'
+const VIA_RING = '#6f6f6f'
+const VIA_SIZE = 0.6, VIA_DRILL = 0.3
+const PAD_LABEL_MIN = 1.1         // mm: label a pad with its net once it is at least this big
+
+// Panels sit on the light sheet, so they are light too (the app around them stays dark).
+const UI_BG = 'rgba(255, 255, 255, 0.92)'
+const UI_LINE = 'rgba(0, 0, 0, 0.14)'
+const UI_FG = '#23262b'
+const UI_DIM = '#6b7079'
+const UI_OK = '#1f7a4d'
+const UI_WARN = '#b26a00'
+const UI_BAD = '#c0392b'
+const UI_ACCENT = '#5a3fa0'
 
 const FRAME_MS = 30          // placement playback: one frame every 30 ms (~70 frames ≈ 2 s)
 const FIT_MS = 600           // camera move from the scatter view to the finished board
@@ -101,8 +115,33 @@ function mst(pts: [number, number][]): [number, number][] {
   return edges
 }
 
+function SilkShape({ items }: { items: SilkItem[] }) {
+  return (
+    <g fill="none" stroke={SILK} strokeLinecap="round" strokeLinejoin="round">
+      {items.map((it, k) => {
+        if (it.t === 'line') return <line key={k} x1={it.x1} y1={it.y1} x2={it.x2} y2={it.y2} strokeWidth={it.w} />
+        if (it.t === 'circle') return <circle key={k} cx={it.cx} cy={it.cy} r={it.r} strokeWidth={it.w} />
+        if (it.t === 'poly') {
+          return <polyline key={k} points={it.pts.map(q => `${q[0]},${q[1]}`).join(' ')} strokeWidth={it.w} />
+        }
+        // arc through three points: centre from the perpendicular bisectors, then one SVG arc
+        const { x1, y1, mx, my, x2, y2, w } = it
+        const d = 2 * (x1 * (my - y2) + mx * (y2 - y1) + x2 * (y1 - my))
+        if (Math.abs(d) < 1e-9) return <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} strokeWidth={w} />
+        const ux = ((x1 * x1 + y1 * y1) * (my - y2) + (mx * mx + my * my) * (y2 - y1) + (x2 * x2 + y2 * y2) * (y1 - my)) / d
+        const uy = ((x1 * x1 + y1 * y1) * (x2 - mx) + (mx * mx + my * my) * (x1 - x2) + (x2 * x2 + y2 * y2) * (mx - x1)) / d
+        const r = Math.hypot(x1 - ux, y1 - uy)
+        const cross = (mx - x1) * (y2 - y1) - (my - y1) * (x2 - x1)
+        const sweep = cross > 0 ? 0 : 1
+        return <path key={k} d={`M ${x1} ${y1} A ${r} ${r} 0 0 ${sweep} ${x2} ${y2}`} strokeWidth={w} />
+      })}
+    </g>
+  )
+}
+
 function PadShape({ p, hi }: { p: BoardPad; hi: boolean }) {
-  const fill = hi ? COPPER_HI : COPPER
+  // Our generator puts SMD pads on the front; a drilled pad reaches both layers.
+  const fill = hi ? PAD_HI : LAYER_COLOR['F.Cu']
   const t = `translate(${p.x} ${p.y}) rotate(${-p.angle})`
   const w = p.w, h = p.h
   let body
@@ -110,10 +149,16 @@ function PadShape({ p, hi }: { p: BoardPad; hi: boolean }) {
   else if (p.shape === 'oval') body = <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={Math.min(w, h) / 2} fill={fill} />
   else if (p.shape === 'roundrect') body = <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={Math.min(w, h) * 0.25} fill={fill} />
   else body = <rect x={-w / 2} y={-h / 2} width={w} height={h} fill={fill} />
+  const label = p.net && Math.min(w, h) >= PAD_LABEL_MIN ? p.net : null
   return (
     <g transform={t}>
       {body}
-      {p.drill ? <circle r={p.drill / 2} fill={HOLE} /> : null}
+      {p.drill ? <circle r={p.drill / 2} fill={HOLE} stroke={EDGE} strokeWidth={0.05} /> : null}
+      {label && !p.drill
+        ? <text x={0} y={0} fontSize={Math.min(0.55, Math.min(w, h) * 0.45)} fill="#ffffff" textAnchor="middle"
+            dominantBaseline="central" fontFamily="var(--sf-font-mono)" style={{ pointerEvents: 'none' }}
+            transform={`rotate(${p.angle})`}>{label}</text>
+        : null}
     </g>
   )
 }
@@ -127,7 +172,7 @@ function Track({ t, frac = 1 }: { t: BoardTrack; frac?: number }) {
 function Via({ v }: { v: BoardVia }) {
   return (
     <g data-via="1">
-      <circle cx={v.x} cy={v.y} r={VIA_SIZE / 2} fill={EDGE} />
+      <circle cx={v.x} cy={v.y} r={VIA_SIZE / 2} fill={VIA_RING} />
       <circle cx={v.x} cy={v.y} r={VIA_DRILL / 2} fill={HOLE} />
     </g>
   )
@@ -143,7 +188,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [panXY, setPanXY] = useState<[number, number]>([0, 0])
   const [focusId, setFocusId] = useState<string | null>(null)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('2d')
+  // like a PCB editor with its 3D viewer open: plan on the left, board on the right
+  const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('both')
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
   const [zoom3d, setZoom3d] = useState(1)
   const drag3d = useRef<{ x: number; y: number } | null>(null)
@@ -403,7 +449,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   )
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'var(--sf-bg-inverse)', overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', inset: 0, background: SHEET, overflow: 'hidden' }}>
       <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
       <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
@@ -413,11 +459,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         {/* board: target frame while placing, real outline when done */}
         {outline && fit > 0
           ? <rect x={outline[0]} y={outline[1]} width={outline[2] - outline[0]} height={outline[3] - outline[1]}
-              fill={PCB_GREEN} stroke={EDGE} strokeWidth={0.15} opacity={fit} />
+              fill={PCB_FILL} stroke={EDGE} strokeWidth={0.12} opacity={fit} />
           : null}
         {target && fit < 1
           ? <rect x={target[0]} y={target[1]} width={target[2] - target[0]} height={target[3] - target[1]}
-              fill={PCB_GREEN} fillOpacity={0.55 * (1 - fit)} stroke={EDGE} strokeOpacity={0.5 * (1 - fit)}
+              fill={PCB_FILL} fillOpacity={0.75 * (1 - fit)} stroke={EDGE} strokeOpacity={0.5 * (1 - fit)}
               strokeWidth={0.12} strokeDasharray="0.8 0.6" />
           : null}
 
@@ -434,12 +480,21 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           return (
             <g key={ref} data-ref={ref} data-x={x.toFixed(3)} data-y={y.toFixed(3)} data-rot={r}>
               <g transform={`translate(${x} ${y}) rotate(${-r})`}>
-                <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={COURTYARD} strokeWidth={0.05} />
+                <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={COURTYARD} strokeWidth={0.04} />
+                {p.silk?.length ? <SilkShape items={p.silk} /> : null}
                 {p.pads.map((pd, k) => <PadShape key={k} p={pd} hi={!!hoverNet && pd.net === hoverNet} />)}
+                {p.ref_text
+                  ? <text x={p.ref_text.x} y={p.ref_text.y} fontSize={Math.max(0.5, p.ref_text.h)} fill={SILK}
+                      textAnchor="middle" dominantBaseline="central" fontFamily="var(--sf-font-mono)"
+                      transform={`rotate(${-(p.ref_text.angle || 0)} ${p.ref_text.x} ${p.ref_text.y})`}
+                      style={{ pointerEvents: 'none' }}>{ref}</text>
+                  : null}
               </g>
-              <text x={(box[0] + box[2]) / 2} y={(box[1] + box[3]) / 2} fontSize={size} fill={SILK}
-                textAnchor="middle" dominantBaseline="central" fontFamily="var(--sf-font-mono)"
-                style={{ pointerEvents: 'none' }} opacity={0.9}>{ref}</text>
+              {p.ref_text ? null : (
+                <text x={(box[0] + box[2]) / 2} y={(box[1] + box[3]) / 2} fontSize={size} fill={SILK}
+                  textAnchor="middle" dominantBaseline="central" fontFamily="var(--sf-font-mono)"
+                  style={{ pointerEvents: 'none' }}>{ref}</text>
+              )}
             </g>
           )
         })}
@@ -451,7 +506,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         {/* check markers */}
         {findings.filter(f => f.pos).map(f => {
           const on = focusId === f.id
-          const c = f.severity === 'error' ? '#ff5252' : '#ffb74d'
+          const c = f.severity === 'error' ? UI_BAD : UI_WARN
           const r = on ? 1.6 : 1.1
           return (
             <g key={f.id} data-marker={f.severity} onClick={() => focusOn(f)} style={{ cursor: 'pointer' }}>
@@ -484,7 +539,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
       {view3d !== '2d' && (
         <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: drag3d.current ? 'grabbing' : 'grab',
-          borderLeft: view3d === 'both' ? '1px solid rgba(232, 201, 122, 0.25)' : 'none', touchAction: 'none' }}
+          borderLeft: view3d === 'both' ? `1px solid ${UI_LINE}` : 'none', touchAction: 'none' }}
           onPointerDown={on3dDown} onPointerMove={on3dMove}
           onPointerUp={() => { drag3d.current = null }}
           onWheel={e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
@@ -492,7 +547,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
             showLayer={show} hoverNet={hoverNet} />
           <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
-            background: 'rgba(8, 26, 17, 0.82)', color: 'var(--sf-fg-inverse)', opacity: 0.75,
+            background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
             fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>
             끌어서 돌리기 · 기울기 {Math.round(cam.tilt)}° · 부품 높이는 표시용 근사값
           </div>
@@ -502,15 +557,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
       {/* overlay */}
       <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '8px 10px', borderRadius: 8,
-        background: 'rgba(8, 26, 17, 0.82)', color: 'var(--sf-fg-inverse)', fontFamily: 'var(--sf-font-mono)',
-        fontSize: 11, lineHeight: 1.5, minWidth: 190 }}>
-        <div data-testid="board-phase" style={{ fontWeight: 700, color: routedAll && !unrouted.length ? '#5dc8a3' : EDGE }}>{label}</div>
+        background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, fontFamily: 'var(--sf-font-mono)',
+        fontSize: 11, lineHeight: 1.5, minWidth: 190, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+        <div data-testid="board-phase" style={{ fontWeight: 700, color: routedAll && !unrouted.length ? UI_OK : UI_FG }}>{label}</div>
         {!placed && cur && <div style={{ opacity: 0.75 }}>반복 {cur.iter} · 선 길이 추정 {cur.hpwl.toFixed(1)} mm</div>}
         {!placed && spark && <svg width={120} height={28} style={{ display: 'block', marginTop: 4 }}>
           <path d={spark} fill="none" stroke={RATSNEST} strokeWidth={1.2} />
         </svg>}
         {placed && saving != null && (
-          <div data-testid="board-saving" style={{ color: '#5dc8a3' }}>
+          <div data-testid="board-saving" style={{ color: UI_OK }}>
             배치: 격자 대비 −{saving}% ({hpwlShelf?.toFixed(0)} → {hpwlFinal?.toFixed(0)} mm)
           </div>
         )}
@@ -520,21 +575,21 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </div>
         )}
         {routedAll && unrouted.length > 0 && (
-          <div style={{ color: '#ff8a80' }}>미배선: {unrouted.map(u => `${u.net} (${u.from}–${u.to})`).join(', ')}</div>
+          <div style={{ color: UI_BAD }}>미배선: {unrouted.map(u => `${u.net} (${u.from}–${u.to})`).join(', ')}</div>
         )}
         {placed && outline && (
           <div style={{ opacity: 0.75 }}>기판 {(outline[2] - outline[0]).toFixed(1)} × {(outline[3] - outline[1]).toFixed(1)} mm</div>
         )}
-        {hoverNet && <div style={{ color: RATSNEST }}>넷: {hoverNet}</div>}
+        {hoverNet && <div style={{ color: '#2c5f96' }}>넷: {hoverNet}</div>}
       </div>
       {frames.length > 0 && (
         <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6 }}>
           {(['2d', 'both', '3d'] as const).map(v => (
             <button key={v} onClick={() => setView3d(v)} data-testid={`view-${v}`}
               title={v === '2d' ? '평면' : v === 'both' ? '평면 + 3D' : '3D'}
-              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(232, 201, 122, 0.5)',
-                background: view3d === v ? EDGE : 'rgba(8, 26, 17, 0.82)',
-                color: view3d === v ? '#081a11' : EDGE, fontWeight: view3d === v ? 700 : 400,
+              style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${UI_LINE}`,
+                background: view3d === v ? UI_FG : UI_BG,
+                color: view3d === v ? '#ffffff' : UI_FG, fontWeight: view3d === v ? 700 : 400,
                 fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
               {v === '2d' ? '2D' : v === 'both' ? '나란히' : '3D'}
             </button>
@@ -543,15 +598,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             <button key={L} onClick={() => setShow(s => ({ ...s, [L]: !s[L] }))}
               title={L === 'F.Cu' ? '윗면 구리' : '아랫면 구리'}
               style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${LAYER_COLOR[L]}`,
-                background: show[L] ? LAYER_COLOR[L] : 'rgba(8, 26, 17, 0.82)', color: show[L] ? '#fff' : LAYER_COLOR[L],
+                background: show[L] ? LAYER_COLOR[L] : UI_BG, color: show[L] ? '#fff' : LAYER_COLOR[L],
                 fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
               {L === 'F.Cu' ? 'F' : 'B'}
             </button>
           ))}
           {placed && <button onClick={replay} data-testid="board-replay"
             style={{ padding: '4px 10px', borderRadius: 6,
-              border: '1px solid rgba(232, 201, 122, 0.5)', background: 'rgba(8, 26, 17, 0.82)',
-              color: EDGE, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              border: `1px solid ${UI_LINE}`, background: UI_BG,
+              color: UI_FG, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
             ↺ 다시 보기
           </button>}
         </div>
@@ -560,17 +615,17 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* AI improvement rounds */}
       {placed && ai.length > 0 && (
         <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: 320, maxWidth: '48%',
-          borderRadius: 8, background: 'rgba(8, 26, 17, 0.88)', color: 'var(--sf-fg-inverse)',
+          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
           fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
-          <div style={{ padding: '7px 10px', fontWeight: 700, color: '#b39ddb' }}>
+          <div style={{ padding: '7px 10px', fontWeight: 700, color: UI_ACCENT }}>
             AI 다듬기 · 채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}
           </div>
           <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             {ai.map(r => {
               const d = r.after ? r.after.hpwl - r.before.hpwl : 0
               return (
-                <div key={r.round} style={{ padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.08)',
-                  color: r.kept ? '#5dc8a3' : 'var(--sf-fg-dim)' }}>
+                <div key={r.round} style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`,
+                  color: r.kept ? UI_OK : UI_DIM }}>
                   <div>{r.round > 0 ? `${r.round}라운드` : ''} {r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'} — {r.reason}</div>
                   {r.after && (
                     <div style={{ opacity: 0.75 }}>
@@ -593,11 +648,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* checks: KiCad DRC + netlist checks */}
       {placed && (drc || final?.erc) && (
         <div data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
-          borderRadius: 8, background: 'rgba(8, 26, 17, 0.88)', color: 'var(--sf-fg-inverse)',
+          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
           fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
           <button onClick={() => setPanelOpen(o => !o)}
             style={{ width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', cursor: 'pointer',
-              background: 'transparent', color: findings.length ? (errorCount ? '#ff8a80' : '#ffb74d') : '#5dc8a3',
+              background: 'transparent', color: findings.length ? (errorCount ? UI_BAD : UI_WARN) : UI_OK,
               fontFamily: 'inherit', fontSize: 11, fontWeight: 700 }}>
             {drc && !drc.available
               ? '검사 도구 없음 (KiCad 미설치)'
@@ -619,9 +674,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               {findings.map(f => (
                 <button key={f.id} onClick={() => focusOn(f)}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', cursor: 'pointer',
-                    border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', fontFamily: 'inherit', fontSize: 11,
+                    border: 'none', borderTop: `1px solid ${UI_LINE}`, fontFamily: 'inherit', fontSize: 11,
                     background: focusId === f.id ? 'rgba(255,255,255,0.10)' : 'transparent',
-                    color: f.severity === 'error' ? '#ff8a80' : '#ffb74d' }}>
+                    color: f.severity === 'error' ? UI_BAD : UI_WARN }}>
                   <span style={{ opacity: 0.6 }}>[{f.source}]</span> {f.text}
                   {f.pos && <span style={{ opacity: 0.5 }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
                 </button>

@@ -57,6 +57,13 @@ export interface BoardPad {
   net: string | null
 }
 
+/** F.SilkS graphics in footprint-local mm, as pcb/board.py exports them. */
+export type SilkItem =
+  | { t: 'line'; x1: number; y1: number; x2: number; y2: number; w: number }
+  | { t: 'circle'; cx: number; cy: number; r: number; w: number }
+  | { t: 'arc'; x1: number; y1: number; mx: number; my: number; x2: number; y2: number; w: number }
+  | { t: 'poly'; pts: [number, number][]; w: number }
+
 export interface BoardPart {
   ref: string
   value: string
@@ -64,6 +71,8 @@ export interface BoardPart {
   footprint: string
   bbox: [number, number, number, number]   // local courtyard
   pads: BoardPad[]
+  silk?: SilkItem[]
+  ref_text?: { x: number; y: number; angle: number; w: number; h: number } | null
 }
 
 /** One placement snapshot: ref -> [x, y, rot]. */
