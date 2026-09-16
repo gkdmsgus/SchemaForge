@@ -1072,6 +1072,34 @@ async function runAiLoop(
   }
 }
 
+// ── GET /render_board ──────────────────────────────────────────────
+// KiCad's own 3D renderer, for the photo view next to the schematic-style board.
+// ?pcb=<file in outputs>&rot=X,Y,Z&w=&h=  -> image/png
+app.get('/render_board', async (req: Request, res: Response) => {
+  const file = basename(String(req.query.pcb || ''))
+  if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
+  const pcbPath = join(OUTPUTS_DIR, file)
+  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
+  const rot = /^-?\d{1,3},-?\d{1,3},-?\d{1,3}$/.test(String(req.query.rot || '')) ? String(req.query.rot) : '-30,0,35'
+  const side = String(req.query.side || 'top') === 'bottom' ? 'bottom' : 'top'
+  const w = Math.min(2000, Math.max(400, Number(req.query.w) || 1400))
+  const h = Math.min(1400, Math.max(300, Number(req.query.h) || 900))
+  const out = join(tmpdir(), `sf_render_${randomUUID().slice(0, 8)}.png`)
+  try {
+    await runKicadCli(['pcb', 'render', '--output', out, '--width', String(w), '--height', String(h),
+      '--quality', 'high', '--floor', '--perspective', '--rotate', rot, '--side', side,
+      '--background', 'opaque', pcbPath], '3D render', 180000)
+    const png = readFileSync(out)
+    res.setHeader('Content-Type', 'image/png')
+    res.setHeader('Cache-Control', 'no-store')
+    res.send(png)
+  } catch (e) {
+    res.status(503).json({ error: (e as Error).message })
+  } finally {
+    try { unlinkSync(out) } catch { /* already gone */ }
+  }
+})
+
 // ── POST /generate_pcb_stream (SSE) ────────────────────────────────
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
 // Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
