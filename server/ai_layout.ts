@@ -151,6 +151,11 @@ export function parseOhms(value: string): number {
 
 /** Symbol pin that controls a transistor (base / gate); current does not flow through it. */
 const CONTROL_PIN: Record<string, number> = { Q_NPN: 1, Q_PNP: 1, Q_NMOS: 1, Q_PMOS: 1 }
+/**
+ * Switch contacts, by symbol pin: these carry the load the part switches, which has nothing to do
+ * with the coil current. Relay template pins are 1=COIL1 2=COIL2 3=COM 4=NO 5=NC (footprints_table).
+ */
+const CONTACT_PINS: Record<string, number[]> = { Relay: [3, 4, 5], SW: [1, 2] }
 /** A series resistor at or below this is treated as a current-sense shunt that carries the load current. */
 export const SHUNT_MAX_OHMS = 1
 /** How many series elements (switches, shunts, inductors, fuses) a current path may pass through. */
@@ -196,12 +201,20 @@ export function heavyPowerNets(board: BoardJson): HeavyNet[] {
   for (const src of board.parts) {
     if (!HEAVY_PART(src)) continue
     const driver = DRIVER_IC.test(`${src.part} ${src.value}`)
+    const contacts = CONTACT_PINS[src.part]
+    const isContact = (num: string) => !!contacts && !!src.pad_pins && contacts.includes(src.pad_pins[num])
     const seen = new Set<string>()
     let frontier: { net: string; path: string[]; sure: boolean }[] = []
     for (const pad of src.pads) {
       if (!pad.net || seen.has(pad.net)) continue
       seen.add(pad.net)
       if (isPowerNet(pad.net) || (driver && DRIVER_SUPPLY.test(pad.net))) { add(pad.net, src.ref, 'power'); continue }
+      if (isContact(pad.num)) {
+        // a relay's COM / NO / NC carry whatever the relay switches — sized like a supply, not a signal
+        add(pad.net, `${src.ref} contact`, 'path')
+        frontier.push({ net: pad.net, path: [], sure: true })
+        continue
+      }
       const conducts = onNet(pad.net, p => p.ref !== src.ref && !!conductingPads(p))
       if (conducts || onNet(pad.net, p => p.ref !== src.ref && HEAVY_PART(p))) add(pad.net, src.ref, 'path')
       frontier.push({ net: pad.net, path: [], sure: true })
