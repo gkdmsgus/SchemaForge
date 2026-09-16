@@ -63,6 +63,11 @@ TABLE = {
     ('Buzzer', 'smd'): ('Buzzer_Beeper', 'Buzzer_12x9.5RM7.6', IDENTITY2),
     ('Buzzer', 'tht'): ('Buzzer_Beeper', 'Buzzer_12x9.5RM7.6', IDENTITY2),
     # A battery is off-board; its leads land on a 2-pin header (pin 1 = +).
+    # board furniture: a test point is one pad on a net, a mounting hole has no net at all
+    ('TestPoint', 'smd'): ('TestPoint', 'TestPoint_Pad_D1.5mm', {1: '1'}),
+    ('TestPoint', 'tht'): ('TestPoint', 'TestPoint_THTPad_D1.5mm_Drill0.7mm', {1: '1'}),
+    ('MountingHole', 'smd'): ('MountingHole', 'MountingHole_3.2mm_M3', {}),
+    ('MountingHole', 'tht'): ('MountingHole', 'MountingHole_3.2mm_M3', {}),
     ('Battery', 'smd'): ('Connector_PinHeader_2.54mm', 'PinHeader_1x02_P2.54mm_Vertical', IDENTITY2),
     ('Battery', 'tht'): ('Connector_PinHeader_2.54mm', 'PinHeader_1x02_P2.54mm_Vertical', IDENTITY2),
     ('Crystal', 'smd'): ('Crystal', 'Crystal_SMD_HC49-SD', IDENTITY2),

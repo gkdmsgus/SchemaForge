@@ -18,6 +18,8 @@ FP_DIR = os.path.join(HERE, 'footprints')
 
 PART_GAP = 2.0        # mm between courtyards in the shelf layout
 BOARD_MARGIN = 1.0    # mm from outermost courtyard to board edge
+HOLE_RING = 3.4       # mm of board added around the parts so M3 holes fit in the corners
+MAX_TEST_POINTS = 4   # probe pads added for the supply nets
 ORIGIN = (100.0, 100.0)
 
 
@@ -486,7 +488,7 @@ def footprint_for_board(p):
     return fp
 
 
-def write_kicad_pcb(parts, box, path, routing=None):
+def write_kicad_pcb(parts, box, path, routing=None, pour=None):
     body = [HEADER]
     for p in parts:
         body.append(_indent(dumps(footprint_for_board(p))) + '\n')
@@ -499,6 +501,18 @@ def write_kicad_pcb(parts, box, path, routing=None):
             body.append(f'\t(via\n\t\t(at {_fmt(v["x"])} {_fmt(v["y"])})\n\t\t(size {_fmt(RULES["via_size"])})\n'
                         f'\t\t(drill {_fmt(RULES["via_drill"])})\n\t\t(layers "F.Cu" "B.Cu")\n\t\t(net {_q(v["net"])})\n\t)\n')
     x1, y1, x2, y2 = box
+    if pour:
+        # The board file carries the zone outline and its rules; KiCad computes the exact fill
+        # (thermal reliefs, islands) when the board is opened. The rectangles we compute ourselves
+        # are only the on-screen preview, in board.json.
+        for net, layer in sorted({(r['net'], r['layer']) for r in pour}):
+            body.append(
+                f'\t(zone\n\t\t(net {_q(net)})\n\t\t(net_name {_q(net)})\n\t\t(layer "{layer}")\n'
+                f'\t\t(hatch edge 0.5)\n\t\t(connect_pads yes\n\t\t\t(clearance 0)\n\t\t)\n'
+                f'\t\t(min_thickness {_fmt(POUR_CELL)})\n\t\t(filled_areas_thickness no)\n'
+                f'\t\t(fill yes\n\t\t\t(thermal_gap 0.5)\n\t\t\t(thermal_bridge_width 0.5)\n\t\t)\n'
+                f'\t\t(polygon\n\t\t\t(pts (xy {x1:.4f} {y1:.4f}) (xy {x2:.4f} {y1:.4f}) '
+                f'(xy {x2:.4f} {y2:.4f}) (xy {x1:.4f} {y2:.4f}))\n\t\t)\n\t)\n')
     body.append(f'\t(gr_rect\n\t\t(start {x1:.4f} {y1:.4f})\n\t\t(end {x2:.4f} {y2:.4f})\n'
                 f'\t\t(stroke\n\t\t\t(width 0.05)\n\t\t\t(type default)\n\t\t)\n\t\t(fill no)\n'
                 f'\t\t(layer "Edge.Cuts")\n\t)\n')
@@ -543,6 +557,155 @@ def board_json(parts, nets, box, style, unmapped, warnings):
             'nets': [n['name'] for n in nets], 'unmapped': unmapped, 'warnings': warnings}
 
 
+def add_test_points(components, nets, limit=MAX_TEST_POINTS):
+    """One probe pad per power net, as a normal one-pin part so the placer and router handle it.
+
+    Returns the refs added. Nets with a single node are skipped: nothing to probe yet.
+    """
+    import router as router_mod
+    taken = {c['ref'] for c in components}
+    added = []
+    for n in nets:
+        if len(added) >= limit:
+            break
+        if not router_mod.is_power(n['name']) or len(n['nodes']) < 2:
+            continue
+        i = 1
+        while f'TP{i}' in taken:
+            i += 1
+        ref = f'TP{i}'
+        taken.add(ref)
+        components.append({'ref': ref, 'value': n['name'], 'part': 'TestPoint'})
+        n['nodes'].append({'ref': ref, 'pin': '1'})
+        added.append(ref)
+    return added
+
+
+def mounting_holes(box, style, count=4):
+    """M3 holes in the four corners of the ring added around the parts (no net, drilled only)."""
+    entry = lookup('MountingHole', style)
+    if not entry:
+        return []
+    lib, name, _ = entry
+    probe = {'bbox': courtyard_bbox(load_footprint(lib, name)), 'silk_bbox': silk_bbox(load_footprint(lib, name)),
+             'ref_text': ref_text(load_footprint(lib, name), 'H1'), 'x': 0.0, 'y': 0.0, 'rot': 0}
+    k = part_keepout(probe)                          # how much room one hole really needs
+    inset = max(abs(k[0]), abs(k[1]), abs(k[2]), abs(k[3])) + PART_GAP / 2
+    spots = [(box[0] - inset, box[1] - inset), (box[2] + inset, box[1] - inset),
+             (box[2] + inset, box[3] + inset), (box[0] - inset, box[3] + inset)][:count]
+    out = []
+    for i, (x, y) in enumerate(spots, 1):
+        fp = load_footprint(lib, name)
+        out.append({'ref': f'H{i}', 'value': 'M3', 'part': 'MountingHole', 'footprint': f'{lib}:{name}',
+                    'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': {}, 'pad_pin': {},
+                    'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, f'H{i}'),
+                    'pads': local_pads(fp, {}), 'silk': local_silk(fp),
+                    'x': round(x, 4), 'y': round(y, 4), 'rot': 0})
+    return out
+
+
+POUR_CELL = 0.25      # mm grid the ground fill is computed on
+POUR_NET = 'GND'
+POUR_CLEARANCE = 0.5  # mm to foreign copper and to holes (KiCad's zone clearance default)
+POUR_GLUE = 0.02      # mm each rectangle grows, so neighbours overlap and read as one island
+
+
+def ground_pour(parts, box, routing, net=POUR_NET, layers=('F.Cu', 'B.Cu')):
+    """Fill the free board area on one layer with the ground net.
+
+    Copper of other nets, drilled holes and the board edge are kept clear by the router's own
+    clearance; only the parts of the fill that touch existing ground copper are kept, so KiCad
+    never sees an isolated island. Returns rectangles in mm.
+    """
+    from router import pad_shape, track_shape, via_shape
+
+    both = ('F.Cu', 'B.Cu')
+    shapes = []                                  # (net, layers the copper sits on, shape)
+    for p in parts:
+        for pad, (_, px, py, pnet) in zip(p['pads'], pad_positions(p)):
+            on = both if 'thru_hole' in str(pad['type']) else ('F.Cu',)
+            shapes.append((pnet, on, pad_shape(p, pad, px, py)))
+    for t in (routing or {}).get('tracks', []):
+        shapes.append((t['net'], (t['layer'],), track_shape(t)))
+    for v in (routing or {}).get('vias', []):
+        shapes.append((v['net'], both, via_shape(v)))
+    if not any(n == net for n, _, _ in shapes):
+        return []
+
+    out = []
+    for layer in layers:
+        out += _pour_layer(shapes, box, net, layer)
+    return out
+
+
+def _pour_layer(shapes, box, net, layer):
+    import numpy as np
+    from router import RULES
+
+    g = POUR_CELL
+    edge = RULES['edge'] + POUR_CLEARANCE
+    nx = max(1, int((box[2] - box[0] - 2 * edge) / g))
+    ny = max(1, int((box[3] - box[1] - 2 * edge) / g))
+    xs = box[0] + edge + (np.arange(nx) + 0.5) * g
+    ys = box[1] + edge + (np.arange(ny) + 0.5) * g
+    X, Y = np.meshgrid(xs, ys)
+    keep = POUR_CLEARANCE + g * 0.71          # centre distance that keeps the whole cell clear
+    free = np.ones(X.shape, dtype=bool)
+    seed = np.zeros(X.shape, dtype=bool)
+    for n, on, sh in shapes:
+        if layer not in on:
+            continue                             # copper on the other layer does not block this fill
+        d = sh.dist(X, Y)
+        if n == net:
+            seed |= d <= g          # the fill has to touch this copper to count as connected
+        else:
+            free &= d > keep        # foreign copper, and every drilled hole, stays clear
+
+    # keep only the parts of the fill that reach ground copper (flood fill, 4-neighbour)
+    reach = free & seed
+    while True:
+        grown = reach.copy()
+        grown[1:, :] |= reach[:-1, :]
+        grown[:-1, :] |= reach[1:, :]
+        grown[:, 1:] |= reach[:, :-1]
+        grown[:, :-1] |= reach[:, 1:]
+        grown &= free
+        if np.array_equal(grown, reach):
+            break
+        reach = grown
+
+    # rows of cells -> rectangles, merged downwards while the run stays the same
+    rects, open_runs = [], {}
+    for j in range(ny):
+        row = reach[j]
+        runs = set()
+        i = 0
+        while i < nx:
+            if row[i]:
+                k = i
+                while k + 1 < nx and row[k + 1]:
+                    k += 1
+                runs.add((i, k))
+                i = k + 1
+            else:
+                i += 1
+        for run in list(open_runs):
+            if run not in runs:
+                i1, i2 = run
+                j1 = open_runs.pop(run)
+                rects.append([round(xs[i1] - g / 2, 4), round(ys[j1] - g / 2, 4),
+                              round(xs[i2] + g / 2, 4), round(ys[j - 1] + g / 2, 4)])
+        for run in runs:
+            open_runs.setdefault(run, j)
+    for run, j1 in open_runs.items():
+        i1, i2 = run
+        rects.append([round(xs[i1] - g / 2, 4), round(ys[j1] - g / 2, 4),
+                      round(xs[i2] + g / 2, 4), round(ys[ny - 1] + g / 2, 4)])
+    return [{'net': net, 'layer': layer,
+             'x1': round(r[0] - POUR_GLUE, 4), 'y1': round(r[1] - POUR_GLUE, 4),
+             'x2': round(r[2] + POUR_GLUE, 4), 'y2': round(r[3] + POUR_GLUE, 4)} for r in rects]
+
+
 def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True, overrides=None):
     """Build, place, route, write.
 
@@ -552,6 +715,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
     """
     with open(net_path, encoding='utf-8') as f:
         components, nets = parse_netlist(f.read())
+    test_points = add_test_points(components, nets)
     parts, unmapped, warnings = build_board(components, nets, style)
     hpwl_shelf = hpwl(parts)
     if on_event:
@@ -576,17 +740,22 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
                       'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
 
     import erc as erc_mod
-    findings = erc_mod.check(components, nets, parts)
+    findings = erc_mod.check(components, nets, [p for p in parts if p['part'] != 'MountingHole'])
     if on_event:
         on_event({'type': 'erc', 'findings': findings})
 
+    parts_box = outline(parts)                      # what the circuit itself needs
+    holes = mounting_holes(parts_box, style)        # furniture: adds the ring around it
+    parts = parts + holes
     box = outline(parts)
     routing = None
     if route:
         from router import route as run_router
         routing = run_router(parts, box, on_event=on_event)
-    write_kicad_pcb(parts, box, pcb_path, routing)
+    pour = ground_pour(parts, box, routing) if routing else []
+    write_kicad_pcb(parts, box, pcb_path, routing, pour)
     model = board_json(parts, nets, box, style, unmapped, warnings)
+    model['pour'] = pour
     model['erc'] = findings
     if routing:
         model.update({'version': 3, 'tracks': routing['tracks'], 'vias': routing['vias'],
@@ -610,6 +779,11 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         'board': {'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
                   'w': round(box[2] - box[0], 2), 'h': round(box[3] - box[1], 2)},
         'boardJson': os.path.basename(json_path),
+        'parts_box': {'x1': parts_box[0], 'y1': parts_box[1], 'x2': parts_box[2], 'y2': parts_box[3]},
+        'test_points': test_points,
+        'holes': [h['ref'] for h in holes],
+        'pour': {'net': POUR_NET, 'layers': sorted({r['layer'] for r in pour}), 'rects': len(pour),
+                 'area_mm2': round(sum((r['x2'] - r['x1']) * (r['y2'] - r['y1']) for r in pour), 1)},
         'erc': findings,
         'overlaps': overlaps(parts),
         'outside': [p['ref'] for p in parts if not _inside(part_keepout(p), box)],
