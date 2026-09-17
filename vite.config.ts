@@ -19,6 +19,7 @@ export default defineConfig({
         },
       },
       '/render_board': 'http://localhost:8080',
+      '/board_model': 'http://localhost:8080',
       '/download': 'http://localhost:8080',
       '/download_pcb': 'http://localhost:8080',
       '/generate_pcb': 'http://localhost:8080',
@@ -43,6 +44,7 @@ export default defineConfig({
       '/sessions': 'http://localhost:8080',
       '/favorites': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
+      '/demo_result': 'http://localhost:8080',
     }
   }
 })

@@ -3,6 +3,7 @@ import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
 import Board3D from './Board3D'
+import KiCad3DViewer from './KiCad3DViewer'
 import type { Camera } from '../lib/board3d'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
@@ -193,8 +194,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   // like a PCB editor with its 3D viewer open: plan on the left, board on the right
   const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('both')
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
-  const [photo, setPhoto] = useState(false)          // KiCad render instead of the SVG boxes
-  const [photoState, setPhotoState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [real3d, setReal3d] = useState(true)         // KiCad GLB once the finished board exists
   const [zoom3d, setZoom3d] = useState(1)
   const drag3d = useRef<{ x: number; y: number } | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
@@ -548,39 +548,30 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
       {view3d !== '2d' && (
-        <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: drag3d.current ? 'grabbing' : 'grab',
+        <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: real3d && placed ? 'grab' : (drag3d.current ? 'grabbing' : 'grab'),
           borderLeft: view3d === 'both' ? `1px solid ${UI_LINE}` : 'none', touchAction: 'none' }}
-          onPointerDown={on3dDown} onPointerMove={on3dMove}
+          onPointerDown={real3d && placed ? undefined : on3dDown}
+          onPointerMove={real3d && placed ? undefined : on3dMove}
           onPointerUp={() => { drag3d.current = null }}
-          onWheel={e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
-          {photo && pcbFilename
-            ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: '#efefe9' }}>
-                <img data-testid="board-photo" alt="KiCad 3D 렌더"
-                  src={`/render_board?pcb=${encodeURIComponent(pcbFilename)}&rot=${Math.round(-cam.tilt)},0,${Math.round(cam.yaw + 53)}`}
-                  onLoad={() => setPhotoState('idle')} onError={() => setPhotoState('error')}
-                  style={{ maxWidth: '100%', maxHeight: '100%', display: photoState === 'error' ? 'none' : 'block' }} />
-                {photoState === 'loading' && <div style={{ position: 'absolute', color: UI_DIM,
-                  fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>KiCad로 3D 렌더 중…</div>}
-                {photoState === 'error' && <div style={{ color: UI_BAD, fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>
-                  렌더 실패 — KiCad가 없는 서버일 수 있어요
-                </div>}
-              </div>
+          onWheel={real3d && placed ? undefined : e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
+          {real3d && placed && pcbFilename
+            ? <KiCad3DViewer pcbFilename={pcbFilename} />
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
           {pcbFilename && placed && (
-            <button data-testid="board-photo-toggle"
-              onClick={() => { setPhoto(v => !v); setPhotoState(photo ? 'idle' : 'loading') }}
+            <button data-testid="board-real3d-toggle"
+              onClick={() => setReal3d(v => !v)}
               style={{ position: 'absolute', left: 8, top: 8, padding: '4px 10px', borderRadius: 6,
-                border: `1px solid ${UI_LINE}`, background: photo ? UI_FG : UI_BG, color: photo ? '#fff' : UI_FG,
+                border: `1px solid ${UI_LINE}`, background: real3d ? UI_FG : UI_BG, color: real3d ? '#fff' : UI_FG,
                 fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
-              {photo ? '도형으로' : '사진으로'}
+              {real3d ? '도형 보기' : '실제 3D'}
             </button>
           )}
           <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
             background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
             fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>
-            {photo ? 'KiCad 3D 렌더 · 각도는 끌어서 바꾼 뒤 다시 누르면 반영' : '끌어서 돌리기 · 기울기 ' + Math.round(cam.tilt) + '° · 부품 높이는 표시용 근사값'}
+            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
           </div>
         </div>
       )}

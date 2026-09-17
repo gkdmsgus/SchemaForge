@@ -1072,6 +1072,29 @@ async function runAiLoop(
   }
 }
 
+// ── GET /board_model ───────────────────────────────────────────────
+// KiCad's real board geometry and component models as binary glTF. The browser
+// loads this once and renders it with WebGL, so rotation/zoom stay interactive.
+app.get('/board_model', async (req: Request, res: Response) => {
+  const file = basename(String(req.query.pcb || ''))
+  if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
+  const pcbPath = join(OUTPUTS_DIR, file)
+  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
+  const out = join(tmpdir(), `sf_model_${randomUUID().slice(0, 8)}.glb`)
+  try {
+    await runKicadCli(['pcb', 'export', 'glb', '--output', out, '--force',
+      '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen',
+      '--include-soldermask', pcbPath], '3D model export', 180000)
+    res.setHeader('Content-Type', 'model/gltf-binary')
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.send(readFileSync(out))
+  } catch (e) {
+    res.status(503).json({ error: (e as Error).message })
+  } finally {
+    try { unlinkSync(out) } catch { /* already gone */ }
+  }
+})
+
 // ── GET /render_board ──────────────────────────────────────────────
 // KiCad's own 3D renderer, for the photo view next to the schematic-style board.
 // ?pcb=<file in outputs>&rot=X,Y,Z&w=&h=  -> image/png
@@ -1348,6 +1371,31 @@ app.get('/download_gerber_file/:dir/:filename', (req: Request, res: Response) =>
   const filePath = join(OUTPUTS_DIR, dir, filename)
   if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found.' })
   res.download(filePath, filename)
+})
+
+// ── GET /demo_result/:name ────────────────────────────────────────
+// Loads one of the checked-in test circuits without calling OpenAI. This keeps
+// the interactive 2D/3D board demo usable on development machines with no API
+// key while still exercising the real SKiDL → placement → routing pipeline.
+app.get('/demo_result/:name', async (req: Request, res: Response) => {
+  const demos: Record<string, string> = {
+    led: 'led_basic',
+    ne555: 'ne555_blink',
+    relay: 'npn_relay',
+    motor: 'nmos_motor',
+  }
+  const fixture = demos[String(req.params['name'] || '')]
+  if (!fixture) return res.status(404).json({ error: 'Unknown demo circuit.' })
+
+  try {
+    const code = readFileSync(join(process.cwd(), 'test_circuits', `${fixture}.py`), 'utf8')
+    const outputPath = await runSkidl(code)
+    const filename = basename(outputPath)
+    const graph = parseNetlist(readFileSync(outputPath, 'utf8'))
+    res.json({ filename, graph, code, guide: '내장 검증 회로 — OpenAI API 키 없이 실행됩니다.' })
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message })
+  }
 })
 
 // ── GET /health ────────────────────────────────────────────────────
