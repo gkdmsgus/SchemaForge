@@ -168,9 +168,10 @@ interface GraphDiff { added?: Set<string>; removed?: Set<string>; modified?: Set
 interface CircuitCanvasProps {
   graph?: NetGraph
   graphDiff?: GraphDiff | null
+  invalidRefs?: Set<string>
 }
 
-export default function CircuitCanvas({ graph, graphDiff = null }: CircuitCanvasProps) {
+export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set() }: CircuitCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -801,7 +802,9 @@ export default function CircuitCanvas({ graph, graphDiff = null }: CircuitCanvas
               const val = edits[c.ref]?.value ?? c.value ?? ''
               const typeLabel = COMP_TYPE_LABELS[c.ref[0]?.toUpperCase()] || c.ref[0]?.toUpperCase()
               const diffAdded    = graphDiff?.added?.has(c.ref)
+              const diffRemoved  = graphDiff?.removed?.has(c.ref)
               const diffModified = graphDiff?.modified?.has(c.ref)
+              const invalid = invalidRefs.has(c.ref)
 
               return (
                 <g key={c.ref}
@@ -846,21 +849,27 @@ export default function CircuitCanvas({ graph, graphDiff = null }: CircuitCanvas
                   })}
 
                   {/* diff glow */}
-                  {(diffAdded || diffModified) && (
+                  {(diffAdded || diffRemoved || diffModified) && (
                     <rect x={-l.w/2-4} y={-l.h/2-4} width={l.w+8} height={l.h+8} rx="9"
                           fill="none"
-                          stroke={diffAdded ? '#34d3a0' : '#f59e0b'}
+                          stroke={diffRemoved ? '#ff5c5c' : diffAdded ? '#34d3a0' : '#f59e0b'}
                           strokeWidth="2"
                           strokeOpacity="0.8"
-                          style={{ filter: `drop-shadow(0 0 6px ${diffAdded ? '#34d3a0' : '#f59e0b'})` }}
+                          style={{ filter: `drop-shadow(0 0 6px ${diffRemoved ? '#ff5c5c' : diffAdded ? '#34d3a0' : '#f59e0b'})`, animation: diffRemoved ? 'pulse 0.35s ease-in-out infinite' : undefined }}
                     />
+                  )}
+
+                  {invalid && (
+                    <rect x={-l.w/2-5} y={-l.h/2-5} width={l.w+10} height={l.h+10} rx="10"
+                          fill="none" stroke="#ff5c5c" strokeWidth="2.5" strokeDasharray="7 4"
+                          style={{ filter: 'drop-shadow(0 0 7px rgba(255,92,92,0.8))', animation: 'pulse 1s ease-in-out infinite' }} />
                   )}
 
                   {/* component body */}
                   <rect x={-l.w/2} y={-l.h/2} width={l.w} height={l.h} rx="6"
-                        fill={diffAdded ? '#0d2018' : diffModified ? '#1a1506' : COMP_FILL}
-                        stroke={isSel ? color : diffAdded ? '#34d3a0' : diffModified ? '#f59e0b' : COMP_BORDER}
-                        strokeWidth={isSel || diffAdded || diffModified ? 1.5 : 1}
+                        fill={diffRemoved ? '#241010' : diffAdded ? '#0d2018' : diffModified ? '#1a1506' : COMP_FILL}
+                        stroke={invalid || diffRemoved ? '#ff5c5c' : isSel ? color : diffAdded ? '#34d3a0' : diffModified ? '#f59e0b' : COMP_BORDER}
+                        strokeWidth={invalid || diffRemoved ? 2 : isSel || diffAdded || diffModified ? 1.5 : 1}
                         style={{ filter: isSel ? `drop-shadow(0 0 8px ${color}66)` : 'none' }}
                   />
 

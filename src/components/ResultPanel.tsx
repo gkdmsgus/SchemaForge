@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, Dispatch, SetStateAction } from 'react'
+import React, { useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
@@ -18,6 +18,7 @@ import type {
   BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
 } from '../types'
 import BoardView from './BoardView'
+import { validateCircuit } from '../lib/circuitValidation'
 
 const API = ''
 
@@ -101,6 +102,9 @@ export default function ResultPanel({
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
+  const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
+  const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
+  const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
   function computeDiff(before: NetGraph | null, after: NetGraph | null) {
     const beforeRefs = new Set((before?.components || []).map((c: { ref: string }) => c.ref))
@@ -130,6 +134,11 @@ export default function ResultPanel({
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
   async function generatePCB() {
+    if (circuitErrors.length) {
+      setPcbStatus('invalid')
+      setViewMode('schematic')
+      return
+    }
     // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
       ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style: pcbStyle, ai: useAi }
@@ -268,8 +277,10 @@ export default function ResultPanel({
               pushGraphHistory(snapshot)
               newGraph = applyActions(snapshot, actions) as NetGraph | null
               const diff = computeDiff(snapshot, newGraph)
-              setLocalGraph(newGraph)
               setGraphDiff(diff)
+              // Let removed parts flash before they disappear, then show diagnostics.
+              if (diff.removed.size) setTimeout(() => setLocalGraph(newGraph), 550)
+              else setLocalGraph(newGraph)
               setTimeout(() => setGraphDiff(null), 3000)
             }
             const assistantMsg: ChatMessage = { role: 'assistant', content: reply as string, actions: actions || [] }
@@ -607,7 +618,7 @@ export default function ResultPanel({
                   AI 다듬기 {useAi ? 'ON' : 'OFF'}
                 </button>
               )}
-              {pcbStatus === null && <button onClick={generatePCB} style={ghostBtn}><IconLayers size={12} /> PCB 생성</button>}
+              {(pcbStatus === null || pcbStatus === 'invalid') && <button onClick={generatePCB} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <span style={{...ghostBtn, opacity:0.6, cursor:'default'}}>생성중…</span>}
               {pcbStatus === 'done' && pcbFilename && <>
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
@@ -622,7 +633,7 @@ export default function ResultPanel({
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
-              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} />
+              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} />
               : board
                 ? <BoardView pcbFilename={pcbFilename ?? undefined}
                     parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
@@ -634,6 +645,31 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
+            {circuitIssues.length > 0 && viewMode === 'schematic' && (
+              <div role="alert" data-testid="circuit-diagnostics" style={{
+                position: 'absolute', left: 14, top: 14, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
+                background: 'rgba(25,20,18,0.96)', border: '1px solid rgba(255,92,92,0.55)', borderRadius: 8,
+                boxShadow: '0 10px 30px rgba(0,0,0,0.28)', color: '#f6eee5', fontFamily: 'var(--sf-font-mono)',
+              }}>
+                <div style={{ padding: '8px 11px', borderBottom: '1px solid rgba(255,255,255,0.12)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <strong style={{ color: circuitErrors.length ? '#ff7770' : '#f5b942', fontSize: 11 }}>
+                    {circuitErrors.length ? `회로 검사 실패 · 오류 ${circuitErrors.length}` : `회로 검사 경고 ${circuitIssues.length}`}
+                  </strong>
+                  <span style={{ marginLeft: 'auto', opacity: 0.55, fontSize: 9 }}>PCB 생성 전 검사</span>
+                </div>
+                {circuitIssues.map((issue, index) => (
+                  <div key={`${issue.code}-${index}`} style={{ padding: '9px 11px', borderBottom: index < circuitIssues.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}>
+                    <div style={{ display: 'flex', gap: 7, alignItems: 'baseline' }}>
+                      <span style={{ color: issue.severity === 'error' ? '#ff7770' : '#f5b942', fontWeight: 700, fontSize: 10 }}>{issue.code}</span>
+                      <strong style={{ fontSize: 11 }}>{issue.title}</strong>
+                      {(issue.refs.length > 0 || issue.nets.length > 0) && <span style={{ opacity: 0.55, fontSize: 9 }}>{[...issue.refs, ...issue.nets].join(' · ')}</span>}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 10, lineHeight: 1.45, color: '#d8cfc6' }}>{issue.message}</div>
+                    <div style={{ marginTop: 3, fontSize: 9, color: '#9fd8c6' }}>수정: {issue.suggestion}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
