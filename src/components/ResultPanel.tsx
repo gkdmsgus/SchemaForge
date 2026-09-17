@@ -146,6 +146,8 @@ export default function ResultPanel({
     if (!body) { setPcbStatus('error'); return }
 
     setPcbStatus('loading')
+    // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
+    if (window.innerWidth < 1280) { setEditorOpen(false); setSidebarOpen(false) }
     setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, ai: [], status: 'streaming' })
     setGerberStatus(null)
     setGerberInfo(null)
