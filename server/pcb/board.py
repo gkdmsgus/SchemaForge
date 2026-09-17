@@ -581,27 +581,44 @@ def add_test_points(components, nets, limit=MAX_TEST_POINTS):
     return added
 
 
-def mounting_holes(box, style, count=4):
-    """M3 holes in the four corners of the ring added around the parts (no net, drilled only)."""
+def mounting_holes(box, style, parts=(), count=4):
+    """M3 holes in the four corners, tucked in as close to the circuit as they fit.
+
+    Starting from the corners of the parts box they are pushed outwards in small steps until no
+    hole keep-out touches a part, so a small circuit does not get a wide empty ring around it.
+    """
     entry = lookup('MountingHole', style)
     if not entry:
         return []
     lib, name, _ = entry
-    probe = {'bbox': courtyard_bbox(load_footprint(lib, name)), 'silk_bbox': silk_bbox(load_footprint(lib, name)),
-             'ref_text': ref_text(load_footprint(lib, name), 'H1'), 'x': 0.0, 'y': 0.0, 'rot': 0}
-    k = part_keepout(probe)                          # how much room one hole really needs
-    inset = max(abs(k[0]), abs(k[1]), abs(k[2]), abs(k[3])) + PART_GAP / 2
-    spots = [(box[0] - inset, box[1] - inset), (box[2] + inset, box[1] - inset),
-             (box[2] + inset, box[3] + inset), (box[0] - inset, box[3] + inset)][:count]
-    out = []
-    for i, (x, y) in enumerate(spots, 1):
+
+    def hole(ref, x, y):
         fp = load_footprint(lib, name)
-        out.append({'ref': f'H{i}', 'value': 'M3', 'part': 'MountingHole', 'footprint': f'{lib}:{name}',
-                    'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': {}, 'pad_pin': {},
-                    'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, f'H{i}'),
-                    'pads': local_pads(fp, {}), 'silk': local_silk(fp),
-                    'x': round(x, 4), 'y': round(y, 4), 'rot': 0})
+        return {'ref': ref, 'value': 'M3', 'part': 'MountingHole', 'footprint': f'{lib}:{name}',
+                'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': {}, 'pad_pin': {},
+                'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
+                'pads': local_pads(fp, {}), 'silk': local_silk(fp),
+                'x': round(x, 4), 'y': round(y, 4), 'rot': 0}
+
+    corners = [(box[0], box[1], -1, -1), (box[2], box[1], 1, -1),
+               (box[2], box[3], 1, 1), (box[0], box[3], -1, 1)][:count]
+    part_boxes = [part_keepout(p) for p in parts]
+    out = []
+    for i, (cx, cy, sx, sy) in enumerate(corners, 1):
+        placed = None
+        for step in range(0, 41):                     # 0 ... 10 mm outwards, 0.25 mm at a time
+            d = step * 0.25
+            h = hole(f'H{i}', cx + sx * d, cy + sy * d)
+            k = part_keepout(h)
+            if not any(_boxes_touch(k, b) for b in part_boxes) and                not any(_boxes_touch(k, part_keepout(o)) for o in out):
+                placed = h
+                break
+        out.append(placed or hole(f'H{i}', cx + sx * 10, cy + sy * 10))
     return out
+
+
+def _boxes_touch(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
 POUR_CELL = 0.25      # mm grid the ground fill is computed on
@@ -745,7 +762,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         on_event({'type': 'erc', 'findings': findings})
 
     parts_box = outline(parts)                      # what the circuit itself needs
-    holes = mounting_holes(parts_box, style)        # furniture: adds the ring around it
+    holes = mounting_holes(parts_box, style, parts)  # furniture: tucked into the corners
     parts = parts + holes
     box = outline(parts)
     routing = None
