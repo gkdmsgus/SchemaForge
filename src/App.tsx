@@ -67,6 +67,25 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', 'light')
   }, [])
 
+  // Development/demo entry point: /?demo=motor opens a real checked-in test
+  // circuit without requiring an OpenAI key. PCB generation still uses the
+  // same server stream and BoardView as a normal generated circuit.
+  useEffect(() => {
+    const demo = new URLSearchParams(window.location.search).get('demo')
+    if (!demo) return
+    fetch(`/demo_result/${encodeURIComponent(demo)}`)
+      .then(async r => {
+        if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `HTTP ${r.status}`)
+        return r.json() as Promise<GenerateResult>
+      })
+      .then(data => {
+        lastPrompt.current = `Demo: ${demo}`
+        setResult(data)
+        setResultKey(k => k + 1)
+      })
+      .catch(e => setError(`데모 회로를 불러오지 못했습니다: ${(e as Error).message}`))
+  }, [])
+
   // 앱 시작 시 저장된 토큰이 서버에서 유효한지 검증
   useEffect(() => {
     const stored = loadAuth()
