@@ -128,6 +128,8 @@ export interface ErcFinding {
 /** One round of the AI improvement loop (stage 4): the model proposes, the server judges. */
 export interface AiRound {
   round: number
+  /** which half of a mixed proposal this event judged */
+  part?: 'width' | 'place'
   reason: string
   actions: {
     moves?: { ref: string; dx: number; dy: number }[]

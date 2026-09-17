@@ -11,7 +11,7 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
 import {
-  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, precheck,
+  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, precheck, splitEdit,
   readBoard, roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
@@ -1024,45 +1024,50 @@ async function runAiLoop(
         emit({ round, reason: edit.reason || '더 고칠 것이 없습니다', actions: edit, before: best, kept: false, note: 'stop' })
         break
       }
-      const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
-      const notes = applyEdit(trial, edit, board)
-      // Reject collisions before paying for a reroute and DRC, and tell the model exactly what hit what.
-      const problems = precheck(board, trial)
-      if (problems.length) {
-        const why = `rejected before routing: ${problems.join('; ')}`
-        feedback.push(describeOutcome(round, edit, best, undefined, false, why))
-        emit({ round, reason: edit.reason || '', actions: edit, before: best, kept: false,
-               note: [...notes, `사전 검사 불합격: ${problems.join(', ')}`].join(', ') })
-        continue
-      }
-      const restore = backup([pcbPath, jsonPath])
-      let after: Metrics | undefined
-      let note = notes.join(', ')
-      try {
-        const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
-        const drc2 = await runDrc(pcbPath)
-        if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
-        after = metricsOf(s2, drc2.errors ?? 0, readBoard(jsonPath))
-        if (better(after, best)) {
-          const before = best
-          best = after
-          bestDrc = drc2
-          bestDone = { ...doneEvent, summary: s2, board: readBoard(jsonPath) }
-          board = readBoard(jsonPath)
-          ov.parts = trial.parts
-          ov.net_width = trial.net_width
-          kept = true
-          feedback.push(describeOutcome(round, edit, before, after, true))
-          emit({ round, reason: edit.reason || '', actions: edit, before, after, kept: true, note })
+      // A proposal often mixes a width change with a move. Judge them one after the other so a good
+      // width change is not thrown away with a bad move (or a bad move carried in by a good width change).
+      for (const [part, sub] of splitEdit(edit)) {
+        const label = part === 'width' ? '선 폭' : '배치'
+        const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
+        const notes = applyEdit(trial, sub, board)
+        // Reject collisions before paying for a reroute and DRC, and tell the model exactly what hit what.
+        const problems = precheck(board, trial)
+        if (problems.length) {
+          const why = `rejected before routing: ${problems.join('; ')}`
+          feedback.push(describeOutcome(round, sub, best, undefined, false, why))
+          emit({ round, part, reason: edit.reason || '', actions: sub, before: best, kept: false,
+                 note: [...notes, `${label} 사전 검사 불합격: ${problems.join(', ')}`].join(', ') })
           continue
         }
-        note = note ? `${note} · 개선 없음` : '개선 없음'
-      } catch (e) {
-        note = `적용 실패: ${(e as Error).message}`
+        const restore = backup([pcbPath, jsonPath])
+        let after: Metrics | undefined
+        let note = notes.join(', ')
+        try {
+          const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
+          const drc2 = await runDrc(pcbPath)
+          if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
+          after = metricsOf(s2, drc2.errors ?? 0, readBoard(jsonPath))
+          if (better(after, best)) {
+            const before = best
+            best = after
+            bestDrc = drc2
+            bestDone = { ...doneEvent, summary: s2, board: readBoard(jsonPath) }
+            board = readBoard(jsonPath)
+            ov.parts = trial.parts
+            ov.net_width = trial.net_width
+            kept = true
+            feedback.push(describeOutcome(round, sub, before, after, true))
+            emit({ round, part, reason: edit.reason || '', actions: sub, before, after, kept: true, note })
+            continue
+          }
+          note = note ? `${note} · 개선 없음` : '개선 없음'
+        } catch (e) {
+          note = `적용 실패: ${(e as Error).message}`
+        }
+        restore()                                   // put the previous board back
+        feedback.push(describeOutcome(round, sub, best, after, false))
+        emit({ round, part, reason: edit.reason || '', actions: sub, before: best, after, kept: false, note })
       }
-      restore()                                   // put the previous board back
-      feedback.push(describeOutcome(round, edit, best, after, false))
-      emit({ round, reason: edit.reason || '', actions: edit, before: best, after, kept: false, note })
     }
     return kept ? { done: bestDone, drc: bestDrc } : null
   } catch (e) {

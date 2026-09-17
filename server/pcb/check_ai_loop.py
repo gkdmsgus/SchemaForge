@@ -2,8 +2,8 @@
 Stage-4 checks: fixed placement and the AI improvement loop.
 
 The loop itself lives in the Node server, so this script talks to a server started
-with SF_AI_STUB=1 (a deterministic stand-in for the model: round 1 widens GND,
-round 2 moves a part far off the board, round 3 stops).
+with SF_AI_STUB=1 (a deterministic stand-in for the model: round 1 proposes a GND widening
+and an off-board move together, round 2 stops).
 
 Usage: python check_ai_loop.py [--port 8098]
 Exit code 0 only if every check passes.
@@ -82,6 +82,12 @@ def check_loop(port):
         not done['summary']['unrouted'] and not done['summary']['overlaps'] and
         (done.get('drc') or {}).get('errors', 0) == 0,
         f'unrouted={len(done["summary"]["unrouted"])} drc={done.get("drc", {}).get("errors")}')
+    first = [r for r in rounds if r['round'] == 1]
+    res['24b mixed proposal split'] = (
+        [r.get('part') for r in first] == ['width', 'place']
+        and first[0]['kept'] and not first[1]['kept']
+        and not first[0]['actions'].get('moves') and not first[1]['actions'].get('net_widths'),
+        f'round 1 parts={[(r.get("part"), r["kept"]) for r in first]}')
     return res
 
 

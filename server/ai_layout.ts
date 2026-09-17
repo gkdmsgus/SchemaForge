@@ -42,12 +42,28 @@ export interface BoardEdit {
 
 export interface AiRound {
   round: number
+  part?: EditPart
   reason: string
   actions: BoardEdit
   before: Metrics
   after?: Metrics
   kept: boolean
   note?: string
+}
+
+export type EditPart = 'width' | 'place'
+
+/** Width changes first (they never move a part), then moves and rotations; empty groups are dropped. */
+export function splitEdit(edit: BoardEdit): [EditPart, BoardEdit][] {
+  const out: [EditPart, BoardEdit][] = []
+  if (edit.net_widths?.length) out.push(['width', { net_widths: edit.net_widths }])
+  if (edit.moves?.length || edit.rotations?.length) {
+    const place: BoardEdit = {}
+    if (edit.moves?.length) place.moves = edit.moves
+    if (edit.rotations?.length) place.rotations = edit.rotations
+    out.push(['place', place])
+  }
+  return out
 }
 
 export interface Overrides {
@@ -456,8 +472,9 @@ const TOOL = {
 
 /** Deterministic stand-in for the model, used by the checks (SF_AI_STUB=1). */
 export function stubEdit(round: number): BoardEdit {
-  if (round === 1) return { reason: '전원 넷 GND를 0.8 mm로 넓혀 전류 여유를 둡니다', net_widths: [{ net: 'GND', mm: 0.8 }] }
-  if (round === 2) return { reason: '(테스트) 부품을 기판 밖으로 옮겨 나빠지는지 확인합니다', moves: [{ ref: 'R1', dx: 40, dy: 40 }] }
+  // One mixed proposal: the width change should be kept and the move rolled back, in the same round.
+  if (round === 1) return { reason: '(테스트) GND를 0.8 mm로 넓히고 R1을 기판 밖으로 옮깁니다',
+                            net_widths: [{ net: 'GND', mm: 0.8 }], moves: [{ ref: 'R1', dx: 40, dy: 40 }] }
   return { reason: '더 고칠 것이 없습니다', stop: true }
 }
 
