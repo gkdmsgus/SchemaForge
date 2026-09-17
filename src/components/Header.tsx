@@ -130,7 +130,7 @@ export default function Header({
             }}>
               {user.email?.[0]?.toUpperCase() ?? '?'}
             </div>
-            <span style={{ fontSize: 12, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="sf-hide-narrow" style={{ fontSize: 12, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {user.email?.split('@')[0]}
             </span>
             <button
@@ -139,7 +139,7 @@ export default function Header({
                 background: 'none',
                 border: '1px solid var(--sf-line)',
                 borderRadius: 4, color: 'var(--sf-fg-dim)',
-                cursor: 'pointer', fontSize: 11, padding: '3px 9px',
+                cursor: 'pointer', fontSize: 11, padding: '3px 9px', whiteSpace: 'nowrap',
                 fontFamily: 'var(--sf-font-mono)',
                 transition: 'all 0.15s',
               }}

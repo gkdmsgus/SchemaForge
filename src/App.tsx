@@ -30,6 +30,7 @@ function getSettings(): AppSettings {
 }
 
 function detectStep(msg: string): number {
+  if (/netlist|fixing/i.test(msg)) return 2
   if (msg.includes('Searching')) return 0
   if (msg.includes('GPT') || msg.includes('analysing') || msg.includes('analyzing')) return 1
   if (msg.includes('netlist') || msg.includes('Generating')) return 2
@@ -218,7 +219,7 @@ export default function App() {
     setError(null)
     setResult(null)
     setProgress({ msg: '준비 중...', step: 0 })
-    setLogLines([{ ts: nowTs(), kind: 'info', msg: `forge generate "${p.slice(0, 60)}"` }])
+    setLogLines([{ ts: nowTs(), kind: 'info', msg: '생성 요청을 보냈습니다' }])
 
     const abort = new AbortController()
     abortRef.current = abort
