@@ -42,7 +42,7 @@ const BTN_VARIANTS: Record<BtnVariant, CSSProperties> = {
 };
 
 const BTN_HOVER: Record<BtnVariant, CSSProperties> = {
-  primary:   { background: '#d97559' },
+  primary:   { background: 'var(--sf-amber-deep)', borderColor: 'var(--sf-amber-deep)' },
   cyan:      { background: '#5e948a' },
   secondary: { background: 'var(--sf-bg-4)', borderColor: 'var(--sf-fg-faint)' },
   ghost:     { background: 'var(--sf-bg-3)', color: 'var(--sf-fg)' },
@@ -135,7 +135,7 @@ export function Chip({ children, icon, active, onClick, variant = 'default', sty
         fontSize: 12, fontWeight: 500, fontFamily: 'var(--sf-font-mono)',
         letterSpacing: '0.02em',
         background: hover ? v.bgHover : v.bg, color: v.fg,
-        border: `1px solid ${v.bd}`, borderRadius: 'var(--sf-r-pill)',
+        border: `1px solid ${v.bd}`, borderRadius: 'var(--sf-r-sm)',
         cursor: onClick ? 'pointer' : 'default',
         transition: 'all var(--sf-dur) var(--sf-ease)',
         ...style,

@@ -43,11 +43,11 @@ $sf-line-trace:   #b0a484;
 
 $sf-danger:       #b04826;
 
-$sf-font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+$sf-font-sans: 'Space Grotesk', 'IBM Plex Sans KR', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
 // ── Webfonts ────────────────────────────────────────────────────────────────
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap');
 
 // ── CSS custom properties (consumed by JSX components) ──────────────────────
 :root {
@@ -107,8 +107,8 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   --sf-glow-violet:  0 0 24px rgba(106, 76, 181, 0.18);
 
   // Radii / Spacing / Motion / Type — unchanged from previous file
-  --sf-r-xs: 4px;  --sf-r-sm: 8px;  --sf-r-md: 12px;
-  --sf-r-lg: 18px; --sf-r-xl: 28px; --sf-r-pill: 999px;
+  --sf-r-xs: 3px;  --sf-r-sm: 4px;  --sf-r-md: 6px;
+  --sf-r-lg: 8px;  --sf-r-xl: 10px; --sf-r-pill: 999px;
 
   --sf-s-1:  2px;  --sf-s-2:  4px;  --sf-s-3:  8px;  --sf-s-4: 12px;
   --sf-s-5: 16px;  --sf-s-6: 20px;  --sf-s-7: 24px;  --sf-s-8: 32px;

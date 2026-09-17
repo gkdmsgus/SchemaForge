@@ -1,7 +1,5 @@
 ﻿import { useState } from 'react'
-import TraceField from './TraceField.tsx'
-import Mascot from './Mascot.tsx'
-import { Button, Chip, IconBolt, IconWand } from './primitives.tsx'
+import { Button, Chip, IconWand } from './primitives.tsx'
 
 const EXAMPLE_PROMPTS = [
   '9V로 LED 3개 점멸',
@@ -19,13 +17,6 @@ interface CircuitField {
   recommended?: string
   hints?: Record<string, string>
   multi?: boolean
-}
-
-interface WorkflowStep {
-  num: string
-  title: string
-  desc: string
-  bullets: string[]
 }
 
 interface CircuitType {
@@ -599,190 +590,95 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
   }
 
   return (
-    <div style={{ position: 'relative', minHeight: '100%', background: 'var(--sf-bg)', overflow: 'hidden' }}>
-      <TraceField opacity={0.18} />
-      <div className="sf-composer-wrap" style={{ position: 'relative', maxWidth: 940, margin: '0 auto', padding: '56px 24px 96px' }}>
+    <div className="sf-home" style={{ background: 'var(--sf-bg)', minHeight: 'calc(100vh - 58px)' }}>
+      <div className="sf-home-wrap">
 
-        {/* Hero headline */}
-        <div style={{ textAlign: 'center', marginBottom: 44 }}>
-          <Mascot state="idle" size={60} style={{ margin: '0 auto 18px' }} />
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 7,
-            background: 'var(--sf-amber-soft)',
-            border: '1px solid var(--sf-amber-line)',
-            borderRadius: 999,
-            padding: '4px 14px',
-            marginBottom: 18,
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sf-cyan)', boxShadow: '0 0 6px var(--sf-cyan)', flexShrink: 0 }} />
-            <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10.5, color: 'var(--sf-amber)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-              AI · Circuit · Design
-            </span>
-          </div>
-          <h1 style={{
-            margin: '0 0 14px',
-            fontFamily: 'var(--sf-font-sans)',
-            fontSize: 'clamp(32px, 5vw, 52px)',
-            fontWeight: 700,
-            color: 'var(--sf-fg)',
-            lineHeight: 1.1,
-            letterSpacing: '-0.03em',
-          }}>
-            어떤 회로를{' '}
-            <span style={{
-              color: 'var(--sf-amber)',
-              position: 'relative',
-              display: 'inline-block',
-            }}>만들까요?</span>
-          </h1>
-          <p style={{
-            margin: '0 auto',
-            maxWidth: 500,
-            fontFamily: 'var(--sf-font-sans)',
-            fontSize: 15.5,
-            color: 'var(--sf-fg-muted)',
-            lineHeight: 1.65,
-          }}>
-            한 줄로 설명하거나, 카테고리에서 사양을 골라 주세요.
-          </p>
-        </div>
+        {/* ── Top: what it does + the real output ─────────────────── */}
+        <section className="sf-home-top">
+          <div>
+            <h1 className="sf-home-title">
+              말로 설명한 회로를<br />KiCad 기판까지.
+            </h1>
+            <p className="sf-home-lede">
+              부품과 연결을 넷리스트로 만들고, KiCad 풋프린트로 배치·배선한 뒤 KiCad DRC로 검사합니다.
+              결과는 .net, .kicad_pcb, 거버 파일로 받습니다.
+            </p>
 
-        {/* Hero free-text entry */}
-        <div style={{ marginBottom: 36 }}>
-          <div style={{
-            position: 'relative',
-            background: 'var(--sf-bg-2)',
-            border: `1.5px solid ${heroFocused ? 'var(--sf-amber)' : 'var(--sf-line-strong)'}`,
-            borderRadius: 20,
-            boxShadow: heroFocused
-              ? '0 0 0 4px rgba(200,117,21,0.1), 0 8px 32px rgba(74,52,18,0.12)'
-              : '0 4px 20px rgba(74,52,18,0.08)',
-            overflow: 'hidden',
-            transition: 'border-color 0.2s, box-shadow 0.2s',
-          }}>
-            <textarea
-              value={heroText}
-              onChange={e => setHeroText(e.target.value)}
-              onFocus={() => setHeroFocused(true)}
-              onBlur={() => setHeroFocused(false)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canSubmit) {
-                  e.preventDefault()
-                  submit()
-                }
-              }}
-              placeholder="만들고 싶은 회로를 자유롭게 적어 주세요&#10;예: 9V 배터리로 빨간 LED 3개를 1초 간격으로 점멸"
-              style={{
-                width: '100%', minHeight: 116,
-                background: 'transparent', border: 'none', outline: 'none',
-                padding: '22px 24px 64px',
-                color: 'var(--sf-fg)',
-                fontFamily: 'var(--sf-font-sans)',
-                fontSize: 15.5, lineHeight: 1.6,
-                resize: 'none',
-                boxSizing: 'border-box',
-                display: 'block',
-              }}
-            />
-            <div style={{
-              position: 'absolute', left: 16, right: 12, bottom: 12,
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            }}>
-              <span style={{
-                fontSize: 11, color: 'var(--sf-fg-faint)',
-                fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.06em',
-              }}>
-                {heroText.length > 0 ? `${heroText.length}자` : '⌘ + ↵ 로 바로 생성'}
-              </span>
-              <Button
-                variant="primary" size="md"
-                icon={<IconBolt size={14} />}
-                onClick={submit}
-                disabled={!canSubmit}
-              >
-                {type ? `${type.label} 만들기` : '바로 만들기'}
-              </Button>
+            <div className={`sf-home-input${heroFocused ? ' is-focused' : ''}`}>
+              <textarea
+                value={heroText}
+                onChange={e => setHeroText(e.target.value)}
+                onFocus={() => setHeroFocused(true)}
+                onBlur={() => setHeroFocused(false)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canSubmit) {
+                    e.preventDefault()
+                    submit()
+                  }
+                }}
+                placeholder={type
+                  ? `${type.label}에 더할 요청 (선택)`
+                  : '예: 9V 배터리로 빨간 LED 3개를 1초 간격으로 점멸'}
+              />
+              <div className="sf-home-input-bar">
+                <span>{heroText.length > 0 ? `${heroText.length}자` : 'Ctrl + Enter로 생성'}</span>
+                <Button variant="primary" size="md" onClick={submit} disabled={!canSubmit}>
+                  {type ? `${type.label} 만들기` : '회로 만들기'}
+                </Button>
+              </div>
             </div>
+
+            {!heroText && !type && (
+              <p className="sf-home-examples">
+                <span>예시</span>
+                {EXAMPLE_PROMPTS.map((ex, i) => (
+                  <span key={ex}>
+                    {i > 0 && <span aria-hidden className="sep">/</span>}
+                    <button onClick={() => setHeroText(ex)}>{ex}</button>
+                  </span>
+                ))}
+              </p>
+            )}
           </div>
 
-          {/* Quick example chips */}
-          {!heroText && !type && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-              {EXAMPLE_PROMPTS.map(ex => (
-                <button
-                  key={ex}
-                  onClick={() => setHeroText(ex)}
-                  style={{
-                    background: 'var(--sf-bg-2)',
-                    border: '1px solid var(--sf-line)',
-                    borderRadius: 999,
-                    padding: '5px 13px',
-                    fontFamily: 'var(--sf-font-sans)',
-                    fontSize: 12,
-                    color: 'var(--sf-fg-muted)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.borderColor = 'var(--sf-amber-line)'
-                    e.currentTarget.style.background = 'var(--sf-amber-soft)'
-                    e.currentTarget.style.color = 'var(--sf-amber)'
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.borderColor = 'var(--sf-line)'
-                    e.currentTarget.style.background = 'var(--sf-bg-2)'
-                    e.currentTarget.style.color = 'var(--sf-fg-muted)'
-                  }}
-                >
-                  {ex}
-                </button>
-              ))}
-            </div>
-          )}
+          <figure className="sf-home-figure">
+            <img src="/home/motor-board.png" width={720} height={714}
+              alt="모터 드라이버 데모 회로로 생성한 2층 기판: 부품 배치, 빨간 윗면 배선, GND 동박, 모서리 고정 구멍 4개" />
+            <figcaption>
+              <div className="cap-head">
+                <strong>모터 드라이버 데모</strong>
+                <a href="/?demo=motor">직접 열어 보기</a>
+              </div>
+              <dl>
+                <div><dt>기판</dt><dd>36.7 × 36.4 mm</dd></div>
+                <div><dt>배선</dt><dd>14 / 14</dd></div>
+                <div><dt>비아</dt><dd>3</dd></div>
+                <div><dt>트랙 길이</dt><dd>72 mm</dd></div>
+              </dl>
+              <p>로그인 없이 이 화면을 그대로 만들어 볼 수 있습니다. 위 이미지는 편집하지 않은 실제 출력입니다.</p>
+            </figcaption>
+          </figure>
+        </section>
 
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12,
-            marginTop: 28, marginBottom: 4,
-          }}>
-            <span style={{ flex: 1, height: 1, background: 'var(--sf-line-soft)' }} />
-            <span style={{
-              fontSize: 11, color: 'var(--sf-fg-faint)',
-              fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.16em',
-              textTransform: 'uppercase',
-            }}>또는 카테고리에서 시작</span>
-            <span style={{ flex: 1, height: 1, background: 'var(--sf-line-soft)' }} />
+        {/* ── Category start ───────────────────────────────────────── */}
+        <section className="sf-home-section">
+          <header className="sf-home-section-head">
+            <h2>회로 종류로 시작하기</h2>
+            <p>종류를 고르면 전압·부품 같은 사양을 차례로 묻습니다.</p>
+          </header>
+          <div className="sf-type-list" role="list">
+            {CIRCUIT_TYPES.map(t => (
+              <TypeRow key={t.key} active={typeKey === t.key} label={t.label} desc={t.desc}
+                onClick={() => chooseType(t.key)} />
+            ))}
           </div>
-        </div>
 
-        {/* Step 1: Circuit type cards */}
-        <SectionLabel num="01" title="회로 종류" />
-        <div className="sf-type-grid" style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10,
-          marginBottom: 28,
-        }}>
-          {CIRCUIT_TYPES.map(t => (
-            <TypeCard
-              key={t.key}
-              active={typeKey === t.key}
-              glyph={t.glyph}
-              label={t.label}
-              desc={t.desc}
-              onClick={() => chooseType(t.key)}
-            />
-          ))}
-        </div>
-
-        {/* Step 2: Fields */}
-        {type && (
-          <>
-            <SectionLabel num="02" title="사양 선택" />
-            <div style={{
-              background: 'var(--sf-bg-2)',
-              border: '1px solid var(--sf-line-strong)',
-              borderRadius: 'var(--sf-r-lg)',
-              padding: '8px',
-              marginBottom: 28,
-            }}>
+          {type && (
+            <div className="sf-spec-panel">
+              <div className="sf-spec-head">
+                <strong>{type.label}</strong> 사양
+                <button onClick={() => chooseType(type.key)}>선택 해제</button>
+              </div>
               {type.fields.map((f, i) => (
                 <FieldRow
                   key={f.key}
@@ -794,206 +690,60 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
                   isLast={i === type.fields.length - 1}
                 />
               ))}
+              <div className="sf-spec-foot">
+                <span>{requiredFilled ? '필수 항목을 모두 골랐습니다.' : '필수 항목을 골라 주세요.'}</span>
+                <Button variant="primary" size="md" onClick={submit} disabled={!canSubmit}>
+                  {type.label} 만들기
+                </Button>
+              </div>
             </div>
-          </>
-        )}
+          )}
+        </section>
 
-        {/* Submit (only when type is selected — free text submits from top button) */}
-        {type && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              variant="primary"
-              size="lg"
-              icon={<IconBolt size={14} />}
-              onClick={submit}
-              disabled={!canSubmit}
-            >
-              {type.label} 만들기
-            </Button>
-          </div>
-        )}
-
-        <WorkflowSection />
+        {/* ── Pipeline, as plain facts ─────────────────────────────── */}
+        <section className="sf-home-section">
+          <header className="sf-home-section-head">
+            <h2>안에서 일어나는 일</h2>
+            <p>생성 화면에서 단계마다 진행 상황을 그대로 보여 줍니다.</p>
+          </header>
+          <table className="sf-pipeline">
+            <tbody>
+              {PIPELINE.map(([step, what, tool]) => (
+                <tr key={step}>
+                  <th scope="row">{step}</th>
+                  <td>{what}</td>
+                  <td className="tool">{tool}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
       </div>
+
+      <footer className="sf-home-footer">
+        <div>
+          <span>SchemaForge</span>
+          <a href="/terms">이용약관</a>
+          <a href="/privacy">개인정보 처리방침</a>
+        </div>
+      </footer>
     </div>
   )
 }
 
-const WORKFLOW_STEPS = [
-  {
-    num: '01',
-    title: '입력',
-    desc: '카테고리를 고르거나 자연어로 설명하세요. Sparky가 사양을 정리해요.',
-    bullets: ['7+ 카테고리', '자유 텍스트', '한국어/영어'],
-  },
-  {
-    num: '02',
-    title: '분석',
-    desc: 'GPT-4o가 부품·토폴로지를 추론하고 데이터시트로 사양을 검증해요.',
-    bullets: ['부품 매칭', '값 계산', '안전 확인'],
-  },
-  {
-    num: '03',
-    title: '생성',
-    desc: 'skidl로 네트리스트를 빌드하고 풋프린트를 매칭해 회로를 짭니다.',
-    bullets: ['skidl 코드', '네트리스트', '풋프린트'],
-  },
-  {
-    num: '04',
-    title: '내보내기',
-    desc: 'KiCad에서 바로 열리는 .net과 Gerber, BOM, PDF를 다운로드.',
-    bullets: ['.net 파일', 'Gerber', 'BOM · PDF'],
-  },
+const PIPELINE: [string, string, string][] = [
+  ['회로', '설명이나 고른 사양에서 부품과 연결을 정하고 넷리스트를 씁니다.', 'GPT-4o, skidl'],
+  ['배치', '부품마다 KiCad 풋프린트를 붙이고, 연결된 부품끼리 가까워지도록 자리를 잡습니다.', '힘 기반 배치'],
+  ['배선', '두 층에 선을 긋고 막히면 비아로 층을 바꿉니다. 전원선은 굵게 긋습니다.', 'A* 경로 탐색'],
+  ['검사', 'KiCad 설계 규칙 검사와 회로 점검(전원 누락, 연결 안 된 핀)을 돌립니다.', 'kicad-cli DRC'],
+  ['다듬기', '선택 사항. AI가 위치·선 폭 수정을 제안하고, 검사 수치가 좋아질 때만 반영합니다.', 'OpenAI'],
 ]
 
-function WorkflowSection() {
+function TypeRow({ active, label, desc, onClick }: { active: boolean; label: string; desc: string; onClick: () => void }) {
   return (
-    <div style={{ marginTop: 80 }}>
-      <div style={{ textAlign: 'center', marginBottom: 32 }}>
-        <div className="sf-eyebrow" style={{ marginBottom: 12 }}>HOW IT WORKS</div>
-        <h2 className="sf-heading-l" style={{ marginBottom: 8 }}>
-          한 줄에서 <span style={{ color: 'var(--sf-cyan)' }}>KiCad 파일</span>까지
-        </h2>
-        <p className="sf-body" style={{ maxWidth: 540, margin: '0 auto', color: 'var(--sf-fg-muted)' }}>
-          입력부터 내보내기까지 4단계, 평균 30초.
-        </p>
-      </div>
-
-      <div className="sf-workflow-grid" style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12,
-        position: 'relative',
-      }}>
-        {WORKFLOW_STEPS.map((s, i) => (
-          <WorkflowCard key={s.num} step={s} isLast={i === WORKFLOW_STEPS.length - 1} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function WorkflowCard({ step, isLast }: { step: WorkflowStep; isLast: boolean }) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        position: 'relative',
-        background: hovered ? 'var(--sf-bg-3)' : 'var(--sf-bg-2)',
-        border: `1px solid ${hovered ? 'var(--sf-line-strong)' : 'var(--sf-line)'}`,
-        borderRadius: 16,
-        padding: '22px 20px',
-        display: 'flex', flexDirection: 'column', gap: 10,
-        transition: 'all 0.18s ease',
-        boxShadow: hovered ? '0 6px 20px rgba(74,52,18,0.1)' : 'none',
-        transform: hovered ? 'translateY(-2px)' : 'none',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{
-          width: 32, height: 32,
-          background: 'var(--sf-amber-soft)',
-          border: '1px solid var(--sf-amber-line)',
-          borderRadius: 10,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-          color: 'var(--sf-amber)', letterSpacing: '0.1em', fontWeight: 600,
-        }}>{step.num}</div>
-        {!isLast && (
-          <span style={{
-            flex: 1, height: 1,
-            background: 'linear-gradient(to right, var(--sf-line), transparent)',
-          }} />
-        )}
-      </div>
-      <h3 style={{
-        margin: 0, fontSize: 15.5, fontWeight: 700, color: 'var(--sf-fg)',
-        fontFamily: 'var(--sf-font-sans)', letterSpacing: '-0.01em',
-      }}>{step.title}</h3>
-      <p style={{
-        margin: 0, fontSize: 12.5, lineHeight: 1.6,
-        color: 'var(--sf-fg-muted)',
-      }}>{step.desc}</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 2 }}>
-        {step.bullets.map((b, i) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 7,
-            fontSize: 11, color: 'var(--sf-fg-dim)',
-            fontFamily: 'var(--sf-font-mono)',
-          }}>
-            <span style={{
-              width: 4, height: 4, borderRadius: '50%',
-              background: 'var(--sf-cyan)', flexShrink: 0,
-            }} />
-            {b}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function SectionLabel({ num, title }: { num: string; title: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14 }}>
-      <span style={{
-        fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-        color: 'var(--sf-amber)', letterSpacing: '0.14em',
-      }}>{num}</span>
-      <span style={{
-        fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-        color: 'var(--sf-fg-dim)', letterSpacing: '0.14em', textTransform: 'uppercase',
-      }}>{title}</span>
-      <span style={{ flex: 1, height: 1, background: 'var(--sf-line)' }} />
-    </div>
-  )
-}
-
-function TypeCard({ active, glyph, label, desc, onClick }: { active: boolean; glyph: string; label: string; desc: string; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false)
-  const on = active || hovered
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8,
-        padding: '16px 16px 14px',
-        background: active ? 'var(--sf-amber-soft)' : hovered ? 'var(--sf-bg-3)' : 'var(--sf-bg-2)',
-        border: `1.5px solid ${active ? 'var(--sf-amber)' : hovered ? 'var(--sf-line-strong)' : 'var(--sf-line)'}`,
-        borderRadius: 14,
-        cursor: 'pointer', textAlign: 'left',
-        transition: 'all 0.18s ease',
-        boxShadow: active
-          ? '0 4px 16px rgba(200,117,21,0.15)'
-          : hovered
-          ? '0 4px 14px rgba(74,52,18,0.1)'
-          : 'none',
-        transform: on ? 'translateY(-1px)' : 'none',
-      }}
-    >
-      <div style={{
-        width: 36, height: 36,
-        background: active ? 'var(--sf-amber)' : hovered ? 'var(--sf-bg-4)' : 'var(--sf-bg-3)',
-        border: `1px solid ${active ? 'transparent' : 'var(--sf-line)'}`,
-        borderRadius: 10,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'all 0.18s ease',
-        fontSize: 17,
-        color: active ? '#fff' : hovered ? 'var(--sf-cyan)' : 'var(--sf-fg-dim)',
-        fontFamily: 'var(--sf-font-mono)',
-      }}>{glyph}</div>
-      <span style={{
-        fontSize: 13.5, fontWeight: 600, lineHeight: 1.2,
-        color: active ? 'var(--sf-amber)' : 'var(--sf-fg)',
-        fontFamily: 'var(--sf-font-sans)',
-      }}>{label}</span>
-      <span style={{
-        fontSize: 11.5, color: 'var(--sf-fg-dim)',
-        fontFamily: 'var(--sf-font-mono)',
-        lineHeight: 1.4,
-      }}>{desc}</span>
+    <button role="listitem" aria-pressed={active} className={`sf-type-row${active ? ' is-active' : ''}`} onClick={onClick}>
+      <span className="label">{label}{active && <span className="picked">선택됨</span>}</span>
+      <span className="desc">{desc}</span>
     </button>
   )
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
+import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
@@ -8,7 +8,6 @@ import BomTable from './BomTable'
 import CodeEditor from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import TraceField from './TraceField.tsx'
-import Mascot from './Mascot.tsx'
 import {
   Button, Input,
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
@@ -89,7 +88,8 @@ export default function ResultPanel({
   const [activeTab, setActiveTab] = useState('Netlist')
   const [iterateText, setIterateText] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
+  const [editorOpen, setEditorOpen] = usePanelState('sf_panel_left')
   const [viewMode, setViewMode] = useState('schematic')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => initialChatSession?.messages || [])
   const [chatInput, setChatInput] = useState('')
@@ -370,9 +370,8 @@ export default function ResultPanel({
         display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 16px',
         background: 'var(--sf-bg-1)',
-        borderBottom: '2px solid var(--sf-line-strong)',
+        borderBottom: '1px solid var(--sf-line-strong)',
       }}>
-        <Mascot state="ready" size={28} />
         <span style={{
           fontFamily: 'var(--sf-font-mono)', fontSize: 12,
           color: 'var(--sf-fg)', fontWeight: 600,
@@ -442,14 +441,22 @@ export default function ResultPanel({
           }}
         ><IconDownload size={13} /> .net</button>
         <div style={{ width: 1, height: 20, background: 'var(--sf-line)', margin: '0 4px' }} />
-        <button onClick={() => setSidebarOpen(o => !o)} title="사이드바" style={{...iconBtn, opacity: sidebarOpen ? 1 : 0.4}}>⊟</button>
+        <button onClick={() => setEditorOpen(o => !o)} data-testid="toggle-left-panel" aria-pressed={editorOpen}
+          title={editorOpen ? 'AI 편집 패널 접기' : 'AI 편집 패널 펼치기'} style={{...iconBtn, opacity: editorOpen ? 1 : 0.5}}>
+          <PanelIcon side="left" />
+        </button>
+        <button onClick={() => setSidebarOpen(o => !o)} data-testid="toggle-right-panel" aria-pressed={sidebarOpen}
+          title={sidebarOpen ? '사양·BOM 패널 접기' : '사양·BOM 패널 펼치기'} style={{...iconBtn, opacity: sidebarOpen ? 1 : 0.5}}>
+          <PanelIcon side="right" />
+        </button>
       </div>
 
       {/* ── Canvas area + sidebars ───────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
 
-        {/* LEFT — Chat AI editor */}
-        <div style={{ width: 260, flexShrink: 0, borderRight: '2px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: 'flex', flexDirection: 'column' }}>
+        {/* LEFT — Chat AI editor (collapses to a rail; state kept so the chat is not lost) */}
+        {!editorOpen && <PanelRail side="left" label="AI 편집" onOpen={() => setEditorOpen(true)} />}
+        <div data-testid="left-panel" style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: editorOpen ? 'flex' : 'none', flexDirection: 'column' }}>
           {/* Header */}
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sf-violet)' }} />
@@ -457,6 +464,7 @@ export default function ResultPanel({
               AI EDITOR
             </span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+              <button onClick={() => setEditorOpen(false)} title="접기" aria-label="AI 편집 패널 접기" style={collapseBtn}>‹</button>
               {graphHistory.length > 0 && (
                 <button onClick={undoGraph} title="마지막 AI 수정 취소" style={{
                   fontSize: 9, fontFamily: 'var(--sf-font-mono)', color: 'var(--sf-violet)',
@@ -674,10 +682,12 @@ export default function ResultPanel({
         </div>
 
         {/* RIGHT — SPEC + BOM */}
+        {!sidebarOpen && <PanelRail side="right" label="사양 · BOM" onOpen={() => setSidebarOpen(true)} />}
         {sidebarOpen && (
-          <div style={{ width: 240, flexShrink: 0, borderLeft: '2px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div data-testid="right-panel" style={{ width: 240, flexShrink: 0, borderLeft: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-fg-faint)', letterSpacing: '0.12em', fontWeight: 700 }}>SPEC</span>
+              <button onClick={() => setSidebarOpen(false)} title="접기" aria-label="사양·BOM 패널 접기" style={{ ...collapseBtn, marginLeft: 'auto' }}>›</button>
             </div>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)' }}>
               {[
@@ -1034,3 +1044,46 @@ function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) 
   )
 }
 
+
+/** Open/closed state of a side panel, remembered per browser. */
+function usePanelState(key: string): [boolean, (v: boolean | ((o: boolean) => boolean)) => void] {
+  const [open, setOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem(key) !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(key, open ? '1' : '0') } catch { /* storage blocked: keep in memory */ }
+  }, [key, open])
+  return [open, setOpen]
+}
+
+const collapseBtn: React.CSSProperties = {
+  width: 20, height: 20, padding: 0, border: '1px solid var(--sf-line)', borderRadius: 3,
+  background: 'transparent', color: 'var(--sf-fg-dim)', cursor: 'pointer',
+  fontSize: 13, lineHeight: '17px', fontFamily: 'var(--sf-font-mono)',
+}
+
+/** Thin strip shown in place of a collapsed panel; the whole strip reopens it. */
+function PanelRail({ side, label, onOpen }: { side: 'left' | 'right'; label: string; onOpen: () => void }) {
+  return (
+    <button onClick={onOpen} data-testid={`${side}-rail`} title={`${label} 펼치기`} aria-label={`${label} 패널 펼치기`}
+      style={{
+        width: 28, flexShrink: 0, padding: '10px 0', border: 'none', cursor: 'pointer',
+        [side === 'left' ? 'borderRight' : 'borderLeft']: '1px solid var(--sf-line-strong)',
+        background: 'var(--sf-bg-1)', color: 'var(--sf-fg-dim)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+        fontFamily: 'var(--sf-font-sans)', fontSize: 12,
+      }}>
+      <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 13 }}>{side === 'left' ? '›' : '‹'}</span>
+      <span style={{ writingMode: 'vertical-rl', letterSpacing: '0.08em' }}>{label}</span>
+    </button>
+  )
+}
+
+function PanelIcon({ side }: { side: 'left' | 'right' }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+      <line x1={side === 'left' ? 5.5 : 10.5} y1="2.5" x2={side === 'left' ? 5.5 : 10.5} y2="13.5" />
+    </svg>
+  )
+}
