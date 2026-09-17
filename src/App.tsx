@@ -7,6 +7,7 @@ import ClarifyPanel from './components/ClarifyPanel'
 import PlanPanel from './components/PlanPanel'
 import SideDrawer from './components/SideDrawer'
 import AuthModal from './components/AuthModal'
+import LegalPage from './components/LegalPage'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
 import { Button } from './components/primitives.tsx'
 import { loadAuth, logout as apiLogout, authHeaders, saveSession, type AuthUser } from './api'
@@ -18,6 +19,9 @@ import type {
 import './styles/main.scss'
 
 const API = ''
+
+const LEGAL_PAGE: 'terms' | 'privacy' | null =
+  window.location.pathname === '/terms' ? 'terms' : window.location.pathname === '/privacy' ? 'privacy' : null
 
 const DEFAULT_SETTINGS: AppSettings = { layout: '2col', skeleton: true, autoRetry: true, clarify: true, plan: true }
 
@@ -73,17 +77,21 @@ export default function App() {
   useEffect(() => {
     const demo = new URLSearchParams(window.location.search).get('demo')
     if (!demo) return
+    // StrictMode runs this twice in dev; a late second answer would remount the result view mid-PCB.
+    let cancelled = false
     fetch(`/demo_result/${encodeURIComponent(demo)}`)
       .then(async r => {
         if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `HTTP ${r.status}`)
         return r.json() as Promise<GenerateResult>
       })
       .then(data => {
+        if (cancelled) return
         lastPrompt.current = `Demo: ${demo}`
         setResult(data)
         setResultKey(k => k + 1)
       })
-      .catch(e => setError(`데모 회로를 불러오지 못했습니다: ${(e as Error).message}`))
+      .catch(e => { if (!cancelled) setError(`데모 회로를 불러오지 못했습니다: ${(e as Error).message}`) })
+    return () => { cancelled = true }
   }, [])
 
   // 앱 시작 시 저장된 토큰이 서버에서 유효한지 검증
@@ -382,7 +390,9 @@ export default function App() {
         setSettings={setSettings}
       />
 
-      {pendingCached && !result && !loading && (
+      {LEGAL_PAGE && <LegalPage kind={LEGAL_PAGE} />}
+
+      {!LEGAL_PAGE && pendingCached && !result && !loading && (
         <div style={{ maxWidth: 760, margin: '24px auto 0', padding: '0 24px' }}>
           <div style={{
             background: 'var(--sf-bg-2)',
@@ -447,7 +457,7 @@ export default function App() {
         />
       )}
 
-      {!result && !error && !clarify && !plan && (
+      {!LEGAL_PAGE && !result && !error && !clarify && !plan && (
         <WizardPanel
           phase={wizardPhase}
           initialPrompt=""

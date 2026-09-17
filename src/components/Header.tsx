@@ -58,11 +58,9 @@ export default function Header({
       style={{
         position: 'sticky', top: 0, zIndex: 30,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 28px',
-        borderBottom: '2px solid var(--sf-line-strong)',
-        background: 'rgba(241, 236, 224, 0.88)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
+        padding: '14px clamp(12px, 3vw, 28px)',
+        borderBottom: '1px solid var(--sf-line-strong)',
+        background: 'var(--sf-bg)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -88,6 +86,7 @@ export default function Header({
         >
           <Logo size={22} />
           <span
+            className="sf-hide-narrow"
             style={{
               fontFamily: 'var(--sf-font-mono)',
               fontSize: 11,
@@ -102,11 +101,10 @@ export default function Header({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span
+          className="sf-hide-narrow"
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '4px 10px', borderRadius: 999,
-            background: 'var(--sf-bg-2)',
-            border: '1px solid var(--sf-line)',
+            padding: '4px 0',
             fontFamily: 'var(--sf-font-mono)',
             fontSize: 11, color: 'var(--sf-fg-muted)',
             letterSpacing: '0.04em',
@@ -116,7 +114,6 @@ export default function Header({
             style={{
               width: 6, height: 6, borderRadius: '50%',
               background: dotColor,
-              boxShadow: `0 0 6px ${dotColor}`,
             }}
           />
           {modelLabel} · {modelStatus}
@@ -129,7 +126,7 @@ export default function Header({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontFamily: 'var(--sf-font-sans)', fontSize: 12, fontWeight: 700,
               color: '#fff', flexShrink: 0,
-              boxShadow: '0 0 0 2px var(--sf-amber-line)',
+
             }}>
               {user.email?.[0]?.toUpperCase() ?? '?'}
             </div>
@@ -141,7 +138,7 @@ export default function Header({
               style={{
                 background: 'none',
                 border: '1px solid var(--sf-line)',
-                borderRadius: 7, color: 'var(--sf-fg-dim)',
+                borderRadius: 4, color: 'var(--sf-fg-dim)',
                 cursor: 'pointer', fontSize: 11, padding: '3px 9px',
                 fontFamily: 'var(--sf-font-mono)',
                 transition: 'all 0.15s',
@@ -156,15 +153,14 @@ export default function Header({
             style={{
               background: 'var(--sf-amber)',
               border: 'none',
-              borderRadius: 8, color: '#fff',
+              borderRadius: 4, color: '#fff8ef',
               cursor: 'pointer', fontSize: 12.5, padding: '6px 14px',
               fontFamily: 'var(--sf-font-sans)', fontWeight: 700,
-              letterSpacing: '-0.01em',
+              letterSpacing: '-0.01em', whiteSpace: 'nowrap',
               transition: 'all 0.15s',
-              boxShadow: '0 2px 8px rgba(200,117,21,0.3)',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = '#a85c0e'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber)'; e.currentTarget.style.transform = 'none' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--sf-amber-deep)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber)' }}
           >로그인</button>
         )}
         <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="Settings" />
