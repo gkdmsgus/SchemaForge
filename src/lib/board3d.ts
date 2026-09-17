@@ -38,6 +38,8 @@ export function project(x: number, y: number, h: number, cam: Camera): [number, 
 export const DEFAULT_HEIGHT = 1.5
 
 const HEIGHT_RULES: [RegExp, number][] = [
+  // flat features: no body above the board, drawn as a top face only
+  [/MountingHole|TestPoint/i, 0],
   [/Relay/i, 15.7],
   [/Buzzer|Speaker/i, 9.5],
   [/BatteryHolder|Battery/i, 6.0],
@@ -155,7 +157,7 @@ export function partFaces(
     return [x + rx, y + ry] as [number, number]
   })
   const out: Face[] = []
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; h > 0 && k < 4; k++) {
     const a = world[k], b = world[(k + 1) % 4]
     // light from the upper left of the screen: shade by the side's screen direction
     const [ax, ay] = project(a[0], a[1], 0, cam)

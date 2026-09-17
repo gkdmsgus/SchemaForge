@@ -65,7 +65,7 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
 }
 
 // 27. depth ordering: at any tilt in view, a part's top is nearer the camera than the
-//     board surface under it, and the bottom copper is farther than the board top.
+//     board surface under it (a flat feature sits on it), and the bottom copper is farther than the board top.
 {
   let ok = true, info = ''
   for (const { b } of boards) {
@@ -76,7 +76,8 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
         const top = project(p.x, p.y, h, cam)[2]
         const surf = project(p.x, p.y, 0, cam)[2]
         const back = project(p.x, p.y, -BOARD_THICK, cam)[2]
-        if (!(top > surf && surf > back)) { ok = false; info = `${p.ref} tilt ${tilt}` }
+        const above = h > 0 ? top > surf : top === surf
+        if (!(above && surf > back)) { ok = false; info = `${p.ref} tilt ${tilt}` }
       }
     }
   }
@@ -108,7 +109,7 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
 }
 
 // 29. every part with a real footprint has a package height (no silent fallback), and
-//     heights are sane (0.3–20 mm). Parts the footprint mapper could not resolve
+//     heights are sane (0 for flat features, otherwise 0.3–20 mm). Parts the footprint mapper could not resolve
 //     (UNMAPPED_*, reported to the user already) have no knowable height and must be
 //     the only ones falling back to the default.
 {
@@ -118,7 +119,7 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
     const h = partHeight(p.footprint, p.part)
     const unmapped = /UNMAPPED/i.test(p.footprint)
     if (h === DEFAULT_HEIGHT) (unmapped ? fellBack : missing).push(`${p.ref}:${p.footprint}`)
-    if (!unmapped) { lo = Math.min(lo, h); hi = Math.max(hi, h) }
+    if (!unmapped && h > 0) { lo = Math.min(lo, h); hi = Math.max(hi, h) }
   }
   check('29 package heights known', missing.length === 0 && lo >= 0.3 && hi <= 20,
     missing.length ? `fallback used for ${missing.join(', ')}`
