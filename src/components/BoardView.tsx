@@ -643,12 +643,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             AI 다듬기 · 채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}
           </div>
           <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-            {ai.map(r => {
+            {ai.map((r, i) => {
               const d = r.after ? r.after.hpwl - r.before.hpwl : 0
               return (
-                <div key={r.round} style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`,
+                <div key={`${r.round}-${r.part ?? i}`} style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`,
                   color: r.kept ? UI_OK : UI_DIM }}>
-                  <div>{r.round > 0 ? `${r.round}라운드` : ''} {r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'} — {r.reason}</div>
+                  <div>{r.round > 0 ? `${r.round}라운드` : ''}{r.part ? ` ${r.part === 'width' ? '선 폭' : '배치'}` : ''} {r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'} — {r.reason}</div>
                   {r.after && (
                     <div style={{ opacity: 0.75 }}>
                       선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
