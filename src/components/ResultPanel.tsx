@@ -616,8 +616,8 @@ export default function ResultPanel({
                 </span>
               )}
               {pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
-                <span title={pcbSummary.warnings.join('\n')} style={{ ...ghostBtn, color: 'var(--sf-fg-dim)', cursor: 'help' }}>
-                  핀 배치 가정 {pcbSummary.warnings.length}건
+                <span title={pcbSummary.warnings.join('\n')} style={{ ...ghostBtn, color: 'var(--sf-danger)', cursor: 'help' }}>
+                  ⚠ 부품 확인 {pcbSummary.warnings.length}건
                 </span>
               )}
               {pcbStatus !== 'loading' && (
@@ -639,6 +639,15 @@ export default function ResultPanel({
               {pcbStatus === 'error' && <button onClick={generatePCB} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
             </div>
           </div>
+
+          {viewMode === 'pcb' && pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
+            <div role="alert" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
+              borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
+              <strong>제작 전 부품·핀 배열 확인 필요</strong>
+              {pcbSummary.warnings.map((warning, index) => <div key={index}>{warning}</div>)}
+              <div>선택한 실제 부품의 데이터시트와 기판 패드 번호를 대조하세요. DRC 통과만으로 실물 핀 배열은 보증되지 않습니다.</div>
+            </div>
+          )}
 
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>

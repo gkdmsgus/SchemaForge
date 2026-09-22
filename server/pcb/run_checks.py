@@ -19,6 +19,16 @@ CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor']
 STYLES = ['smd', 'tht']
 # (part, skidl pin that must sit on KiCad pad "1") — polarity checks
 POLARITY = {'LED': '2', 'D': '2', 'CP': '1', 'Battery': '1', 'Buzzer': '1'}
+# Independent pad expectations from the manufacturer's pinout diagrams, not TABLE.
+# SKiDL Q_NPN pins: 1=B, 2=C, 3=E; Q_NMOS: 1=G, 2=D, 3=S.
+# https://www.onsemi.com/download/data-sheet/pdf/pzt3904-d.pdf
+# https://www.onsemi.com/download/data-sheet/pdf/nds7002a-d.pdf
+TRANSISTOR_PADS = {
+    ('Q_NPN', 'smd'): {'1': '1', '2': '3', '3': '2'},  # MMBT3904: 1=B 2=E 3=C
+    ('Q_NPN', 'tht'): {'1': '2', '2': '3', '3': '1'},  # 2N3904: 1=E 2=B 3=C
+    ('Q_NMOS', 'smd'): {'1': '1', '2': '3', '3': '2'}, # 2N7002: 1=G 2=S 3=D
+    ('Q_NMOS', 'tht'): {'1': '2', '2': '3', '3': '1'}, # 2N7000: 1=S 2=G 3=D
+}
 
 
 def kicad_cli():
@@ -90,6 +100,17 @@ def check_one(name, style, work, cli):
             if pad_net.get((ref, '1')) != want:
                 pol_bad.append(ref)
     res['3 polarity'] = (not pol_bad, str(pol_bad or ''))
+
+    # A self-consistent TABLE can still be wrong: assert the actual transistor
+    # pad/net assignments against separately recorded manufacturer pinouts.
+    transistor_bad = []
+    for ref, part in comp_part.items():
+        expected = TRANSISTOR_PADS.get((part, style))
+        if expected:
+            for pin, pad in expected.items():
+                if pad_net.get((ref, pad)) != node_net.get((ref, pin)):
+                    transistor_bad.append(f'{ref}: pin {pin} -> pad {pad}')
+    res['3b transistor pinout'] = (not transistor_bad, str(transistor_bad or ''))
 
     # 4. courtyards: no overlap, all inside the outline
     boxes = [p['courtyard'] for p in parts.values()]
