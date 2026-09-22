@@ -1,10 +1,7 @@
 
-let d='';
-process.stdin.on('data',c=>d+=c);
-process.stdin.on('end',()=>{
-  const out = d.replace(/
-Co-Authored-By:[^
-]*/g,'').trimEnd();
-  process.stdout.write(out+'
-');
-});
+let message = ''
+process.stdin.on('data', chunk => { message += chunk })
+process.stdin.on('end', () => {
+  const filtered = message.replace(/^Co-Authored-By:[^\r\n]*(?:\r?\n|$)/gim, '').trimEnd()
+  process.stdout.write(`${filtered}\n`)
+})
