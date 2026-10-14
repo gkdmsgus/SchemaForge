@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
 import Board3D from './Board3D'
 import KiCad3DViewer from './KiCad3DViewer'
+import { Stamp, StatusChip } from './StatusUi'
 import type { Camera } from '../lib/board3d'
+import { HUMAN_ROW, TONE_COLOR, checkRows, drcCounts, overall, summarize, type Tone } from '../lib/boardChecks'
+import { KIND_LABEL, loadReviewed, reviewItems, saveReviewed, type ReviewItem } from '../lib/humanReview'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -27,15 +30,24 @@ const VIA_RING = '#6f6f6f'
 const VIA_SIZE = 0.6, VIA_DRILL = 0.3
 const PAD_LABEL_MIN = 1.1         // mm: label a pad with its net once it is at least this big
 
-// Panels sit on the light sheet, so they are light too (the app around them stays dark).
+// Panels sit on the light sheet, so they are light too. Status colours (ok / warn / bad)
+// come from TONE_COLOR, shared with the result toolbar.
 const UI_BG = 'rgba(255, 255, 255, 0.92)'
 const UI_LINE = 'rgba(0, 0, 0, 0.14)'
 const UI_FG = '#23262b'
 const UI_DIM = '#6b7079'
-const UI_OK = '#1f7a4d'
-const UI_WARN = '#b26a00'
-const UI_BAD = '#c0392b'
-const UI_ACCENT = '#5a3fa0'
+const MONO = 'var(--sf-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)'
+const SANS = 'var(--sf-font-sans, system-ui, -apple-system, "Segoe UI", sans-serif)'
+
+/** One "name value" pair in the status bar; tabular figures so numbers do not jump. */
+function Metric({ k, v, tone, testId, title }: { k: string; v: ReactNode; tone?: Tone; testId?: string; title?: string }) {
+  return (
+    <span data-testid={testId} title={title} style={{ whiteSpace: 'nowrap', cursor: title ? 'help' : undefined }}>
+      <span style={{ color: UI_DIM }}>{k} </span>
+      <span style={{ color: tone ? TONE_COLOR[tone] : UI_FG, fontWeight: 600 }}>{v}</span>
+    </span>
+  )
+}
 
 const FRAME_MS = 30          // placement playback: one frame every 30 ms (~70 frames ≈ 2 s)
 const FIT_MS = 600           // camera move from the scatter view to the finished board
@@ -190,7 +202,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [zoom, setZoom] = useState(1)
   const [panXY, setPanXY] = useState<[number, number]>([0, 0])
   const [focusId, setFocusId] = useState<string | null>(null)
-  const [panelOpen, setPanelOpen] = useState(true)
+  const [pickRef, setPickRef] = useState<string | null>(null)                  // part selected for review
+  const [reviewed, setReviewed] = useState<Record<string, number>>(() => loadReviewed())
+  // null = not chosen by the user yet: the list opens by itself only when something needs a look
+  const [panelOpen, setPanelOpen] = useState<boolean | null>(null)
   // like a PCB editor with its 3D viewer open: plan on the left, board on the right
   const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('both')
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
@@ -298,10 +313,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     return pad(union(boxes), 3)
   }, [first, target, byRef])
 
-  // extra room under the board so the overlay (bottom-left) never covers parts
+  // the numbers live in the status bar under the drawing now, so the board gets an even margin
   const boardView: Box | null = final
-    ? [final.outline[0] - 3, final.outline[1] - 3, final.outline[2] + 3,
-       final.outline[3] + 3 + (final.outline[3] - final.outline[1]) * 0.35]
+    ? [final.outline[0] - 3, final.outline[1] - 3, final.outline[2] + 3, final.outline[3] + 3]
     : null
   const base = scatterView && boardView
     ? scatterView.map((v, k) => v + (boardView[k] - v) * fit) as Box
@@ -361,15 +375,69 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     return out
   }, [drc, final])
 
-  const errorCount = findings.filter(f => f.severity === 'error').length
-  const warnCount = findings.length - errorCount
+  // every rule with its result (passed ones too), grouped over the same findings
+  // what a person confirms against the real parts (kept in this browser)
+  const reviewList = useMemo(() => (final ? reviewItems(final) : []), [final])
+  const reviewedKeys = useMemo(() => new Set(reviewList.filter(it => reviewed[it.key]).map(it => it.key)), [reviewList, reviewed])
+  const reviewedRefs = useMemo(() => reviewList.filter(it => reviewedKeys.has(it.key)).map(it => it.ref), [reviewList, reviewedKeys])
+  const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }), [drc, final, reviewList, reviewedKeys])
+  const checkSum = summarize(rows)
+  const checkHead = overall(checkSum)
+  const findingById = useMemo(() => Object.fromEntries(findings.map(f => [f.id, f])), [findings])
+  const [openRows, setOpenRows] = useState<Record<string, boolean>>({})
+  const drcNow = drcCounts(drc)
+  // an all-pass list stays folded to its header so it does not cover the 3D view
+  // (it opens by itself only for errors; reviews and warnings show in the header chip)
+  const listOpen = panelOpen ?? (!checkSum.pending && checkHead.tone === 'bad')
+  const checksRef = useRef<HTMLDivElement>(null)
+  // a part picked in 3D scrolls its review item into view
+  useEffect(() => {
+    if (!pickRef) return
+    checksRef.current?.querySelector(`[data-review="${pickRef}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [pickRef, listOpen, openRows])
+
+  /** Centre the 2D view on a point, showing roughly 14 mm around it whatever the board size. */
+  function zoomTo(pos: { x: number; y: number }) {
+    setZoom(Math.min(6, Math.max(1, (base[2] - base[0]) / 14)))
+    // the view centre is base centre + pan, so the pan is the offset from the base centre
+    // (adding the old pan here moved every second jump off target)
+    setPanXY([pos.x - (base[0] + base[2]) / 2, pos.y - (base[1] + base[3]) / 2])
+  }
 
   function focusOn(f: Finding) {
     setFocusId(f.id)
-    if (!f.pos) return
-    // show roughly 14 mm around the spot, whatever the board size
-    setZoom(Math.min(6, Math.max(1, (base[2] - base[0]) / 14)))
-    setPanXY([f.pos.x - (base[0] + base[2]) / 2 + panXY[0], f.pos.y - (base[1] + base[3]) / 2 + panXY[1]])
+    if (f.pos) zoomTo(f.pos)
+  }
+
+  /** Select a part for review: ring in 2D, tint in 3D, view centred on it. */
+  function selectPart(ref: string) {
+    setPickRef(ref)
+    const pose = poses[ref], p = byRef[ref]
+    if (!pose || !p) return
+    const b = partBox(p, pose[0], pose[1], pose[2])
+    zoomTo({ x: (b[0] + b[2]) / 2, y: (b[1] + b[3]) / 2 })
+  }
+
+  /** A part clicked in 3D: select it and, if it has a review item, open the list at it. */
+  function pickFrom3d(ref: string) {
+    selectPart(ref)
+    if (reviewList.some(it => it.ref === ref)) {
+      setPanelOpen(true)
+      setOpenRows(o => ({ ...o, [HUMAN_ROW]: true }))
+    }
+  }
+
+  function toggleReviewed(it: ReviewItem) {
+    // once a person is ticking, the list and this row stay open: the last tick turns the row
+    // into "통과", which would otherwise fold it away under the cursor
+    setPanelOpen(p => p ?? true)
+    setOpenRows(o => (HUMAN_ROW in o ? o : { ...o, [HUMAN_ROW]: true }))
+    setReviewed(prev => {
+      const next = { ...prev }
+      if (next[it.key]) delete next[it.key]
+      else next[it.key] = Date.now()
+      return saveReviewed(next)
+    })
   }
 
   const cur = frames.length ? frames[Math.min(Math.round(playhead), frames.length - 1)] : null
@@ -385,7 +453,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     if (frames.length < 2) return ''
     const shown = frames.slice(0, Math.floor(playhead) + 1)
     const max = Math.max(...frames.map(f => f.hpwl)), min = Math.min(...frames.map(f => f.hpwl))
-    const W = 120, H = 28
+    const W = 80, H = 16
     return shown.map((f, k) => {
       const x = (k / (frames.length - 1)) * W
       const y = H - ((f.hpwl - min) / Math.max(max - min, 1e-6)) * H
@@ -444,6 +512,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     : routing ? '배선 중'
     : placed ? '배치 완료'
     : (cur ? PHASE_LABEL[cur.phase] : '준비 중')
+  // settled = nothing left to play back; until then the phase chip pulses
+  const settled = status === 'error' || routedAll || (placed && routes.length === 0)
+  const phaseTone: Tone = status === 'error' || (routedAll && unrouted.length > 0) ? 'bad' : settled ? 'ok' : 'accent'
 
   const drawTracks = (layer: string) => show[layer] && (
     <g>
@@ -453,7 +524,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   )
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: SHEET, overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', inset: 0, background: SHEET, overflow: 'hidden',
+      display: 'flex', flexDirection: 'column' }}>
+      {/* drawing area: 2D and 3D panes with the panels floating over them */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
       <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
       <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
@@ -505,6 +579,19 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                   textAnchor="middle" dominantBaseline="central" fontFamily="var(--sf-font-mono)"
                   style={{ pointerEvents: 'none' }}>{ref}</text>
               )}
+              {/* review: ring on the selected part, a check badge on parts a person confirmed */}
+              {placed && pickRef === ref && (
+                <rect data-human-pick={ref} x={box[0] - 0.6} y={box[1] - 0.6} width={box[2] - box[0] + 1.2}
+                  height={box[3] - box[1] + 1.2} rx={0.4} fill="none" stroke={TONE_COLOR.accent} strokeWidth={0.2}
+                  strokeDasharray="0.8 0.5" style={{ pointerEvents: 'none' }} />
+              )}
+              {placed && reviewedRefs.includes(ref) && (
+                <g data-human-ok={ref} transform={`translate(${box[2]} ${box[1]})`} style={{ pointerEvents: 'none' }}>
+                  <circle r={0.75} fill={TONE_COLOR.ok} stroke="#ffffff" strokeWidth={0.12} />
+                  <path d="M -0.35 0 L -0.08 0.28 L 0.38 -0.25" fill="none" stroke="#ffffff" strokeWidth={0.18}
+                    strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              )}
             </g>
           )
         })}
@@ -516,7 +603,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         {/* check markers */}
         {findings.filter(f => f.pos).map(f => {
           const on = focusId === f.id
-          const c = f.severity === 'error' ? UI_BAD : UI_WARN
+          const c = TONE_COLOR[f.severity === 'error' ? 'bad' : 'warn']
           const r = on ? 1.6 : 1.1
           return (
             <g key={f.id} data-marker={f.severity} onClick={() => focusOn(f)} style={{ cursor: 'pointer' }}>
@@ -555,7 +642,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           onPointerUp={() => { drag3d.current = null }}
           onWheel={real3d && placed ? undefined : e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
           {real3d && placed && pcbFilename
-            ? <KiCad3DViewer pcbFilename={pcbFilename} />
+            ? <KiCad3DViewer pcbFilename={pcbFilename} selected={pickRef} reviewed={reviewedRefs} onPick={pickFrom3d} />
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
@@ -568,42 +655,17 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               {real3d ? '도형 보기' : '실제 3D'}
             </button>
           )}
-          <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
-            background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
-            fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>
-            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
+          {/* one line always (cut with … on narrow panes) so the checks panel can stop just above it */}
+          <div title={real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 확인 항목' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
+            style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
+            padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
+            fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 확인 항목' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
           </div>
         </div>
       )}
       </div>
 
-      {/* overlay */}
-      <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '8px 10px', borderRadius: 8,
-        background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, fontFamily: 'var(--sf-font-mono)',
-        fontSize: 11, lineHeight: 1.5, minWidth: 190, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-        <div data-testid="board-phase" style={{ fontWeight: 700, color: routedAll && !unrouted.length ? UI_OK : UI_FG }}>{label}</div>
-        {!placed && cur && <div style={{ opacity: 0.75 }}>반복 {cur.iter} · 선 길이 추정 {cur.hpwl.toFixed(1)} mm</div>}
-        {!placed && spark && <svg width={120} height={28} style={{ display: 'block', marginTop: 4 }}>
-          <path d={spark} fill="none" stroke={RATSNEST} strokeWidth={1.2} />
-        </svg>}
-        {placed && saving != null && (
-          <div data-testid="board-saving" style={{ color: UI_OK }}>
-            배치: 격자 대비 −{saving}% ({hpwlShelf?.toFixed(0)} → {hpwlFinal?.toFixed(0)} mm)
-          </div>
-        )}
-        {placed && routes.length > 0 && (
-          <div data-testid="board-routing">
-            배선 {routedNow}/{connections} · 비아 {copper.vias.length} · 트랙 {trackLen.toFixed(0)} mm
-          </div>
-        )}
-        {routedAll && unrouted.length > 0 && (
-          <div style={{ color: UI_BAD }}>미배선: {unrouted.map(u => `${u.net} (${u.from}–${u.to})`).join(', ')}</div>
-        )}
-        {placed && outline && (
-          <div style={{ opacity: 0.75 }}>기판 {(outline[2] - outline[0]).toFixed(1)} × {(outline[3] - outline[1]).toFixed(1)} mm</div>
-        )}
-        {hoverNet && <div style={{ color: '#2c5f96' }}>넷: {hoverNet}</div>}
-      </div>
       {frames.length > 0 && (
         <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6 }}>
           {(['2d', 'both', '3d'] as const).map(v => (
@@ -637,20 +699,27 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* AI improvement rounds */}
       {placed && ai.length > 0 && (
         <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: 320, maxWidth: '48%',
-          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-          fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
-          <div style={{ padding: '7px 10px', fontWeight: 700, color: UI_ACCENT }}>
-            AI 다듬기 · 채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}
+          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
+          fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px' }}>
+            <StatusChip tone="accent">AI 다듬기</StatusChip>
+            <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>
           </div>
           <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             {ai.map((r, i) => {
               const d = r.after ? r.after.hpwl - r.before.hpwl : 0
               return (
-                <div key={`${r.round}-${r.part ?? i}`} style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`,
-                  color: r.kept ? UI_OK : UI_DIM }}>
-                  <div>{r.round > 0 ? `${r.round}라운드` : ''}{r.part ? ` ${r.part === 'width' ? '선 폭' : '배치'}` : ''} {r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'} — {r.reason}</div>
+                <div key={`${r.round}-${r.part ?? i}`} data-ai-kept={r.kept ? '1' : '0'}
+                  style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`, color: UI_FG }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                    <StatusChip tone={r.kept ? 'ok' : 'idle'}>{r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'}</StatusChip>
+                    <span style={{ color: UI_DIM }}>
+                      {r.round > 0 ? `${r.round}라운드` : ''}{r.part ? ` ${r.part === 'width' ? '선 폭' : '배치'}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: SANS, fontSize: 11.5, lineHeight: 1.45 }}>{r.reason}</div>
                   {r.after && (
-                    <div style={{ opacity: 0.75 }}>
+                    <div style={{ color: UI_DIM }}>
                       선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
                       비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
                       {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
@@ -659,7 +728,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                         <> · 좁은 전원선 {r.before.powerWidth}→{r.after.powerWidth}</>}
                     </div>
                   )}
-                  {r.note && <div style={{ opacity: 0.6 }}>{r.note}</div>}
+                  {r.note && <div style={{ color: UI_DIM }}>{r.note}</div>}
                 </div>
               )
             })}
@@ -667,46 +736,164 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         </div>
       )}
 
-      {/* checks: KiCad DRC + netlist checks */}
-      {placed && (drc || final?.erc) && (
-        <div data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
-          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-          fontFamily: 'var(--sf-font-mono)', fontSize: 11, overflow: 'hidden' }}>
-          <button onClick={() => setPanelOpen(o => !o)}
-            style={{ width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', cursor: 'pointer',
-              background: 'transparent', color: findings.length ? (errorCount ? UI_BAD : UI_WARN) : UI_OK,
-              fontFamily: 'inherit', fontSize: 11, fontWeight: 700 }}>
-            {drc && !drc.available
-              ? '검사 도구 없음 (KiCad 미설치)'
-              : findings.length === 0
-                ? '검사 통과 · 위반 0'
-                : `오류 ${errorCount} · 경고 ${warnCount}`}
-            <span style={{ float: 'right', opacity: 0.7 }}>{panelOpen ? '▾' : '▸'}</span>
+      {/* checks: one row per rule, passed rules included; failed rows open to their findings */}
+      {placed && (
+        <div ref={checksRef} data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
+          // stops above the 3D hint in the bottom-right corner
+          maxHeight: 'calc(100% - 92px)', display: 'flex', flexDirection: 'column',
+          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
+          fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
+          <button type="button" onClick={() => setPanelOpen(!listOpen)} aria-expanded={listOpen}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', flexShrink: 0,
+              border: 'none', background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit' }}>
+            <StatusChip tone={checkHead.tone} busy={checkSum.pending} testId="board-checks-summary">{checkHead.text}</StatusChip>
+            <span data-testid="board-checks-passed" style={{ color: UI_DIM, whiteSpace: 'nowrap' }}>
+              통과 {checkSum.passed}/{checkSum.ran}
+            </span>
+            <span aria-hidden="true" style={{ marginLeft: 'auto', color: UI_DIM }}>{listOpen ? '▾' : '▸'}</span>
           </button>
-          {panelOpen && (
-            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-              {drc && !drc.available && (
-                <div style={{ padding: '6px 10px', opacity: 0.8 }}>{drc.reason} — 기판 파일은 정상 생성됐어요.</div>
-              )}
-              {drc?.available && (
-                <div style={{ padding: '4px 10px', opacity: 0.7 }}>
-                  KiCad 검사: 위반 {(drc.violations || []).length} · 미연결 {drc.unconnected}
-                </div>
-              )}
-              {findings.map(f => (
-                <button key={f.id} onClick={() => focusOn(f)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', cursor: 'pointer',
-                    border: 'none', borderTop: `1px solid ${UI_LINE}`, fontFamily: 'inherit', fontSize: 11,
-                    background: focusId === f.id ? 'rgba(255,255,255,0.10)' : 'transparent',
-                    color: f.severity === 'error' ? UI_BAD : UI_WARN }}>
-                  <span style={{ opacity: 0.6 }}>[{f.source}]</span> {f.text}
-                  {f.pos && <span style={{ opacity: 0.5 }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
-                </button>
-              ))}
+          {listOpen && (
+            <div style={{ overflowY: 'auto', minHeight: 0 }}>
+              {rows.map(r => {
+                const items = r.findings.map(id => findingById[id]).filter(Boolean)
+                const expandable = r.id === HUMAN_ROW || items.length > 0 || r.detail.length > 0
+                const open = expandable && (openRows[r.id] ?? (r.state === 'error' || r.state === 'review'))
+                const head = (
+                  <>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontFamily: SANS, fontSize: 12, lineHeight: '16px' }}>{r.label}</span>
+                      <span style={{ display: 'block', fontSize: 9.5, color: UI_DIM, overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.id}{r.note ? ` · ${r.note}` : ''}
+                      </span>
+                    </span>
+                    <Stamp row={r} />
+                  </>
+                )
+                const rowStyle = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', boxSizing: 'border-box' as const, padding: '5px 10px',
+                  border: 'none', background: 'transparent', textAlign: 'left' as const, color: UI_FG, font: 'inherit' }
+                return (
+                  <div key={r.id} data-check={r.id} data-state={r.state} style={{ borderTop: `1px solid ${UI_LINE}` }}>
+                    {expandable
+                      ? <button type="button" aria-expanded={open} style={{ ...rowStyle, cursor: 'pointer' }}
+                          onClick={() => setOpenRows(o => ({ ...o, [r.id]: !open }))}>{head}</button>
+                      : <div style={rowStyle}>{head}</div>}
+                    {open && r.id === HUMAN_ROW && (
+                      <div data-check-detail={r.id} style={{ paddingBottom: 6 }}>
+                        <div style={{ padding: '2px 10px 6px 16px', color: UI_DIM, fontFamily: SANS, lineHeight: 1.45 }}>
+                          자동 검사가 볼 수 없는 것만 묻습니다. 실물 부품이나 데이터시트와 맞춰 보고 체크하세요.
+                          3D에서 부품을 눌러도 이 목록으로 옵니다.
+                        </div>
+                        {reviewList.map(it => {
+                          const ok = reviewedKeys.has(it.key)
+                          const on = pickRef === it.ref
+                          return (
+                            <div key={it.key} data-review={it.ref} data-review-ok={ok ? '1' : '0'}
+                              style={{ margin: '0 8px 6px 10px', padding: '6px 8px', borderRadius: 4,
+                                border: `1px solid ${on ? TONE_COLOR.accent : UI_LINE}`,
+                                background: on ? 'rgba(106, 76, 181, 0.06)' : 'transparent' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <input type="checkbox" checked={ok} onChange={() => toggleReviewed(it)}
+                                  aria-label={`${it.ref} ${KIND_LABEL[it.kind]} 확인함`}
+                                  style={{ margin: 0, width: 14, height: 14, flexShrink: 0, accentColor: TONE_COLOR.ok, cursor: 'pointer' }} />
+                                <button type="button" onClick={() => selectPart(it.ref)} title="기판에서 보기"
+                                  style={{ border: 'none', background: 'transparent', padding: 0, font: 'inherit', fontWeight: 700,
+                                    color: UI_FG, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                                  {it.ref}
+                                </button>
+                                <span style={{ minWidth: 0, color: UI_DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {it.value} · {KIND_LABEL[it.kind]}
+                                </span>
+                              </div>
+                              {it.warning && (
+                                <div style={{ marginTop: 4, color: TONE_COLOR.bad, fontFamily: SANS, lineHeight: 1.45 }}>{it.warning}</div>
+                              )}
+                              <div style={{ marginTop: 4, fontFamily: SANS, lineHeight: 1.45 }}>{it.what}</div>
+                              <table style={{ marginTop: 4, borderCollapse: 'collapse', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                                <thead>
+                                  <tr>{['패드', '핀', '넷'].map(h => (
+                                    <th key={h} scope="col" style={{ padding: '0 12px 0 0', textAlign: 'left', fontWeight: 400, color: UI_DIM }}>{h}</th>
+                                  ))}</tr>
+                                </thead>
+                                <tbody>
+                                  {it.pins.map(pn => (
+                                    <tr key={pn.pad}>
+                                      <td style={{ padding: '0 12px 0 0' }}>{pn.pad}</td>
+                                      <td style={{ padding: '0 12px 0 0', fontWeight: 700 }}>{pn.name}</td>
+                                      <td style={{ color: UI_DIM }}>{pn.net ?? '연결 없음'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {open && r.id !== HUMAN_ROW && (
+                      <div data-check-detail={r.id} style={{ paddingBottom: 4 }}>
+                        {r.detail.map((line, k) => (
+                          <div key={k} style={{ padding: '2px 10px 2px 16px', color: UI_DIM, lineHeight: 1.45 }}>{line}</div>
+                        ))}
+                        {items.map(f => (
+                          <button type="button" key={f.id} data-finding={f.id} onClick={() => focusOn(f)}
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 10px 3px 16px',
+                              border: 'none', cursor: f.pos ? 'pointer' : 'default', font: 'inherit', lineHeight: 1.45,
+                              background: focusId === f.id ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
+                              color: TONE_COLOR[f.severity === 'error' ? 'bad' : 'warn'] }}>
+                            {f.text}
+                            {f.pos && <span style={{ color: UI_DIM }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
       )}
+      </div>
+
+      {/* status bar: the board's numbers in one line, the same values the checks use */}
+      <div data-testid="board-status" style={{ position: 'relative', flexShrink: 0, display: 'flex', flexWrap: 'wrap',
+        alignItems: 'center', gap: '4px 14px', padding: '6px 12px', background: UI_BG, borderTop: `1px solid ${UI_LINE}`,
+        color: UI_FG, fontFamily: MONO, fontSize: 11, lineHeight: '18px', fontVariantNumeric: 'tabular-nums' }}>
+        <StatusChip tone={phaseTone} busy={!settled} testId="board-phase">{label}</StatusChip>
+        {!placed && cur && <>
+          <Metric k="반복" v={cur.iter} />
+          <Metric k="선 길이 추정" v={`${cur.hpwl.toFixed(1)} mm`} />
+          {spark && <svg width={80} height={16} aria-hidden="true" style={{ display: 'block' }}>
+            <path d={spark} fill="none" stroke={RATSNEST} strokeWidth={1.2} />
+          </svg>}
+        </>}
+        {placed && saving != null && (
+          <Metric testId="board-saving" k="배치" tone="ok"
+            v={`격자 대비 −${saving}% (${hpwlShelf?.toFixed(0)} → ${hpwlFinal?.toFixed(0)} mm)`}
+            title="선 길이 추정(HPWL): 격자에 늘어놓은 배치와 비교" />
+        )}
+        {placed && routes.length > 0 && <>
+          <Metric testId="board-routing" k="배선" v={`${routedNow}/${connections}`}
+            tone={routedAll ? (unrouted.length ? 'bad' : 'ok') : undefined} />
+          <Metric testId="board-vias" k="비아" v={copper.vias.length} />
+          <Metric testId="board-tracks" k="트랙" v={`${trackLen.toFixed(0)} mm`} />
+        </>}
+        {placed && outline && (
+          <Metric testId="board-size" k="기판" v={`${(outline[2] - outline[0]).toFixed(1)} × ${(outline[3] - outline[1]).toFixed(1)} mm`} />
+        )}
+        {settled && drcNow && <>
+          <Metric testId="board-drc" k="DRC 오류" v={drcNow.errors} tone={drcNow.errors ? 'bad' : 'ok'} />
+          <Metric testId="board-unconnected" k="미연결" v={drcNow.unconnected} tone={drcNow.unconnected ? 'bad' : 'ok'} />
+        </>}
+        {settled && drc && !drc.available && <Metric testId="board-drc" k="DRC" v="건너뜀" tone="warn" title={drc.reason} />}
+        {placed && reviewList.length > 0 && (
+          <Metric testId="board-review" k="사람 확인" v={`${reviewedKeys.size}/${reviewList.length}`}
+            tone={reviewedKeys.size === reviewList.length ? 'ok' : 'warn'}
+            title="극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 검사 목록의 '사람 확인'에서 체크합니다" />
+        )}
+        {hoverNet && <Metric k="넷" v={hoverNet} />}
+      </div>
     </div>
   )
 }

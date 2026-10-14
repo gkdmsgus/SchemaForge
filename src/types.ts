@@ -73,6 +73,8 @@ export interface BoardPart {
   pads: BoardPad[]
   silk?: SilkItem[]
   ref_text?: { x: number; y: number; angle: number; w: number; h: number } | null
+  /** footprint pad -> template pin number (board.json only, not the early 'parts' event) */
+  pad_pins?: Record<string, number>
 }
 
 /** One placement snapshot: ref -> [x, y, rot]. */
@@ -174,6 +176,11 @@ export interface BoardModel {
   unrouted?: { net: string; from: string; to: string }[]
   erc?: ErcFinding[]
   pour?: PourRect[]
+  style?: 'smd' | 'tht'
+  /** parts the generator found no footprint for (server/pcb/board.py board_json) */
+  unmapped?: { ref: string; part: string; reason: string }[]
+  /** pinouts the generator had to assume, e.g. a THT stand-in for an SMD transistor */
+  warnings?: string[]
 }
 
 export interface GenerateResult {

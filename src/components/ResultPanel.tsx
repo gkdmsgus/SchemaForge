@@ -17,6 +17,7 @@ import type {
   BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
 } from '../types'
 import BoardView from './BoardView'
+import { StatusChip } from './StatusUi'
 import { validateCircuit } from '../lib/circuitValidation'
 
 const API = ''
@@ -610,15 +611,15 @@ export default function ResultPanel({
                 </button>
               ))}
               {pcbStatus === 'done' && pcbSummary && pcbSummary.unmapped.length > 0 && (
-                <span title={pcbSummary.unmapped.map(u => `${u.ref} (${u.part || '?'}): ${u.reason}`).join('\n')}
-                  style={{ ...ghostBtn, color: 'var(--sf-danger)', cursor: 'help' }}>
-                  ⚠ 풋프린트 없는 부품 {pcbSummary.unmapped.length}개: {pcbSummary.unmapped.map(u => u.ref).join(', ')}
-                </span>
+                <StatusChip tone="bad" testId="pcb-unmapped"
+                  title={pcbSummary.unmapped.map(u => `${u.ref} (${u.part || '?'}): ${u.reason}`).join('\n')}>
+                  풋프린트 없음 {pcbSummary.unmapped.length} · {pcbSummary.unmapped.map(u => u.ref).join(', ')}
+                </StatusChip>
               )}
               {pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
-                <span title={pcbSummary.warnings.join('\n')} style={{ ...ghostBtn, color: 'var(--sf-danger)', cursor: 'help' }}>
-                  ⚠ 부품 확인 {pcbSummary.warnings.length}건
-                </span>
+                <StatusChip tone="bad" testId="pcb-pinout" title={pcbSummary.warnings.join('\n')}>
+                  부품 확인 {pcbSummary.warnings.length}
+                </StatusChip>
               )}
               {pcbStatus !== 'loading' && (
                 <button onClick={() => { setUseAi(v => !v); if (pcbStatus === 'done') setPcbStatus(null) }}
@@ -629,12 +630,12 @@ export default function ResultPanel({
                 </button>
               )}
               {(pcbStatus === null || pcbStatus === 'invalid') && <button onClick={generatePCB} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : 'PCB 생성'}</button>}
-              {pcbStatus === 'loading' && <span style={{...ghostBtn, opacity:0.6, cursor:'default'}}>생성중…</span>}
+              {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {pcbStatus === 'done' && pcbFilename && <>
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
                 {gerberStatus === null && <button onClick={generateGerber} style={ghostBtn}>거버</button>}
-                {gerberStatus === 'loading' && <span style={{...ghostBtn, opacity:0.6, cursor:'default'}}>거버…</span>}
-                {gerberStatus === 'done' && <span style={{...ghostBtn, color:'var(--sf-cyan)', cursor:'default'}}>✓ 거버</span>}
+                {gerberStatus === 'loading' && <StatusChip tone="accent" busy>거버 생성 중</StatusChip>}
+                {gerberStatus === 'done' && <StatusChip tone="ok">거버 완료</StatusChip>}
               </>}
               {pcbStatus === 'error' && <button onClick={generatePCB} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
             </div>
