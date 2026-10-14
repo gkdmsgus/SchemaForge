@@ -9,7 +9,9 @@
     "start": "vite build && cd server && npx tsx index.ts",
     "server": "cd server && npx tsx index.ts",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsc --noEmit && cd server && npm run typecheck && npx tsx check_ai_layout.ts && cd .. && python server/pcb/run_checks.py",
+    "test:types": "tsc --noEmit && cd server && npm run typecheck"
   },
   "dependencies": {
     "@types/three": "^0.186.0",
