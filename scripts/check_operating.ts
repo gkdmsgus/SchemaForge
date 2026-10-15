@@ -684,9 +684,10 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     [['VIN', 'BT1.1', 'U1.3'], ['BN', 'BT1.2'], ['GND', 'U1.1', 'C1.2', 'D1.2'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'D1.1']]))
   const swReg = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'POWER'], ['U1', 'REG', 'LM7805'], ['C1', 'CP', '22uF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
     [['+3.3V', 'J1.1', 'SW1.1'], ['VSW', 'SW1.2', 'U1.3'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'D1.2'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'D1.1']]))
-  add('regulator on a dead battery / short of input behind a switch: LED not judged, one fault',
+  add('regulator on a dead battery: LED not judged; short of input: a fault behind it still counts',
     is(deadReg, 'op_led', 'unknown', 'D1') && head(deadReg) === '동작 안 됨 1' && is(swReg, 'op_reg', 'error', 'U1', /유지하지 못합니다/) &&
-    is(swReg, 'op_led', 'unknown', 'D1') && head(swReg) === '동작 안 됨 1',
+    // with enough input the 7805 gives 5 V and the 100 Ω LED takes (5 − 1.9) ÷ 100 = 31 mA: a fault of its own
+    is(swReg, 'op_led', 'error', 'D1', /31 mA/) && !pick(swReg, 'op_led', 'D1')?.cause && head(swReg) === '동작 안 됨 2',
     `${all(deadReg)} ${head(deadReg)} | ${all(swReg)} ${head(swReg)}`)
 
   // a button to GND with a pull-up is an input that is low only while pressed, not a pin tied to GND
@@ -1062,6 +1063,165 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     `${show(run(weakSig), 'op_drive')} | ${head(run(weakSig))}`)
 
   for (const [name, ok, info] of F) check(`O18 ${name}`, ok, info)
+}
+
+// O19. review round 5: relays switch over (COM–NO and COM–NC), compared one at a time; causes and counts ──
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const notPass = (rs: OpResult[], rule: OpRule, ref: string) => !!pick(rs, rule, ref) && pick(rs, rule, ref)!.state !== 'pass'
+  const cz = (refs: Comp[], nets: [string, ...string[]][]) => run(circuit(refs, nets))
+  const PWR: Comp = ['J1', 'Conn_01x02', 'PWR']
+
+  // two dead relays, one with a 10 Ω LED behind it: the LED is its own fault whatever the names
+  const twoDead = (a: string, b: string) => cz([PWR, [a, 'Relay', '12V'], [b, 'Relay', '12V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ['R1', 'R', '10'], ['L1', 'LED', 'RED'], ['R2', 'R', '330'], ['L2', 'LED', 'RED']],
+    [['+5V', 'J1.1', `${a}.1`, `${b}.1`, 'D1.2', 'D2.2', `${a}.3`, `${b}.3`], ['GND', 'J1.2', `${a}.2`, `${b}.2`, 'D1.1', 'D2.1', 'L1.2', 'L2.2'],
+      ['NOH', `${a}.4`, 'R1.1'], ['LA1', 'R1.2', 'L1.1'], ['NOC', `${b}.4`, 'R2.1'], ['LA2', 'R2.2', 'L2.1']])
+  const td1 = twoDead('K1', 'K2'), td2 = twoDead('K2', 'K1')
+  add('dead relays: the LED behind one is its own fault, names do not matter', head(td1) === '동작 안 됨 3' && head(td2) === '동작 안 됨 3' && !pick(td1, 'op_led', 'L1')?.cause,
+    `${head(td1)} / ${head(td2)} · ${show(td1, 'op_led', 'L1')}`)
+
+  // a relay used only through COM–NC still has its short checked
+  const ncOnly = cz([PWR, ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'RB.1', 'K1.1', 'D1.2', 'K1.3'], ['B', 'RB.2', 'Q1.1'], ['C', 'Q1.2', 'K1.2', 'D1.1'], ['GND', 'J1.2', 'Q1.3', 'K1.5']])
+  add('COM–NC short checked without an NO', is(ncOnly, 'op_short', 'error', 'K1', /NC/), show(ncOnly, 'op_short'))
+
+  // a battery stacked through an open contact is not connected; through a closed one it is no short
+  const floatStack = cz([PWR, ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['BT2', 'Battery', '9V'], ['R1', 'R', '1k'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'K1.3', 'L1.2'], ['B', 'BT2.2', 'K1.4'], ['T', 'BT2.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const stackShort = cz([['BT1', 'Battery', '5V'], ['K1', 'Relay', '12V'], ['D9', 'D', '1N4148'], ['BT2', 'Battery', '4V'], ['R1', 'R', '1k']],
+    [['GND', 'BT1.2', 'K1.2', 'D9.1', 'R1.2'], ['A', 'BT1.1', 'K1.1', 'D9.2', 'K1.3'], ['B', 'K1.4', 'BT2.2'], ['C', 'BT2.1', 'R1.1']])
+  add('battery behind an open contact: LED not passed, no false short', notPass(floatStack, 'op_led', 'L1') && !pick(stackShort, 'op_short'),
+    `${show(floatStack, 'op_led', 'L1')} | ${show(stackShort, 'op_short')}`)
+
+  // a relay driven by a 555 output: normal wiring passes; a backwards diode is an error of its own
+  const t555 = (dA: string, dK: string, extra = false) => run(variant(variant(variant(timer, setValue('BT1', '12V')), setValue('R3', '1k')), c => {
+    c.components.push({ ref: 'K1', name: 'Relay', value: '12V' }, { ref: 'D9', name: 'D', value: '1N4148' })
+    c.nets.find(n => n.name === 'OUT')!.nodes.push({ ref: 'K1', pin: '1' })
+    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'K1', pin: '2' })
+    c.nets.find(n => n.name === dA)!.nodes.push({ ref: 'D9', pin: '1' }); c.nets.find(n => n.name === dK)!.nodes.push({ ref: 'D9', pin: '2' })
+    if (extra) { c.components.push({ ref: 'R7', name: 'R', value: '10' }, { ref: 'L7', name: 'LED', value: 'RED' }); c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'R7', pin: '1' }); c.nets.push({ name: 'A7', nodes: [{ ref: 'R7', pin: '2' }, { ref: 'L7', pin: '1' }] }); c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'L7', pin: '2' }) }
+  }))
+  const okDrive = t555('GND', 'OUT'), badDrive = t555('OUT', 'GND', true)
+  add('relay on a 555 output: passes; a backwards diode counts on its own', is(okDrive, 'op_flyback', 'pass', 'K1') && head(okDrive) === '동작 검사 통과' &&
+    is(badDrive, 'op_flyback', 'error', 'K1') && head(badDrive) === '동작 안 됨 2', `${show(okDrive, 'op_flyback')} · ${head(okDrive)} | ${head(badDrive)}`)
+
+  // two relays tying different rails to one output: one short
+  const twoRails = cz([['J1', 'Conn_01x03', 'PWR'], ['K1', 'Relay', '12V'], ['K2', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ['R1', 'R', '1k']],
+    [['+5V', 'J1.1', 'K1.1', 'K2.1', 'D1.2', 'D2.2', 'K2.3'], ['GND', 'J1.2', 'K1.2', 'K2.2', 'D1.1', 'D2.1', 'R1.2'], ['+12V', 'J1.3', 'K1.3'], ['OUT', 'K1.4', 'K2.4', 'R1.1']])
+  add('two contacts joining two rails: one short', twoRails.filter(r => r.rule === 'op_short').length === 1, twoRails.filter(r => r.rule === 'op_short').map(r => r.summary).join(' | '))
+
+  // a regulator behind a dead contact and a switch; a regulator whose GND pin goes nowhere
+  const regSw = cz([['J1', 'Conn_01x03', 'PWR'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['SW1', 'SW', 'S'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '10uF'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+9V', 'J1.1', 'K1.3'], ['+5V', 'J1.3', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'U1.1', 'C1.2', 'L1.2'], ['M', 'K1.4', 'SW1.1'], ['VIN', 'SW1.2', 'U1.3'],
+      ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const regNoGnd = cz([['BT1', 'Battery', '9V'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '10uF'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['VIN', 'BT1.1', 'U1.3'], ['GND', 'BT1.2', 'C1.2', 'L1.2'], ['RG', 'U1.1'], ['+5V', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('regulator behind a dead contact and a switch, or with no ground: its LED not passed', notPass(regSw, 'op_led', 'L1') && notPass(regNoGnd, 'op_led', 'L1'),
+    `${show(regSw, 'op_led', 'L1')} | ${show(regNoGnd, 'op_led', 'L1')}`)
+
+  // one MOSFET pulls two coils, the second fed through the first relay's NO: works
+  const twoCoils = cz([PWR, ['RG', 'R', '100'], ['RP', 'R', '100k'], ['Q1', 'Q_NMOS', '2N7000'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['K2', 'Relay', '5V'], ['D2', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'RG.1', 'K1.1', 'D1.2', 'K1.3'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['GND', 'J1.2', 'RP.2', 'Q1.3'], ['C', 'Q1.2', 'K1.2', 'D1.1', 'K2.2', 'D2.1'], ['T2', 'K1.4', 'K2.1', 'D2.2']])
+  add('second coil fed through the first relay: works', head(twoCoils) === '동작 검사 통과', `${head(twoCoils)} · ${show(twoCoils, 'op_relay', 'K2')}`)
+
+  // two dead relays in series: what is behind both follows them; a fault there of its own still counts
+  const series2 = (lr: string) => cz([PWR, ['K1', 'Relay', '12V'], ['K2', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ...(lr ? [['R1', 'R', lr] as Comp] : []), ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'K2.1', 'D1.2', 'D2.2', 'K1.3'], ['GND', 'J1.2', 'K1.2', 'K2.2', 'D1.1', 'D2.1', 'L1.2'], ['M', 'K1.4', 'K2.3'],
+      ...(lr ? [['NO2', 'K2.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']] as [string, ...string[]][] : [['NO2', 'K2.4', 'L1.1']] as [string, ...string[]][])])
+  add('two dead relays in series: LED follows them; a bare LED there is its own fault', head(series2('330')) === '동작 안 됨 2' && head(series2('')) === '동작 안 됨 3',
+    `${head(series2('330'))} | ${head(series2(''))}`)
+
+  // only unknowns: counted by root; a warning under an unknown root still counts as a warning
+  const unkRelay = (r1: string) => cz([PWR, ['K1', 'Relay', 'HK19F'], ['D1', 'D', '1N4148'], ['R1', 'R', r1], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'K1.3'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'L1.2'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('unknown-only headline counts roots; a warning behind an unknown relay is a warning', head(unkRelay('330')) === '판단 불가 1' && head(unkRelay('110')) === '동작 경고 1 · 판단 불가 1',
+    `${head(unkRelay('330'))} | ${head(unkRelay('110'))}`)
+
+  // a changeover indicator (LEDs on NO and NC) is a normal circuit
+  const spdtLeds = cz([PWR, ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED'], ['R2', 'R', '330'], ['L2', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'RB.1', 'K1.1', 'D1.2', 'K1.3'], ['B', 'RB.2', 'Q1.1'], ['C', 'Q1.2', 'K1.2', 'D1.1'], ['GND', 'J1.2', 'Q1.3', 'L1.2', 'L2.2'],
+      ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1'], ['NC', 'K1.5', 'R2.1'], ['LB', 'R2.2', 'L2.1']])
+  add('changeover indicator passes', head(spdtLeds) === '동작 검사 통과', `${head(spdtLeds)} · ${show(spdtLeds, 'op_led', 'L2')}`)
+
+  // a coil with both pins on one net is an error
+  const coilOneNet = cz([PWR, ['K1', 'Relay', '5V'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['X', 'K1.1', 'K1.2'], ['+5V', 'J1.1', 'K1.3'], ['GND', 'J1.2', 'L1.2'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('coil pins on one net: error, LED follows it', is(coilOneNet, 'op_relay', 'error', 'K1') && head(coilOneNet) === '동작 안 됨 1', `${show(coilOneNet, 'op_relay')} · ${head(coilOneNet)}`)
+
+  // a backwards battery: its GND terminal is no cause; a capacitor it reverses and a relay it starves follow it
+  const bwGnd = cz([['BT1', 'Battery', '9V'], ['BT2', 'Battery', '5V'], ['R5', 'R', '1k'], ['R1', 'R', '10'], ['D1', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'R1.1'], ['GND', 'BT1.2', 'BT2.1', 'D1.2'], ['+5V', 'BT2.2', 'R5.1'], ['N5', 'R5.2'], ['LA', 'R1.2', 'D1.1']])
+  const bwCap = cz([['BT1', 'Battery', '5V'], ['C1', 'CP', '10uF'], ['R1', 'R', '1k']], [['GND', 'BT1.1', 'C1.2', 'R1.2'], ['+5V', 'BT1.2', 'C1.1', 'R1.1']])
+  const bwRelay = cz([['BT1', 'Battery', '5V'], ['J1', 'Conn_01x02', 'SIG'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148']],
+    [['GND', 'BT1.1', 'J1.2', 'Q1.3'], ['+5V', 'BT1.2', 'K1.1', 'D1.2'], ['SIG', 'J1.1', 'RB.1'], ['B', 'RB.2', 'Q1.1'], ['COIL', 'Q1.2', 'K1.2', 'D1.1']])
+  add('backwards battery: other rail faults own, reversed cap and starved relay follow it',
+    head(bwGnd) === '동작 안 됨 2' && !pick(bwGnd, 'op_led', 'D1')?.cause && head(bwCap) === '동작 안 됨 1' && head(bwRelay) === '동작 안 됨 1' && !/거꾸로 단 다이오드/.test(pick(bwRelay, 'op_relay', 'K1')?.summary ?? ''),
+    `${head(bwGnd)} | ${head(bwCap)} | ${head(bwRelay)} ${show(bwRelay, 'op_relay')}`)
+
+  // 555: a RESET tied to GND is its own fault next to a loose battery
+  const t555bad = run(variant(variant(timer, movePin('BT1.2', 'BN')), c => {
+    c.components.push({ ref: 'J1', name: 'Conn_01x02', value: 'G' }); c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'J1', pin: '1' })
+    movePin('U1.4', 'GND')(c)
+  }))
+  add('555 RESET on GND next to a loose battery: two faults', head(t555bad) === '동작 안 됨 2', `${show(t555bad, 'op_555')} · ${head(t555bad)}`)
+
+  // switch limits: a heavy motor beside a bare LED; an unknown motor current beside a starved coil
+  const motorBare = cz([PWR, ['RG', 'R', '100'], ['RP', 'R', '100k'], ['Q1', 'Q_NMOS', '2N7000'], ['J2', 'Conn_01x02', 'MOTOR 0.25A'], ['D2', 'D', '1N4148'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'RG.1', 'J2.1', 'D2.2', 'D1.1'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['GND', 'J1.2', 'RP.2', 'Q1.3'], ['D', 'Q1.2', 'J2.2', 'D2.1', 'D1.2']])
+  const motorUnk = cz([PWR, ['BT2', 'Battery', '12V'], ['RG', 'R', '100'], ['RP', 'R', '100k'], ['Q1', 'Q_NMOS', '2N7000'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['J2', 'Conn_01x02', 'MOTOR'], ['D2', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'RG.1', 'J2.1', 'D2.2'], ['+12V', 'BT2.1', 'K1.1', 'D1.2'], ['BN', 'BT2.2'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['GND', 'J1.2', 'RP.2', 'Q1.3'], ['D', 'Q1.2', 'K1.2', 'D1.1', 'J2.2', 'D2.1']])
+  add('switch limits: heavy motor beside a bare LED counts; unknown motor beside a starved coil stays unknown',
+    head(motorBare) === '동작 안 됨 2' && /판단 불가 1/.test(head(motorUnk)), `${head(motorBare)} | ${head(motorUnk)}`)
+
+  // loose battery past a closed switch; a series LED string split by a dead contact
+  const loosePast = cz([['BT1', 'Battery', '5V'], ['J1', 'Conn_01x02', 'G'], ['SW1', 'SW', 'S'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'BT1.1', 'SW1.1', 'K1.3'], ['BN', 'BT1.2'], ['GND', 'J1.1', 'K1.2', 'D1.1', 'L1.2'], ['KH', 'SW1.2', 'K1.1', 'D1.2'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const split = cz([PWR, ['K1', 'Relay', '12V'], ['D9', 'D', '1N4148'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D9.2', 'R1.1'], ['GND', 'J1.2', 'K1.2', 'D9.1', 'D2.2'], ['A', 'R1.2', 'D1.1'], ['COM', 'D1.2', 'K1.3'], ['NO', 'K1.4', 'D2.1']])
+  add('loose battery past a switch, and an LED string split by a dead contact: one fault each', head(loosePast) === '동작 안 됨 1' && head(split) === '동작 안 됨 1',
+    `${head(loosePast)} | ${head(split)}`)
+
+  // a relay under a transistor that cannot be judged follows it
+  const multiBase = cz([['J1', 'Conn_01x03', 'PWR'], ['RB', 'R', '1k'], ['RB2', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D9', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'RB.1', 'K1.1', 'D9.2', 'K1.3'], ['SIG', 'J1.2', 'RB2.1'], ['B', 'RB.2', 'RB2.2', 'Q1.1'], ['COL', 'Q1.2', 'K1.2', 'D9.1'], ['GND', 'J1.3', 'Q1.3', 'L1.2'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('relay under an undecided transistor: one unknown', head(multiBase) === '판단 불가 1', head(multiBase))
+
+  // an LED whose top is unknown does not follow a broken transistor below it; a named rail behind a dead
+  // contact has no supply; a dim LED behind a dead relay's base drive is not a pass
+  const topUnk = cz([['J1', 'Conn_01x03', 'PWR'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '1k']],
+    [['+5V', 'J1.1'], ['GND', 'J1.2', 'Q1.3'], ['SIG', 'J1.3', 'R1.1'], ['A', 'R1.2', 'D1.1'], ['COL', 'D1.2', 'Q1.2'], ['B', 'RB.2', 'Q1.1'], ['NOWHERE', 'RB.1']])
+  const namedNo = cz([['BT1', 'Battery', '5V'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'K1.1', 'D1.2', 'K1.3'], ['GND', 'BT1.2', 'K1.2', 'D1.1', 'L1.2'], ['+5V', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const dimBase = cz([PWR, ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['RL', 'R', '47k'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'K1.3', 'RL.1'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'Q1.3'], ['NO', 'K1.4', 'RB.1'], ['B', 'RB.2', 'Q1.1'], ['LA', 'RL.2', 'L1.1'], ['COL', 'L1.2', 'Q1.2']])
+  add('unknown top is not the transistor\'s fault; named rail behind a dead contact; dim LED behind a dead drive',
+    !pick(topUnk, 'op_led', 'D1')?.cause && notPass(namedNo, 'op_led', 'L1') && notPass(dimBase, 'op_led', 'L1'),
+    `${show(topUnk, 'op_led')} cause=${pick(topUnk, 'op_led', 'D1')?.cause} | ${show(namedNo, 'op_led', 'L1')} | ${show(dimBase, 'op_led', 'L1')}`)
+
+  // a dead regulator hides no fault behind it; an input through a contact to nothing is no relay's fault
+  const deadReg10 = cz([['BT1', 'Battery', '6V'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '10uF'], ['R1', 'R', '10'], ['L1', 'LED', 'RED']],
+    [['VIN', 'BT1.1', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'L1.2'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const toNothing = cz([PWR, ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '22uF'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'U1.1', 'C1.2', 'L1.2'], ['VIN', 'K1.3', 'U1.3'], ['X', 'K1.4'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('dead regulator: a 10 Ω LED behind it still counts; an input to nothing is not the relay\'s fault',
+    head(deadReg10) === '동작 안 됨 2' && pick(toNothing, 'op_led', 'L1')?.cause !== 'K1', `${head(deadReg10)} | ${show(toNothing, 'op_led', 'L1')} cause=${pick(toNothing, 'op_led', 'L1')?.cause}`)
+
+  // the cause named is the coil, the transistor behind it, or nothing: never an unrelated result of the part
+  const coilNotDiode = cz([['J1', 'Conn_01x03', 'PWR'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '12V'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '10uF'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+9V', 'J1.1', 'K1.3'], ['GND', 'J1.2', 'Q1.3', 'U1.1', 'C1.2', 'L1.2'], ['+5V', 'J1.3', 'RB.1', 'K1.1'], ['B', 'RB.2', 'Q1.1'], ['C', 'Q1.2', 'K1.2'], ['VIN', 'K1.4', 'U1.3'],
+      ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const offTransistor = cz([['J1', 'Conn_01x03', 'PWR'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+12V', 'J1.1', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'Q1.3', 'L1.2'], ['+5V', 'J1.3', 'K1.3'], ['NOWHERE', 'RB.1'], ['B', 'RB.2', 'Q1.1'], ['C', 'Q1.2', 'K1.2', 'D1.1'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const ruleOnly = cz([['J1', 'Conn_01x02', 'PWR'], ['J2', 'Conn_01x02', 'P5'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148']],
+    [['+12V', 'J1.1', 'K1.1', 'D1.1', 'K1.3'], ['GND', 'J1.2', 'J2.2', 'K1.2', 'D1.2'], ['+5V', 'J2.1', 'K1.4']])
+  add('cause names the coil, the transistor behind it, and never an unrelated result',
+    !!pick(coilNotDiode, 'op_led', 'L1')?.detail.some(d => /K1 릴레이 코일 전압 문제에서 이어진/.test(d)) &&
+    !!pick(offTransistor, 'op_led', 'L1')?.detail.some(d => /Q1 트랜지스터 켜짐 문제에서 이어진/.test(d)) && head(ruleOnly) === '동작 안 됨 2',
+    `${pick(coilNotDiode, 'op_led', 'L1')?.detail[0]} | ${pick(offTransistor, 'op_led', 'L1')?.detail[0]} | ${head(ruleOnly)}`)
+
+  for (const [name, ok, info] of F) check(`O19 ${name}`, ok, info)
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
