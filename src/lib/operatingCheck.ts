@@ -104,10 +104,12 @@ export function parseFarads(v: string): number | null {
   return Number.isFinite(f) ? f : null
 }
 
-/** "9V", "3.7 V", "3V3", "SRD-05VDC-SL-C", "12VDC", "2x1.5V" -> volts */
+/** "9V", "3.7 V", "3V3", "SRD-05VDC-SL-C", "12VDC", "2x1.5V", "1.5V x4" -> volts */
 export function parseVolts(v: string): number | null {
   const s = String(v ?? '').toUpperCase()
   let m = /(\d+)\s*[X×*]\s*(\d+(?:\.\d+)?)\s*V/.exec(s)      // cells in series
+  if (m) return Number(m[1]) * Number(m[2])
+  m = /(\d+(?:\.\d+)?)\s*V\s*[X×*]\s*(\d+)(?![\d.])/.exec(s)  // the same written "1.5V x4"
   if (m) return Number(m[1]) * Number(m[2])
   m = /(\d+)V(\d+)(?![\d.]*[A-Z])/.exec(s)                     // "3V3", but not "12V2A"
   if (m) return Number(`${m[1]}.${m[2]}`)
@@ -152,7 +154,9 @@ const cite = (n: Num) => n.src
 // how the last character is read aloud: no final consonant, a final ㄹ, or another final
 const DIGIT_FINAL = ['other', 'rieul', 'none', 'other', 'none', 'none', 'other', 'rieul', 'rieul', 'none'] as const   // 영 일 이 삼 사 오 육 칠 팔 구
 function finalOf(word: string): 'none' | 'rieul' | 'other' {
-  const ch = word.replace(/\([^)]*\)$/, '').replace(/['"’\]]+$/, '').trim().slice(-1)
+  // the word before a closing "(...)", or the words inside it when nothing comes before: "(값 없음)을"
+  const bare = word.replace(/['"’\]]+$/, '').trim()
+  const ch = (bare.replace(/\([^)]*\)$/, '').replace(/['"’\]]+$/, '').trim() || bare.replace(/[()]/g, '').trim()).slice(-1)
   const code = ch.charCodeAt(0)
   if (code >= 0xac00 && code <= 0xd7a3) { const f = (code - 0xac00) % 28; return f === 0 ? 'none' : f === 8 ? 'rieul' : 'other' }
   if (/\d/.test(ch)) return DIGIT_FINAL[Number(ch)]
@@ -750,7 +754,7 @@ function stringLoad(x: Ctx, s: LedString): Load {
   if (s.opposed) return { ...base, kind: 'fixed', i: 0, note: `${label} (방향이 맞지 않아 전류 없음)` }
   if (R.bad) return { ...base, kind: 'unknown', note: `${label} (저항 ${R.bad.ref} 값을 읽지 못함)` }
   if (R.ohms === 0 && (src || drivenNet(x, s.top))) return { ...base, kind: 'clamp', cause: led, note: `${label}에 직렬 저항이 없어 전류가 제한되지 않습니다` }
-  if (!src) { const ns = x.noSource(s.top); return { ...base, kind: 'unknown', ...(ns?.cause ? { cause: ns.cause } : {}), note: `${label} (위쪽 ${s.top} 전압 모름)` } }
+  if (!src) { const ns = x.noSource(s.top); return { ...base, kind: 'unknown', ...(ns?.cause ? { cause: ns.cause } : {}), note: `${label} (${s.top ? `위쪽 ${s.top} 전압 모름` : '위쪽 핀 연결 없음'})` } }
   return { ...base, label: `${label}+${s.rs.map(r => r.ref).join('+')}`, kind: 'res', src, vf: stringVf(s, specs as LedSpec[]), rLo: R.ohms, rHi: R.ohms, note: '' }
 }
 
@@ -785,7 +789,7 @@ function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString
       } else {
         const ns = src ? null : x.noSource(other)
         loads.push({ label: `${p.ref} 코일`, kind: 'unknown', ...(src ? { supply: src } : {}), ...(ns?.cause ? { cause: ns.cause } : {}),
-          note: !r ? `${p.ref} 코일 (정격 자료 없음: ${p.value || '값 없음'})` : `${p.ref} 코일 (전원 ${other} 전압 모름${ns ? `: ${ns.why}` : ''})` })
+          note: !r ? `${p.ref} 코일 (정격 자료 없음: ${p.value || '값 없음'})` : !other ? `${p.ref} 코일 (전원 쪽 핀 연결 없음)` : `${p.ref} 코일 (전원 ${other} 전압 모름${ns ? `: ${ns.why}` : ''})` })
       }
       continue
     }
@@ -1049,7 +1053,7 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
       state = 'warn'
       summary = `${q.ref} 게이트 ${vgsList}: 문턱은 넘지만 켜짐 저항 보장 전압 ${V(rated)} 미만이라 발열·전압 강하가 생길 수 있습니다`
       const lossy = per.filter(p => p.lossy)
-      if (lossy.length) summary += ` · ${lossy.map(p => p.cd.label).join(', ')} 신호는 ${why}${why.endsWith('분압') ? '으로' : '로'} ${lossy.map(p => vg(p.shown)).join(', ')}`
+      if (lossy.length) summary += ` · ${lossy.map(p => p.cd.label).join(', ')} 신호는 ${ro(why)} ${lossy.map(p => vg(p.shown)).join(', ')}`
     }
     if (!sw.pull && ctlInfo.fromSignal && state === 'pass') {
       state = 'warn'
@@ -1549,7 +1553,7 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
               // the threshold current flows through RA + RB from VCC to 2/3 VCC, so the limit grows with VCC
               const a = t.rsum_max_5v.v, b = t.rsum_max_15v.v, v = vcc.v
               const rmax = v <= 5 ? a * v / 5 : v >= 15 ? b * v / 15 : a + (b - a) * (v - 5) / 10
-              const how = v <= 5 ? `5 V 값 ${ohm(a)}을 VCC에 비례해 줄임` : v >= 15 ? `15 V 값 ${ohm(b)}을 VCC에 비례` : `5 V ${ohm(a)}와 15 V ${ohm(b)} 사이 직선 보간`
+              const how = v <= 5 ? `5 V 값 ${ohm(a)}을 VCC에 비례해 줄임` : v >= 15 ? `15 V 값 ${ohm(b)}을 VCC에 비례` : `5 V ${wa(ohm(a))} 15 V ${ohm(b)} 사이 직선 보간`
               detail.push(`RA + RB 최대 ${ohm(rmax)} @ VCC ${V(v)} (${how}; ${cite(t.rsum_max_5v)})`)
               if (RA + RB > rmax) {
                 const [sa, sb] = two(RA + RB, rmax, ohm)

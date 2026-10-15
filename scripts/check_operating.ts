@@ -734,6 +734,23 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   add('cause chains and loops count once', head(revChain) === '동작 안 됨 1' && loop === '동작 안 됨 2' && deep === '동작 안 됨 1' &&
     !!pick(revChain, 'op_drive')?.detail.some(d => /BT1 전원 전압 문제에서 이어진/.test(d)), `${head(revChain)} | ${loop} | ${deep} | ${pick(revChain, 'op_drive')?.detail[0]}`)
 
+  // text: particles after part names and values, no "null" for an open pin
+  const noD = run(variant(relay, c => { c.components = c.components.filter(x => x.ref !== 'D1'); c.nets.forEach(n => { n.nodes = n.nodes.filter(x => x.ref !== 'D1') }) }))
+  const emptyRb = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RB', 'R', ''], ['RC', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'RC.1', 'RB.1'], ['BASE', 'RB.2', 'Q1.1'], ['COL', 'RC.2', 'Q1.2'], ['GND', 'J1.2', 'Q1.3']]))
+  const senseR3 = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RL', 'R', '47'], ['R3', 'R', '1'], ['Q1', 'Q_NMOS', 'NDS7002A']],
+    [['+5V', 'J1.1', 'RL.1', 'Q1.1'], ['GND', 'J1.2', 'R3.2'], ['D', 'RL.2', 'Q1.2'], ['S', 'Q1.3', 'R3.1']]))
+  const openCoil = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V']],
+    [['+5V', 'J1.1', 'R1.1'], ['BASE', 'R1.2', 'Q1.1'], ['COIL', 'Q1.2', 'K1.2'], ['GND', 'J1.2', 'Q1.3']]))
+  const texts = [show(noD, 'op_flyback'), pick(run(timer), 'op_555')!.detail.join(' '), show(emptyRb, 'op_drive'), show(senseR3, 'op_drive'), show(openCoil, 'op_switch')]
+  add('text: Q1을, MΩ과, (값 없음)을, R3으로, no null', /Q1을 망가뜨릴/.test(texts[0]) && /3\.4 MΩ과 15 V/.test(texts[1]) && /\(값 없음\)을 읽지/.test(texts[2]) &&
+    /감지 저항 R3으로/.test(texts[3]) && /전원 쪽 핀 연결 없음/.test(texts[4]) && !/null/.test(texts.join(' ')), texts.map(t => t.slice(0, 120)).join(' | '))
+
+  // battery values written as a cell voltage times a count
+  const cells: [string, number | null][] = [['1.5V x4', 6], ['3.7V×2', 7.4], ['2x1.5V', 3], ['12V2A', 12], ['9V', 9]]
+  const misread = cells.filter(([s, v]) => !near(parseVolts(s), v))
+  add('"1.5V x4" is 6 V', misread.length === 0, misread.map(([s]) => `${s} → ${parseVolts(s)}`).join(', '))
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
