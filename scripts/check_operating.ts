@@ -715,6 +715,16 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     [['+3.95V', 'J1.1', 'K1.1', 'D1.2'], ['+12V', 'J1.2', 'Q1.1'], ['GND', 'J1.3', 'RS.2'], ['S', 'Q1.3', 'RS.1'], ['COIL', 'Q1.2', 'K1.2', 'D1.1']]))
   add('sense resistor drop counted in the coil voltage', is(senseRelay, 'op_relay', 'error', 'K1', /3\.71 V < 동작 전압 3\.75 V/), show(senseRelay, 'op_relay'))
 
+  // a coil from VCC to the 555 output (the output sinks it): neither pin order calls the flyback diode backwards
+  const sinkCoil = (coilOnOut: string, coilOnVcc: string) => variant(variant(timer, setValue('BT1', '12V')), c => {
+    c.components.push({ ref: 'K1', name: 'Relay', value: '12V' }, { ref: 'D9', name: 'D', value: '1N4148' })
+    c.nets.find(n => n.name === 'OUT')!.nodes.push({ ref: 'K1', pin: coilOnOut }, { ref: 'D9', pin: '1' })
+    c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'K1', pin: coilOnVcc }, { ref: 'D9', pin: '2' })
+  })
+  const sk1 = run(sinkCoil('1', '2')), sk2 = run(sinkCoil('2', '1'))
+  add('coil sunk by a 555 output: not an error, same in either pin order', is(sk1, 'op_relay', 'unknown', 'K1') && is(sk2, 'op_relay', 'unknown', 'K1') &&
+    is(sk1, 'op_flyback', 'pass', 'K1'), `${show(sk1, 'op_relay')} | ${show(sk2, 'op_relay')}`)
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
