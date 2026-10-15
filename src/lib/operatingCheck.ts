@@ -297,8 +297,9 @@ function baseIndex(c: OpCircuit, open: ReadonlySet<string> = new Set()) {
   const nets = [...byNet.keys()].sort(natural)
   return {
     style: c.style,
-    /** a relay's COM–NO contact taken as closed (the circuit judged switched on, the relay pulled in) */
-    closedRelay: (ref: string) => !open.has(ref),
+    /** a relay's COM–NO contact taken as closed (the circuit judged switched on, the relay pulled in);
+     *  a coil with a pin left open or both pins on one net never pulls in */
+    closedRelay: (ref: string) => { const a = net(ref, 1), z = net(ref, 2); return !open.has(ref) && !!a && !!z && a !== z },
     parts: () => parts,
     nets: () => nets,
     net,
@@ -333,8 +334,10 @@ function analyzePower(b: Base) {
   const blocked = new Map<string, { why: string; cause: string }>()
   const hasConn = (n: string) => b.on(n).some(nd => { const p = b.part(nd.ref); return !!p && /^Conn_/.test(p.part) && !isMotor(p) })
   const regOut = (n: string) => b.of('REG').some(r => b.net(r.ref, 2) === n)
-  /** a named rail fed from outside (a connector) or by a regulator: a closed switch does not change it */
-  const ownRail = (n: string) => named.has(n) && (hasConn(n) || regOut(n))
+  /** a named rail fed from outside (a connector) or by a regulator, or the output of a regulator whose
+   *  voltage is known: a closed switch does not change it (two sources meeting is a short, op_short) */
+  const ownRail = (n: string) => (named.has(n) && (hasConn(n) || regOut(n))) ||
+    b.of('REG').some(r => b.net(r.ref, 2) === n && regSpec(r.value) != null)
 
   interface Edge { ref: string; plus: string; minus: string; dv: number }
   const edges: Edge[] = []
@@ -1668,17 +1671,20 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
       detail: ['게이트와 드레인처럼 핀을 구분할 수 없으면 계산이 틀립니다. PCB를 다시 생성하면 검사합니다',
         `핀 대응이 없는 부품: ${c.missing.slice(0, 12).join(', ')}${c.missing.length > 12 ? ' …' : ''}`] }]
   }
-  const out = collect(c, new Set())
-  // A relay pulls in before its contact closes, so its coil is judged with its own COM–NO open:
-  // a coil fed through its own contact never starts, a latch contact does not help the first pull-in
+  let out = collect(c, new Set())
+  // A relay pulls in before its contact closes, so its coil (pull-in and flyback diode) is judged with
+  // its own COM–NO open: a coil fed through its own contact never starts, a latch contact does not
+  // help the first pull-in
+  const sig = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.state}/${r.summary}`).join('\n')
   for (const k of c.parts.filter(p => p.part === 'Relay').map(p => p.ref)) {
     const a = c.pins.get(pinKey(k, 3)), z = c.pins.get(pinKey(k, 4))
-    const i = out.findIndex(r => r.rule === 'op_relay' && r.ref === k)
-    if (!a || !z || a === z || i < 0) continue
-    const before = collect(c, new Set([k])).find(r => r.rule === 'op_relay' && r.ref === k)
-    if (before && (before.state !== out[i].state || before.summary !== out[i].summary)) {
-      out[i] = { ...before, detail: [`${k} 코일은 자기 접점(COM–NO)이 붙기 전 상태로 계산합니다`, ...before.detail] }
-    }
+    const own = (r: OpResult) => r.ref === k && (r.rule === 'op_relay' || r.rule === 'op_flyback')
+    const at = out.findIndex(own)
+    if (!a || !z || a === z || at < 0) continue
+    const before = collect(c, new Set([k])).filter(own)
+    if (sig(before) === sig(out.filter(own))) continue
+    const note = `${k} 코일은 자기 접점(COM–NO)이 붙기 전 상태로 계산합니다`
+    out = [...out.slice(0, at).filter(r => !own(r)), ...before.map(r => ({ ...r, detail: [note, ...r.detail] })), ...out.slice(at).filter(r => !own(r))]
   }
   // say where a knock-on failure comes from, since the headline counts it under its cause
   const label = Object.fromEntries(OP_RULES) as Record<OpRule, string>
