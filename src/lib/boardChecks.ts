@@ -1,12 +1,13 @@
 import type { BoardModel, DrcResult } from '../types'
 import { pinoutWarnings, type ReviewItem } from './humanReview'
+import { OP_RULES, type OpResult, type OpState } from './operatingCheck'
 
 // Every check the board went through, one row per rule, so a passed rule is visible
 // too (not only the failures). Rows reference findings by the same ids BoardView uses
 // for its markers: drc<i> (KiCad DRC violations), erc<i> (netlist checks), unr<i>
 // (connections the router could not finish).
 
-export type CheckState = 'pass' | 'error' | 'warn' | 'review' | 'pending' | 'skipped'
+export type CheckState = 'pass' | 'error' | 'warn' | 'review' | 'pending' | 'skipped' | 'unknown'
 export type Tone = 'ok' | 'bad' | 'warn' | 'accent' | 'idle'
 
 export interface CheckRow {
@@ -17,7 +18,15 @@ export interface CheckRow {
   note?: string         // one short fact shown under the label, e.g. "14/14 연결"
   detail: string[]      // lines shown when the row is opened: reason, unmapped parts, pinouts
   findings: string[]    // ids of the findings that belong to this rule
+  group?: string        // heading the row sits under in the list
+  items?: CheckItem[]   // per-part results (operating checks), shown when the row is opened
 }
+
+/** One part's result inside a rule row. */
+export interface CheckItem { ref: string; state: CheckState; summary: string; detail: string[] }
+
+/** Groups in display order. */
+export const GROUP = { board: '기판 검사', circuit: '회로 연결', operating: '동작 검사', parts: '부품 확인' } as const
 
 /** Netlist checks run by server/pcb/erc.py on every board, in its order. */
 export const ERC_RULES: [string, string][] = [
@@ -41,7 +50,7 @@ export const TONE_COLOR: Record<Tone, string> = {
 }
 
 export const STATE_TONE: Record<CheckState, Tone> = {
-  pass: 'ok', error: 'bad', warn: 'warn', review: 'warn', pending: 'idle', skipped: 'idle',
+  pass: 'ok', error: 'bad', warn: 'warn', review: 'warn', pending: 'idle', skipped: 'idle', unknown: 'idle',
 }
 
 export function stampText(r: Pick<CheckRow, 'state' | 'count'>): string {
@@ -52,7 +61,33 @@ export function stampText(r: Pick<CheckRow, 'state' | 'count'>): string {
     case 'review': return `확인 ${r.count}`
     case 'pending': return '대기'
     case 'skipped': return '건너뜀'
+    case 'unknown': return '판단 불가'
   }
+}
+
+/** The state word alone, for one part inside a row. */
+export function stateWord(s: CheckState): string {
+  return ({ pass: '통과', error: '안 됨', warn: '경고', review: '확인', pending: '대기', skipped: '건너뜀', unknown: '판단 불가' } as const)[s]
+}
+
+/** One row per operating rule that applies to this circuit; worst part decides the row. */
+export function operatingRows(results: OpResult[]): CheckRow[] {
+  const rank: Record<OpState, number> = { pass: 0, unknown: 1, warn: 2, error: 3 }
+  const rows: CheckRow[] = []
+  for (const [rule, label] of OP_RULES) {
+    const rs = results.filter(r => r.rule === rule)
+    if (!rs.length) continue
+    const state = rs.reduce<OpState>((a, r) => (rank[r.state] > rank[a] ? r.state : a), 'pass')
+    const hits = rs.filter(r => r.state === state)
+    rows.push({
+      id: rule, label, state, group: GROUP.operating,
+      count: state === 'pass' ? 0 : hits.length,
+      note: rs.length === 1 ? (rs[0].ref && rs[0].summary.startsWith(rs[0].ref) ? rs[0].summary.slice(rs[0].ref.length).replace(/^[\s:]+/, '') : rs[0].summary) : `${rs.length}개 항목`,
+      detail: [], findings: [],
+      items: rs.map(r => ({ ref: r.ref, state: r.state, summary: r.summary, detail: r.detail })),
+    })
+  }
+  return rows
 }
 
 /** Connections a board needs: for each net, pads on it minus one. */
@@ -75,6 +110,23 @@ export const HUMAN_ROW = 'human_review'
 export function checkRows(
   drc: DrcResult | null, final: BoardModel | null,
   review?: { items: ReviewItem[]; reviewed: Set<string> },   // reviewed = item keys a person ticked
+  operating?: OpResult[],                                     // numeric "does it work" checks
+): CheckRow[] {
+  const rows = checkRowsBase(drc, final, review, operating)
+  // headings: board checks, circuit connections, operating checks, parts
+  for (const r of rows) {
+    if (r.group) continue
+    r.group = r.id.startsWith('kicad_') || r.id === 'routing' ? GROUP.board
+      : r.id === 'footprint_map' || r.id === HUMAN_ROW || r.id === 'pinout_assumed' ? GROUP.parts
+      : GROUP.circuit
+  }
+  return rows
+}
+
+function checkRowsBase(
+  drc: DrcResult | null, final: BoardModel | null,
+  review?: { items: ReviewItem[]; reviewed: Set<string> },
+  operating?: OpResult[],
 ): CheckRow[] {
   const rows: CheckRow[] = []
 
@@ -126,6 +178,9 @@ export function checkRows(
     rows.push({ id, label, state, count: hits.length, detail: [], findings: hits.map(x => `erc${x.i}`) })
   }
 
+  // does it work: numeric checks on the part values
+  if (final && operating) rows.push(...operatingRows(operating))
+
   // parts: every part got a real footprint
   if (final?.unmapped) {
     rows.push({
@@ -172,11 +227,12 @@ export interface CheckSummary {
   warnings: number   // problems in warn rows
   reviews: number    // items a person has to confirm
   skipped: number
+  unknown: number    // rules that could not decide (a value they need is missing)
   pending: boolean
 }
 
 export function summarize(rows: CheckRow[]): CheckSummary {
-  const ran = rows.filter(r => r.state !== 'pending' && r.state !== 'skipped')
+  const ran = rows.filter(r => r.state !== 'pending' && r.state !== 'skipped' && r.state !== 'unknown')
   const sum = (s: CheckState) => rows.filter(r => r.state === s).reduce((n, r) => n + r.count, 0)
   return {
     ran: ran.length,
@@ -185,6 +241,7 @@ export function summarize(rows: CheckRow[]): CheckSummary {
     warnings: sum('warn'),
     reviews: sum('review'),
     skipped: rows.filter(r => r.state === 'skipped').length,
+    unknown: rows.filter(r => r.state === 'unknown').length,
     pending: rows.some(r => r.state === 'pending'),
   }
 }
@@ -196,6 +253,8 @@ export function overall(s: CheckSummary): { tone: Tone; text: string } {
   if (s.warnings || s.reviews) {
     return { tone: 'warn', text: [s.warnings && `경고 ${s.warnings}`, s.reviews && `확인 ${s.reviews}`].filter(Boolean).join(' · ') }
   }
-  if (s.skipped) return { tone: 'warn', text: `통과 · 건너뜀 ${s.skipped}` }
+  if (s.skipped || s.unknown) {
+    return { tone: 'warn', text: ['통과', s.skipped && `건너뜀 ${s.skipped}`, s.unknown && `판단 불가 ${s.unknown}`].filter(Boolean).join(' · ') }
+  }
   return { tone: 'ok', text: '검사 통과' }
 }

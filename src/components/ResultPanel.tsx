@@ -18,6 +18,9 @@ import type {
 } from '../types'
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
+import OperatingPanel from './OperatingPanel'
+import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
+import { STATE_TONE } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
 
 const API = ''
@@ -104,6 +107,9 @@ export default function ResultPanel({
 
   const effectiveGraph = localGraph || result?.graph
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
+  // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
+  const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
+  const opHead = operatingHeadline(opResults)
   const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
@@ -621,6 +627,12 @@ export default function ResultPanel({
                   부품 확인 {pcbSummary.warnings.length}
                 </StatusChip>
               )}
+              {opResults.length > 0 && (
+                <StatusChip tone={STATE_TONE[opHead.state]} testId="op-chip"
+                  title={opResults.filter(r => r.state !== 'pass').map(r => r.summary).join('\n') || '모든 동작 검사 통과'}>
+                  {opHead.text}
+                </StatusChip>
+              )}
               {pcbStatus !== 'loading' && (
                 <button onClick={() => { setUseAi(v => !v); if (pcbStatus === 'done') setPcbStatus(null) }}
                   title="AI가 배치·선 굵기에서 고칠 점을 제안합니다. 검사 지표가 좋아질 때만 반영해요 (OpenAI 호출 비용이 듭니다)"
@@ -665,6 +677,7 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
+            {viewMode === 'schematic' && <OperatingPanel results={opResults} style={pcbStyle} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               <div role="alert" data-testid="circuit-diagnostics" style={{
                 position: 'absolute', left: 14, top: 14, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',

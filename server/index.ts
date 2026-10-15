@@ -1388,6 +1388,10 @@ app.get('/demo_result/:name', async (req: Request, res: Response) => {
     ne555: 'ne555_blink',
     relay: 'npn_relay',
     motor: 'nmos_motor',
+    // the same circuits with one deliberate fault each, for the operating check
+    led_bad: 'led_bad',
+    ne555_bad: 'ne555_bad',
+    relay_bad: 'relay_bad',
   }
   const fixture = demos[String(req.params['name'] || '')]
   if (!fixture) return res.status(404).json({ error: 'Unknown demo circuit.' })

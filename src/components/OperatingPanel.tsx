@@ -1,0 +1,70 @@
+import { useState } from 'react'
+import { OP_RULES, operatingHeadline, type OpResult, type OpState } from '../lib/operatingCheck'
+import { STATE_TONE, TONE_COLOR, stateWord } from '../lib/boardChecks'
+import { StatusChip } from './StatusUi'
+
+// "Does it work?" on the schematic, before a PCB exists. It never blocks PCB generation:
+// it says which parts will not work and why, with the numbers.
+
+const MONO = 'var(--sf-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)'
+const SANS = 'var(--sf-font-sans, system-ui, -apple-system, "Segoe UI", sans-serif)'
+const LINE = 'rgba(0, 0, 0, 0.14)'
+const FG = '#23262b'
+const DIM = '#6b7079'
+const RANK: Record<OpState, number> = { pass: 0, unknown: 1, warn: 2, error: 3 }
+
+export default function OperatingPanel({ results, style }: { results: OpResult[]; style: 'smd' | 'tht' }) {
+  const head = operatingHeadline(results)
+  const [open, setOpen] = useState<boolean | null>(null)
+  const isOpen = open ?? head.state === 'error'
+  const [detail, setDetail] = useState<Record<string, boolean>>({})
+  if (!results.length) return null
+  const sorted = [...results].sort((a, b) => RANK[b.state] - RANK[a.state] ||
+    OP_RULES.findIndex(r => r[0] === a.rule) - OP_RULES.findIndex(r => r[0] === b.rule))
+  const label = Object.fromEntries(OP_RULES)
+
+  return (
+    <div data-testid="operating-panel" style={{ position: 'absolute', right: 14, top: 14, zIndex: 19, width: 380, maxWidth: 'calc(100% - 28px)',
+      maxHeight: 'calc(100% - 28px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 8,
+      background: 'rgba(255, 255, 255, 0.95)', border: `1px solid ${LINE}`, color: FG, fontFamily: MONO, fontSize: 11 }}>
+      <button type="button" onClick={() => setOpen(!isOpen)} aria-expanded={isOpen}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
+          background: 'transparent', cursor: 'pointer', color: FG, font: 'inherit', flexShrink: 0 }}>
+        <StatusChip tone={STATE_TONE[head.state]} testId="operating-summary">{head.text}</StatusChip>
+        <span style={{ color: DIM, fontFamily: SANS }}>동작 검사 · {style.toUpperCase()} 부품 기준</span>
+        <span aria-hidden="true" style={{ marginLeft: 'auto', color: DIM }}>{isOpen ? '▾' : '▸'}</span>
+      </button>
+      {isOpen && (
+        <div style={{ overflowY: 'auto', minHeight: 0, borderTop: `1px solid ${LINE}` }}>
+          <div style={{ padding: '6px 10px', color: DIM, fontFamily: SANS, lineHeight: 1.45 }}>
+            부품 값으로 계산해 "실제로 동작하는지"를 봅니다. 필요한 값(커넥터로 들어오는 전원, 모터 전류)을 모르면 판단 불가로 둡니다. PCB 생성은 막지 않습니다.
+          </div>
+          {sorted.map((r, i) => {
+            const key = `${r.rule}-${r.ref}-${i}`
+            const shown = detail[key] ?? r.state === 'error'
+            const c = TONE_COLOR[STATE_TONE[r.state]]
+            return (
+              <div key={key} data-op={r.ref} data-op-rule={r.rule} data-op-state={r.state} style={{ borderTop: `1px solid ${LINE}` }}>
+                <button type="button" onClick={() => setDetail(d => ({ ...d, [key]: !shown }))} aria-expanded={shown}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%', boxSizing: 'border-box', padding: '6px 10px',
+                    border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', color: FG, font: 'inherit' }}>
+                  <span style={{ flexShrink: 0, minWidth: 52, textAlign: 'center', padding: '0 5px', borderRadius: 3, border: `1px solid ${c}`,
+                    color: c, fontSize: 10, fontWeight: 700, lineHeight: '16px', whiteSpace: 'nowrap' }}>{stateWord(r.state)}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 9.5, color: DIM }}>{label[r.rule]}</span>
+                    <span style={{ display: 'block', fontFamily: SANS, fontSize: 11.5, lineHeight: 1.45 }}>{r.summary}</span>
+                  </span>
+                </button>
+                {shown && r.detail.length > 0 && (
+                  <div style={{ padding: '0 10px 7px 70px' }}>
+                    {r.detail.map((line, k) => <div key={k} style={{ color: DIM, fontSize: 10.5, lineHeight: 1.45 }}>{line}</div>)}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
