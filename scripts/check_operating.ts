@@ -689,6 +689,27 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(swReg, 'op_led', 'unknown', 'D1') && head(swReg) === '동작 안 됨 1',
     `${all(deadReg)} ${head(deadReg)} | ${all(swReg)} ${head(swReg)}`)
 
+  // a button to GND with a pull-up is an input that is low only while pressed, not a pin tied to GND
+  const resetButton = variant(variant(timer, movePin('U1.4', 'RST')), c => {
+    c.components.push({ ref: 'R4', name: 'R', value: '10k' }, { ref: 'SW1', name: 'SW', value: 'STOP' })
+    c.nets.find(n => n.name === 'RST')!.nodes.push({ ref: 'R4', pin: '2' }, { ref: 'SW1', pin: '1' })
+    c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'R4', pin: '1' })
+    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'SW1', pin: '2' })
+  })
+  const rb = run(resetButton)
+  const offButton = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RB', 'R', '4.7k'], ['SW1', 'SW', 'OFF'], ['Q1', 'Q_NPN', '2N3904'], ['RL', 'R', '330'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'RB.1', 'RL.1'], ['BASE', 'RB.2', 'SW1.1', 'Q1.1'], ['GND', 'J1.2', 'SW1.2', 'Q1.3'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2']]))
+  const viaInput = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RP', 'R', '10k'], ['SW1', 'SW', 'BTN'], ['RB', 'R', '4.7k'], ['Q1', 'Q_NPN', '2N3904'], ['RL', 'R', '330'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'RP.1', 'RL.1'], ['IN', 'RP.2', 'SW1.1', 'RB.1'], ['GND', 'J1.2', 'SW1.2', 'Q1.3'], ['BASE', 'RB.2', 'Q1.1'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2']]))
+  const shunt = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', 'BTN']],
+    [['+5V', 'J1.1', 'R1.1'], ['X', 'R1.2', 'D1.1', 'SW1.1'], ['GND', 'J1.2', 'D1.2', 'SW1.2']]))
+  const pressOn = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'BTN'], ['RP', 'R', '10k'], ['Q1', 'Q_NMOS', '2N7002'], ['RL', 'R', '330'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'SW1.1', 'RL.1'], ['G', 'SW1.2', 'RP.1', 'Q1.1'], ['GND', 'J1.2', 'RP.2', 'Q1.3'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2']]))
+  add('button to GND with a pull-up: 555 reset button, press-to-off base, LED shorted by a button',
+    is(rb, 'op_555', 'pass', 'U1', /0\.986 Hz/) && is(offButton, 'op_drive', 'pass', 'Q1') && is(viaInput, 'op_drive', 'unknown', 'Q1', /SW1/) &&
+    is(shunt, 'op_led', 'pass', 'D1', /8\.18~9\.39 mA/) && is(pressOn, 'op_drive', 'pass', 'Q1'),
+    [show(rb, 'op_555'), show(offButton, 'op_drive'), show(viaInput, 'op_drive'), show(shunt, 'op_led'), show(pressOn, 'op_drive')].join(' | '))
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
