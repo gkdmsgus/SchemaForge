@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
@@ -6,7 +6,8 @@ import Board3D from './Board3D'
 import KiCad3DViewer from './KiCad3DViewer'
 import { Stamp, StatusChip } from './StatusUi'
 import type { Camera } from '../lib/board3d'
-import { HUMAN_ROW, TONE_COLOR, checkRows, drcCounts, overall, summarize, type Tone } from '../lib/boardChecks'
+import { HUMAN_ROW, STATE_TONE, TONE_COLOR, checkRows, drcCounts, overall, stateWord, summarize, type Tone } from '../lib/boardChecks'
+import { fromBoard, operatingChecks } from '../lib/operatingCheck'
 import { KIND_LABEL, loadReviewed, reviewItems, saveReviewed, type ReviewItem } from '../lib/humanReview'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
@@ -380,7 +381,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const reviewList = useMemo(() => (final ? reviewItems(final) : []), [final])
   const reviewedKeys = useMemo(() => new Set(reviewList.filter(it => reviewed[it.key]).map(it => it.key)), [reviewList, reviewed])
   const reviewedRefs = useMemo(() => reviewList.filter(it => reviewedKeys.has(it.key)).map(it => it.ref), [reviewList, reviewedKeys])
-  const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }), [drc, final, reviewList, reviewedKeys])
+  // does it work: numeric checks on the finished board's part values
+  const opResults = useMemo(() => (final ? operatingChecks(fromBoard(final)) : []), [final])
+  const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }, opResults),
+    [drc, final, reviewList, reviewedKeys, opResults])
   const checkSum = summarize(rows)
   const checkHead = overall(checkSum)
   const findingById = useMemo(() => Object.fromEntries(findings.map(f => [f.id, f])), [findings])
@@ -754,9 +758,16 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </button>
           {listOpen && (
             <div style={{ overflowY: 'auto', minHeight: 0 }}>
-              {rows.map(r => {
+              {rows.map((r, idx) => {
+                const heading = r.group && (idx === 0 || rows[idx - 1].group !== r.group) ? (
+                  <div key={`g-${r.group}`} data-check-group={r.group}
+                    style={{ padding: '7px 10px 3px', borderTop: idx ? `1px solid ${UI_LINE}` : undefined, color: UI_DIM,
+                      fontFamily: SANS, fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(0, 0, 0, 0.025)' }}>
+                    {r.group}
+                  </div>
+                ) : null
                 const items = r.findings.map(id => findingById[id]).filter(Boolean)
-                const expandable = r.id === HUMAN_ROW || items.length > 0 || r.detail.length > 0
+                const expandable = r.id === HUMAN_ROW || items.length > 0 || r.detail.length > 0 || !!r.items?.length
                 const open = expandable && (openRows[r.id] ?? (r.state === 'error' || r.state === 'review'))
                 const head = (
                   <>
@@ -773,7 +784,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                 const rowStyle = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', boxSizing: 'border-box' as const, padding: '5px 10px',
                   border: 'none', background: 'transparent', textAlign: 'left' as const, color: UI_FG, font: 'inherit' }
                 return (
-                  <div key={r.id} data-check={r.id} data-state={r.state} style={{ borderTop: `1px solid ${UI_LINE}` }}>
+                  <Fragment key={r.id}>
+                  {heading}
+                  <div data-check={r.id} data-state={r.state} style={{ borderTop: heading ? 'none' : `1px solid ${UI_LINE}` }}>
                     {expandable
                       ? <button type="button" aria-expanded={open} style={{ ...rowStyle, cursor: 'pointer' }}
                           onClick={() => setOpenRows(o => ({ ...o, [r.id]: !open }))}>{head}</button>
@@ -845,9 +858,29 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                             {f.pos && <span style={{ color: UI_DIM }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
                           </button>
                         ))}
+                        {/* per-part results with the calculation behind each */}
+                        {r.items?.map((it, k) => (
+                          <div key={`${r.id}-${it.ref}-${k}`} data-op={it.ref} data-op-state={it.state}
+                            style={{ margin: '0 8px 6px 10px', padding: '5px 8px', borderRadius: 4, border: `1px solid ${UI_LINE}` }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                              <span style={{ flexShrink: 0, minWidth: 52, textAlign: 'center', padding: '0 5px', borderRadius: 3,
+                                border: `1px solid ${TONE_COLOR[STATE_TONE[it.state]]}`, color: TONE_COLOR[STATE_TONE[it.state]],
+                                fontSize: 10, fontWeight: 700, lineHeight: '16px', whiteSpace: 'nowrap' }}>{stateWord(it.state)}</span>
+                              <button type="button" onClick={() => selectPart(it.ref)} title="기판에서 보기"
+                                style={{ border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer',
+                                  font: 'inherit', fontFamily: SANS, fontSize: 11.5, lineHeight: 1.45, color: UI_FG }}>
+                                {it.summary}
+                              </button>
+                            </div>
+                            {it.detail.map((line, k) => (
+                              <div key={k} style={{ marginTop: 2, paddingLeft: 60, color: UI_DIM, fontSize: 10.5, lineHeight: 1.45 }}>{line}</div>
+                            ))}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
+                  </Fragment>
                 )
               })}
             </div>
