@@ -1273,7 +1273,12 @@ function checkRelays(x: Ctx, sinkOf: (n: string | null) => Sink | null): OpResul
     // the supply side: the higher known end; a 0 V end means the other end feeds the coil
     const s1 = x.source(n1), s2 = x.source(n2)
     let high: string | null = null, low: string | null = null
-    if (s1 && s2) { if (s1.hi >= s2.hi) { high = n1; low = n2 } else { high = n2; low = n1 } }
+    const f1 = x.voltOf(n1), f2 = x.voltOf(n2)
+    // a fixed rail against a 555 output: the output drives the coil from GND, and sinks it from any rail above GND
+    if (s1 && s2 && !f1 !== !f2) {
+      const fixed = f1 ? n1 : n2, out = f1 ? n2 : n1
+      if ((f1 ?? f2)!.v > 0) { high = fixed; low = out } else { high = out; low = fixed }
+    } else if (s1 && s2) { if (s1.hi >= s2.hi) { high = n1; low = n2 } else { high = n2; low = n1 } }
     else if (s1 && s1.hi > 0) { high = n1; low = n2 }
     else if (s2 && s2.hi > 0) { high = n2; low = n1 }
     else if (s1) { low = n1; high = n2 }
