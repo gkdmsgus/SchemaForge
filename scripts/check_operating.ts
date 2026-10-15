@@ -53,6 +53,9 @@ const movePin = (pin: string, to: string) => (c: NetGraph) => {
   const net = c.nets.find(n => n.name === to) ?? (c.nets.push({ name: to, nodes: [] }), c.nets[c.nets.length - 1])
   net.nodes.push({ ref, pin: num })
 }
+/** the same circuit with its parts, nets and pins listed in reverse */
+const reversed = (g: NetGraph): NetGraph => ({ components: [...g.components].reverse(), nets: [...g.nets].reverse().map(n => ({ ...n, nodes: [...n.nodes].reverse() })) })
+const full = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}/${r.summary}`).sort().join('\n')
 const near = (a: number | null, b: number | null) => (a == null || b == null ? a === b : Math.abs(a - b) <= Math.abs(b) * 1e-9)
 
 // O1. reading values ────────────────────────────────────────────────────────────
@@ -632,9 +635,6 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
   const head = (rs: OpResult[]) => operatingHeadline(rs).text
   const all = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}:${r.state}`).join(' ')
-  /** the same circuit with its parts, nets and pins listed in reverse */
-  const reversed = (g: NetGraph): NetGraph => ({ components: [...g.components].reverse(), nets: [...g.nets].reverse().map(n => ({ ...n, nodes: [...n.nodes].reverse() })) })
-  const full = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}/${r.summary}`).sort().join('\n')
 
   // crash: a battery between a connector rail and a net a switch ties to GND (the walk back from GND stopped at the rail)
   const railSwitch = circuit([['BT1', 'Battery', '3.7V'], ['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'PUSH'], ['R1', 'R', '1k']],
@@ -758,22 +758,24 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
 {
   const F: [string, boolean, string][] = []
   const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const G: NetGraph[] = []
+  const op = (g: NetGraph) => { G.push(g); return run(g) }
 
   // a MOSFET has to stand the load supply across drain and source once it turns off (VDSS 60 V, like a BJT's VCEO)
   const highV = (v: string) => circuit([['J1', 'Conn_01x02', 'PWR'], ['BT1', 'Battery', v], ['RL', 'R', '10k'], ['RG', 'R', '100'], ['RP', 'R', '100k'], ['Q1', 'Q_NMOS', '2N7002']],
     [['+5V', 'J1.1', 'RG.1'], ['VH', 'BT1.1', 'RL.1'], ['GND', 'J1.2', 'BT1.2', 'RP.2', 'Q1.3'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['D', 'RL.2', 'Q1.2']])
-  const v60 = run(highV('60V')), v48 = run(highV('48V'))
+  const v60 = op(highV('60V')), v48 = op(highV('48V'))
   add('MOSFET drain: 60 V supply ≥ VDSS 60 V is an error, 48 V passes', is(v60, 'op_switch', 'error', 'Q1', /60 V ≥ VDSS 60 V/) && is(v48, 'op_switch', 'pass', 'Q1'),
     `${show(v60, 'op_switch')} | ${show(v48, 'op_switch')}`)
 
   // battery → resistor → switch → LED: the series walk goes on through the closed switch
-  const swLed = run(circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['SW1', 'SW', 'ON'], ['D1', 'LED', 'RED']],
+  const swLed = op(circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['SW1', 'SW', 'ON'], ['D1', 'LED', 'RED']],
     [['VBAT', 'BT1.1', 'R1.1'], ['N1', 'R1.2', 'SW1.1'], ['N2', 'SW1.2', 'D1.1'], ['GND', 'BT1.2', 'D1.2']]))
   // and on to a transistor below the LED
-  const swQ = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RL', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', 'ON'], ['RB', 'R', '4.7k'], ['Q1', 'Q_NPN', '2N3904']],
+  const swQ = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['RL', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', 'ON'], ['RB', 'R', '4.7k'], ['Q1', 'Q_NPN', '2N3904']],
     [['+5V', 'J1.1', 'RL.1', 'RB.1'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'SW1.1'], ['COL', 'SW1.2', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']]))
   // two LEDs on one resistor, one of them behind a switch: with the switch open the other takes all 31 mA, so no shared-current pass
-  const swPair = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
+  const swPair = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
     [['+5V', 'J1.1', 'R1.1'], ['X', 'R1.2', 'D1.1', 'D2.1'], ['Z', 'D2.2', 'SW1.1'], ['GND', 'J1.2', 'D1.2', 'SW1.2']]))
   const ledOf = (rs: OpResult[]) => rs.filter(r => r.rule === 'op_led')
   add('LED behind a closed switch: judged through it, the switch shown, a switched LED not shared',
@@ -781,6 +783,32 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(swQ, 'op_led', 'pass', 'D1') && is(swQ, 'op_switch', 'pass', 'Q1') &&
     !ledOf(swPair).some(r => r.state === 'pass' || /D1·D2|D2·D1|나눠/.test(r.summary)),
     `${show(swLed, 'op_led')} | ${show(swQ, 'op_led')} | ${show(swQ, 'op_switch')} | ${ledOf(swPair).map(r => `${r.state}: ${r.summary}`).join(' / ')}`)
+
+  // relay contacts (COM–NO) carry a voltage like a closed switch: a motor on them needs a flyback diode too
+  const relayMotor = (diode: [string, string] | null, value = 'MOTOR 0.2A') => circuit([
+    ['J1', 'Conn_01x02', 'PWR'], ['BT1', 'Battery', '12V'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'],
+    ['J2', 'Conn_01x02', value], ...(diode ? [['D2', 'D', '1N4148'] as Comp] : [])],
+  [['+5V', 'J1.1', 'K1.1', 'D1.2', 'RB.1'], ['COIL', 'K1.2', 'D1.1', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'BT1.2', 'Q1.3', 'J2.2', ...(diode ? [diode[0]] : [])],
+    ['VBAT', 'BT1.1', 'K1.3'], ['M', 'K1.4', 'J2.1', ...(diode ? [diode[1]] : [])]])
+  const rmNone = op(relayMotor(null)), rmGood = op(relayMotor(['D2.1', 'D2.2'])), rmBad = op(relayMotor(['D2.2', 'D2.1']))
+  // an LED behind the contacts, and a 555 reset that the contacts pull low against a pull-up (not "tied to GND")
+  const relayLed = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['R1', 'R', '330'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'R1.1'], ['C', 'R1.2', 'K1.3'], ['NO', 'K1.4', 'D1.1'], ['GND', 'J1.2', 'D1.2']]))
+  const relayReset = op(variant(variant(timer, movePin('U1.4', 'RST')), c => {
+    c.components.push({ ref: 'R4', name: 'R', value: '10k' }, { ref: 'K2', name: 'Relay', value: '5V' })
+    c.nets.find(n => n.name === 'RST')!.nodes.push({ ref: 'R4', pin: '2' }, { ref: 'K2', pin: '4' })
+    c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'R4', pin: '1' })
+    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'K2', pin: '3' })
+  }))
+  add('relay contacts carry like a closed switch: motor flyback warns/passes/errors, LED judged, pulled-up reset not tied',
+    is(rmNone, 'op_flyback', 'warn', 'J2', /보호 다이오드가 없습니다/) && !!pick(rmNone, 'op_flyback', 'J2')?.detail.some(d => /K1 접점/.test(d)) &&
+    is(rmGood, 'op_flyback', 'pass', 'J2') && is(rmBad, 'op_flyback', 'error', 'J2', /거꾸로/) &&
+    is(relayLed, 'op_led', 'pass', 'D1', /9\.39 mA/) && !!pick(relayLed, 'op_led', 'D1')?.detail.some(d => /K1 접점은 닫힌 것으로/.test(d)) &&
+    is(relayReset, 'op_555', 'pass', 'U1') && !!pick(relayReset, 'op_555', 'U1')?.detail.some(d => /K2 접점이 닫혀 있는 동안/.test(d)),
+    [show(rmNone, 'op_flyback', 'J2'), show(rmGood, 'op_flyback', 'J2'), show(rmBad, 'op_flyback', 'J2'), show(relayLed, 'op_led'), show(relayReset, 'op_555')].join(' | '))
+
+  const orderDiff = G.filter(g => full(run(g)) !== full(run(reversed(g))))
+  add('listing order does not change these answers', orderDiff.length === 0, orderDiff.map(g => `${full(run(g))} ≠ ${full(run(reversed(g)))}`).join(' || ').slice(0, 600))
 
   for (const [name, ok, info] of F) check(`O16 ${name}`, ok, info)
 }
