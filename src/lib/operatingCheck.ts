@@ -269,6 +269,8 @@ interface Volt {
   v: number; why: string; src: 'name' | 'battery' | 'reg'
   /** the switch that has to be closed for this net to get its voltage */
   viaSwitch?: string
+  /** an input a switch ties to GND (no part's ground on it): low only while the switch is closed */
+  input?: boolean
   /** a button input: the switch ties it to GND, this resistor pulls it up while the switch is open */
   pulled?: { ref: string; v: number }
   /** a fault this voltage comes from (a battery put in backwards) */
@@ -521,6 +523,7 @@ function analyzePower(b: Base) {
   const groundPin = (nd: Node) => { const p = b.part(nd.ref)?.part; return p === 'Battery' || (nd.pin === 1 && (p === 'NE555' || p === 'REG')) || (nd.pin === 3 && (p === 'Q_NPN' || p === 'Q_NMOS')) }
   for (const [n, v] of volts) {
     if (!v.viaSwitch || v.v !== 0 || b.on(n).some(groundPin)) continue
+    v.input = true
     for (const nd of b.on(n)) {
       const p = b.part(nd.ref), far = b.net(nd.ref, nd.pin === 1 ? 2 : 1), fv = far ? volts.get(far) : undefined
       if (p?.part === 'R' && fv && fv.v > 0.05 && fv.viaSwitch !== v.viaSwitch) { v.pulled = { ref: p.ref, v: fv.v }; break }
@@ -1522,7 +1525,7 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     const driven = (m: string) => x.on(m).some(nd => { const p = x.part(nd.ref); return !!p && p.ref !== u.ref && isExternal(p) })
     const rv = x.voltOf(rst)
     if (tiedTo.length) errors.push(`4번 핀(RESET)이 ${tiedTo.join('·')} 핀과 묶여 있어 그 핀이 낮아지는 순간 멈춥니다 (VCC에 연결)`)
-    else if (rst && x.isGnd(rst) && !rv?.pulled) errors.push('4번 핀(RESET)이 GND에 묶여 있어 동작하지 않습니다')
+    else if (rst && x.isGnd(rst) && !rv?.input) errors.push('4번 핀(RESET)이 GND에 묶여 있어 동작하지 않습니다')
     else if (rst && (rst === vccNet || pulledUp(rst) || driven(rst))) {
       // held high; a reset button stops it only while pressed
       if (rv?.pulled) detail.push(`4번 핀(RESET)은 ${x.whileClosed(rv.viaSwitch!)} GND로 내려가 멈추고, 평소에는 ${ro(rv.pulled.ref)} 높게 유지됩니다`)
@@ -1533,7 +1536,11 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
         warns.push(`4번 핀(RESET)은 ${rv.viaSwitch} ${ga(what)} 닫혀야 높아져, ${ga(what)} 열리면 멈춥니다`)
       }
     } else if (rst && pulledDown(rst)) warns.push('4번 핀(RESET)이 GND 쪽 저항으로 낮게 잡혀 있어 평소에는 멈춰 있습니다 (VCC에 연결)')
-    else warns.push('4번 핀(RESET)이 떠 있어 잡음에 멈출 수 있습니다 (VCC에 연결)')
+    else if (rv?.input) {
+      // a reset button with nothing holding the pin high once it is released
+      const open = x.contactNoun(rv.viaSwitch!) === '접점' ? '접점이 열리면' : '스위치를 놓으면'
+      warns.push(`4번 핀(RESET)은 ${x.whileClosed(rv.viaSwitch!)} GND로 내려가지만, ${open} 떠 있어 잡음에 멈출 수 있습니다 (VCC 쪽에 풀업 저항 필요)`)
+    } else warns.push('4번 핀(RESET)이 떠 있어 잡음에 멈출 수 있습니다 (VCC에 연결)')
     // CTRL (5): a capacitor or nothing; tied to a rail it moves the thresholds to that rail
     const ctl = n(5), cv = x.voltOf(ctl)
     let shifted = false

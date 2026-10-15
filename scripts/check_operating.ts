@@ -807,6 +807,21 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(relayReset, 'op_555', 'pass', 'U1') && !!pick(relayReset, 'op_555', 'U1')?.detail.some(d => /K2 접점이 닫혀 있는 동안/.test(d)),
     [show(rmNone, 'op_flyback', 'J2'), show(rmGood, 'op_flyback', 'J2'), show(rmBad, 'op_flyback', 'J2'), show(relayLed, 'op_led'), show(relayReset, 'op_555')].join(' | '))
 
+  // a 555 reset button to GND with no pull-up floats when released: a warning; a reset wired to GND, or to the 555's own switched ground, stays an error
+  const resetPlain = (extra: (c: NetGraph) => void) => variant(variant(timer, movePin('U1.4', 'RST')), c => {
+    c.components.push({ ref: 'SW1', name: 'SW', value: 'STOP' })
+    c.nets.find(n => n.name === 'RST')!.nodes.push({ ref: 'SW1', pin: '1' })
+    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'SW1', pin: '2' })
+    extra(c)
+  })
+  const rFloat = op(resetPlain(() => {}))
+  const rTied = op(variant(timer, movePin('U1.4', 'GND')))
+  const rOwnGnd = op(resetPlain(c => { movePin('U1.1', 'RST')(c) }))
+  add('555 reset button without pull-up: floats (warn), tied reset still an error',
+    is(rFloat, 'op_555', 'warn', 'U1', /4번 핀\(RESET\)은 SW1을 누르는 동안 GND로 내려가지만, 스위치를 놓으면 떠 있어/) &&
+    is(rTied, 'op_555', 'error', 'U1', /GND에 묶여/) && is(rOwnGnd, 'op_555', 'error', 'U1', /GND에 묶여/),
+    [show(rFloat, 'op_555'), show(rTied, 'op_555'), show(rOwnGnd, 'op_555')].join(' | '))
+
   const orderDiff = G.filter(g => full(run(g)) !== full(run(reversed(g))))
   add('listing order does not change these answers', orderDiff.length === 0, orderDiff.map(g => `${full(run(g))} ≠ ${full(run(reversed(g)))}`).join(' || ').slice(0, 600))
 
