@@ -269,24 +269,29 @@ interface Volt {
 /** a node's voltage while the circuit runs, as a range */
 interface Level { lo: number; hi: number; why: string; cause?: string }
 
+const natural = (a: string, z: string) => a.localeCompare(z, 'en', { numeric: true })
+
 function baseIndex(c: OpCircuit) {
+  // sorted, so that no answer depends on the order the parts and pins happen to be listed in
+  const parts = [...c.parts].sort((a, z) => natural(a.ref, z.ref))
   const byNet = new Map<string, Node[]>()
-  for (const [k, n] of c.pins) {
+  for (const [k, n] of [...c.pins].sort(([a], [z]) => natural(a, z))) {
     const i = k.lastIndexOf('.')
     const list = byNet.get(n) || []
     list.push({ ref: k.slice(0, i), pin: Number(k.slice(i + 1)) })
     byNet.set(n, list)
   }
-  const byRef = new Map(c.parts.map(p => [p.ref, p]))
+  const byRef = new Map(parts.map(p => [p.ref, p]))
   const net = (ref: string, pin: number) => c.pins.get(pinKey(ref, pin)) ?? null
+  const nets = [...byNet.keys()].sort(natural)
   return {
     style: c.style,
-    parts: () => c.parts,
-    nets: () => [...byNet.keys()],
+    parts: () => parts,
+    nets: () => nets,
     net,
     on: (n: string | null): Node[] => (n ? byNet.get(n) || [] : []),
     part: (ref: string) => byRef.get(ref),
-    of: (kind: string) => c.parts.filter(p => p.part === kind),
+    of: (kind: string) => parts.filter(p => p.part === kind),
     /** the net on a two-pin part's other pin */
     other: (ref: string, pin: number) => net(ref, pin === 1 ? 2 : 1),
   }
@@ -349,7 +354,8 @@ function analyzePower(b: Base) {
   }
   /**
    * voltages relative to `from` and the parts crossed to get there. Batteries first; a closed
-   * switch only carries a voltage on into a net nothing else has fixed.
+   * switch only carries a voltage on into a net nothing else has fixed, and never to or from a
+   * rail fed from outside (the same in both directions, so every walk over a group reaches all of it).
    */
   const walk = (from: string) => {
     const rel = new Map<string, { v: number; path: string[]; sw?: string }>([[from, { v: 0, path: [] }]])
@@ -363,7 +369,7 @@ function analyzePower(b: Base) {
           if (!rel.has(st.to)) { rel.set(st.to, { v: here.v + st.dv, path: [...here.path, st.label], sw: here.sw }); queue.push(st.to) }
         }
       }
-      const next = pending.find(p => !rel.has(p.step.to) && !ownRail(p.step.to))
+      const next = pending.find(p => !rel.has(p.step.to) && !ownRail(p.step.to) && !ownRail(p.from))
       if (!next) break
       const here = rel.get(next.from)!
       rel.set(next.step.to, { v: here.v, path: [...here.path, next.step.label], sw: here.sw ?? next.step.sw })
@@ -404,7 +410,9 @@ function analyzePower(b: Base) {
     }
     // two batteries of different voltage across the same nets
     for (const e of group) {
-      const got = rel.get(e.plus)!.v - rel.get(e.minus)!.v
+      const rp = rel.get(e.plus), rm = rel.get(e.minus)
+      if (!rp || !rm) continue
+      const got = rp.v - rm.v
       if (Math.abs(got - e.dv) > 0.01) {
         issue(e.ref, `${e.ref} ${V(e.dv)}가 이미 ${V(got)} 차이로 정해진 두 넷(${e.plus}, ${e.minus}) 사이에 연결되어 있습니다: 전압이 다른 전원이 맞물려 큰 전류가 흐릅니다`,
           [`${e.plus}: ${volts.get(e.plus)!.why}`, `${e.minus}: ${volts.get(e.minus)!.why}`])
@@ -529,7 +537,7 @@ function context(c: OpCircuit) {
   }
 
   /** resistors with one pin on a and the other on b */
-  const between = (a: string, z: string) => c.parts.filter(p => p.part === 'R' &&
+  const between = (a: string, z: string) => b.parts().filter(p => p.part === 'R' &&
     ((b.net(p.ref, 1) === a && b.net(p.ref, 2) === z) || (b.net(p.ref, 1) === z && b.net(p.ref, 2) === a)))
 
   return { ...b, power, voltOf, isGnd, gndState, blockedWhy, groundPath, grounded, timerOut, source, noSource, between }

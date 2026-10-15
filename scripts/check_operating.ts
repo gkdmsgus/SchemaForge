@@ -626,6 +626,33 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   for (const [name, ok, info] of F) check(`O13 ${name}`, ok, info)
 }
 
+// O15. findings from the third review: one circuit per finding ─────────────────
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const all = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}:${r.state}`).join(' ')
+  /** the same circuit with its parts, nets and pins listed in reverse */
+  const reversed = (g: NetGraph): NetGraph => ({ components: [...g.components].reverse(), nets: [...g.nets].reverse().map(n => ({ ...n, nodes: [...n.nodes].reverse() })) })
+  const full = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}/${r.summary}`).sort().join('\n')
+
+  // crash: a battery between a connector rail and a net a switch ties to GND (the walk back from GND stopped at the rail)
+  const railSwitch = circuit([['BT1', 'Battery', '3.7V'], ['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'PUSH'], ['R1', 'R', '1k']],
+    [['+3.3V', 'BT1.1', 'J1.1', 'SW1.1'], ['N6', 'BT1.2', 'J1.2'], ['GND', 'SW1.2', 'R1.1'], ['X', 'R1.2']])
+  const rsw = run(railSwitch)
+  add('battery on a connector rail with a switch to GND: no crash', !pick(rsw, 'op_data') && is(rsw, 'op_power', 'error', 'BT1', /GND/), `${all(rsw)} ${show(rsw, 'op_power')}`)
+
+  // the order parts and pins are listed in does not change any answer
+  const twoButtons = circuit([['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'UP'], ['SW2', 'SW', 'DOWN'], ['R1', 'R', '4.7k']],
+    [['+5V', 'J1.1', 'SW1.1'], ['N1', 'SW1.2', 'SW2.1', 'R1.1'], ['GND', 'J1.2', 'SW2.2', 'R1.2']])
+  const chain = circuit([['BT1', 'Battery', '3.7V'], ['BT2', 'Battery', '9V'], ['R1', 'R', '1k']],
+    [['GNDA', 'BT2.1', 'R1.1'], ['+12V', 'BT2.2', 'BT1.1'], ['+9V', 'BT1.2', 'R1.2']])
+  const orderDiff = [twoButtons, chain, railSwitch, relay, timer, motor].filter(g => full(run(g)) !== full(run(reversed(g))))
+  add('listing order does not change the answer', orderDiff.length === 0, orderDiff.map(g => `${full(run(g))} ≠ ${full(run(reversed(g)))}`).join(' || ').slice(0, 600))
+
+  for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
+}
+
 // O14. every verdict from the circuits above: basis shown, no NaN, no "same < same" ────
 {
   const problems: string[] = []
