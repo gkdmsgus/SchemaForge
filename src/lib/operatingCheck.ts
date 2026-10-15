@@ -265,6 +265,8 @@ interface Volt {
   v: number; why: string; src: 'name' | 'battery' | 'reg'
   /** the switch that has to be closed for this net to get its voltage */
   viaSwitch?: string
+  /** a button input: the switch ties it to GND, this resistor pulls it up while the switch is open */
+  pulled?: { ref: string; v: number }
   /** a fault this voltage comes from (a battery put in backwards) */
   cause?: string
 }
@@ -502,6 +504,17 @@ function analyzePower(b: Base) {
   for (const n of named.keys()) if (!volts.has(n) && !blocked.has(n)) volts.set(n, { v: named.get(n)!, why: `넷 이름 ${n}`, src: 'name' })
   for (let guard = 0; guard < 50 && carry(n => volts.get(n)); guard++) { /* until nothing changes */ }
   for (const n of volts.keys()) blocked.delete(n)
+
+  // A net a closed switch ties to GND while a resistor pulls it up is a button input: low only
+  // while the button is pressed. A switched ground rail (part grounds on it) is not one.
+  const groundPin = (nd: Node) => { const p = b.part(nd.ref)?.part; return p === 'Battery' || (nd.pin === 1 && (p === 'NE555' || p === 'REG')) || (nd.pin === 3 && (p === 'Q_NPN' || p === 'Q_NMOS')) }
+  for (const [n, v] of volts) {
+    if (!v.viaSwitch || v.v !== 0 || b.on(n).some(groundPin)) continue
+    for (const nd of b.on(n)) {
+      const p = b.part(nd.ref), far = b.net(nd.ref, nd.pin === 1 ? 2 : 1), fv = far ? volts.get(far) : undefined
+      if (p?.part === 'R' && fv && fv.v > 0.05 && fv.viaSwitch !== v.viaSwitch) { v.pulled = { ref: p.ref, v: fv.v }; break }
+    }
+  }
   return { volts, issues, blocked }
 }
 
@@ -594,9 +607,12 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
   let n = x.net(ref, pin)
   let opposed: string | null = null
   for (let step = 0; n && step < 40; step++) {
-    // a supply, GND or a driven output ends the chain even when only two pins sit on it
-    if (x.voltOf(n) || x.blockedWhy(n) || x.timerOut(n)) break
-    const others = x.on(n).filter(o => !(o.ref === at.ref && o.pin === at.pin))
+    // a supply, GND or a driven output ends the chain even when only two pins sit on it. A button
+    // input is followed up through its pull-up: the LED lights that way while the button is open
+    const v = x.voltOf(n)
+    const button = !!v?.pulled && dir === 'up'
+    const others = x.on(n).filter(o => !(o.ref === at.ref && o.pin === at.pin) && !(button && x.part(o.ref)?.part === 'SW'))
+    if ((v && !(button && others.length === 1 && others[0].ref === v.pulled!.ref)) || x.blockedWhy(n) || x.timerOut(n)) break
     if (others.length !== 1) break
     const o = others[0], p = x.part(o.ref)
     if (!p || seen.has(p.ref)) break
@@ -799,7 +815,7 @@ const signalCands = (): Cand[] => SIGNAL_CANDIDATES.map(v => ({ label: V(v), lv:
 function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: string) {
   const word = kind === 'bjt' ? '베이스' : '게이트'
   const out = {
-    drive: null as Switch['drive'], pull: null as Switch['pull'], cands: [] as Cand[], fromSignal: false,
+    drive: null as Switch['drive'], pull: null as Switch['pull'], cands: [] as Cand[], fromSignal: false, note: null as string | null,
     problem: null as null | { state: OpState; summary: string; detail: string[]; cause?: string },
   }
   const attached = () => `${word} 넷 ${ctl}에 연결된 것: ${x.on(ctl).filter(n => n.ref !== q.ref).map(n => `${n.ref}.${n.pin}`).join(', ') || '없음'}`
@@ -808,8 +824,11 @@ function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: strin
     return out
   }
   if (ctl === e) return fail('error', `${q.ref} ${word}가 ${kind === 'bjt' ? '이미터' : '소스'}와 같은 넷(${ctl})에 있어 켜지지 않습니다`, [`${word}와 ${kind === 'bjt' ? '이미터' : '소스'} 사이에 전압이 생기지 않습니다`])
-  if (x.isGnd(ctl)) return fail('error', `${q.ref} ${word}가 GND에 묶여 있어 켜지지 않습니다`, [`${ctl}: ${x.voltOf(ctl)!.why}`])
-  const direct = x.source(ctl)
+  // a button that pulls the base/gate to GND turns it off while pressed; worked out with the button open
+  const button = x.voltOf(ctl)?.pulled ? x.voltOf(ctl) : null
+  if (button) out.note = `${eul(button.viaSwitch!)} 누르는 동안 ${word}가 GND로 내려가 꺼집니다. 아래는 스위치가 열렸을 때입니다`
+  if (x.isGnd(ctl) && !button) return fail('error', `${q.ref} ${word}가 GND에 묶여 있어 켜지지 않습니다`, [`${ctl}: ${x.voltOf(ctl)!.why}`])
+  const direct = button ? null : x.source(ctl)
   if (direct) {
     if (kind === 'bjt') return fail('error', `${q.ref} 베이스에 저항 없이 ${rangeV(direct)}가 바로 걸립니다: 베이스 전류가 제한되지 않습니다`, [direct.why], direct.cause)
     out.cands = [{ label: rangeV(direct), lv: direct, signal: false }]
@@ -831,6 +850,11 @@ function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: strin
     if (p.part === 'R') {
       const from = x.other(p.ref, nd.pin), ohms = parseOhms(p.value)
       if (ohms == null) return fail('unknown', `${q.ref} ${word} 저항 ${p.ref} 값 ${eul(val(p.value))} 읽지 못했습니다`)
+      const fb = x.voltOf(from)
+      if (fb?.pulled) {
+        return fail('unknown', `${q.ref} ${word} 저항 ${p.ref} 반대쪽 ${eun(from!)} ${ga(fb.viaSwitch!)} 닫히면 GND, 열리면 ${ro(fb.pulled.ref)} 올라가는 버튼 입력이라 켜짐을 계산하지 않았습니다`,
+          [`${wa(p.ref)} ${ga(fb.pulled.ref)} 이어진 구동은 계산하지 않습니다`])
+      }
       if (x.isGnd(from) || from === e) pulls.push({ r: p, ohms, toE: from === e })
       else drives.push({ r: p, ohms, from })
     } else if (isExternal(p)) external = true
@@ -922,6 +946,7 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
     }
     sw.loads = loadsOn(x, c, q.ref, atBottom)
     const ctlInfo = controlOf(x, q, kind, ctl, e)
+    if (ctlInfo.note) notes.push(ctlInfo.note)
     sw.drive = ctlInfo.drive; sw.pull = ctlInfo.pull; sw.cands = ctlInfo.cands
     if (ctlInfo.problem) {
       verdict(ctlInfo.problem.state, ctlInfo.problem.summary, ctlInfo.problem.detail, ctlInfo.problem.cause)
@@ -1468,8 +1493,11 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     const driven = (m: string) => x.on(m).some(nd => { const p = x.part(nd.ref); return !!p && p.ref !== u.ref && isExternal(p) })
     const rv = x.voltOf(rst)
     if (tiedTo.length) errors.push(`4번 핀(RESET)이 ${tiedTo.join('·')} 핀과 묶여 있어 그 핀이 낮아지는 순간 멈춥니다 (VCC에 연결)`)
-    else if (rst && x.isGnd(rst)) errors.push('4번 핀(RESET)이 GND에 묶여 있어 동작하지 않습니다')
-    else if (rst && (rst === vccNet || pulledUp(rst) || driven(rst))) { /* held high */ }
+    else if (rst && x.isGnd(rst) && !rv?.pulled) errors.push('4번 핀(RESET)이 GND에 묶여 있어 동작하지 않습니다')
+    else if (rst && (rst === vccNet || pulledUp(rst) || driven(rst))) {
+      // held high; a reset button stops it only while pressed
+      if (rv?.pulled) detail.push(`4번 핀(RESET)은 ${eul(rv.viaSwitch!)} 누르는 동안 GND로 내려가 멈추고, 평소에는 ${ro(rv.pulled.ref)} 높게 유지됩니다`)
+    }
     else if (rst && rv && rv.v > 0) {
       if (rv.viaSwitch && rv.viaSwitch !== vcc?.viaSwitch) warns.push(`4번 핀(RESET)은 ${rv.viaSwitch} 스위치가 닫혀야 높아져, 스위치가 열리면 멈춥니다`)
     } else if (rst && pulledDown(rst)) warns.push('4번 핀(RESET)이 GND 쪽 저항으로 낮게 잡혀 있어 평소에는 멈춰 있습니다 (VCC에 연결)')
