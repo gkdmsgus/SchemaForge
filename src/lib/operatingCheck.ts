@@ -1641,7 +1641,12 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
     if (v) return { lo: v.v, hi: v.v, why: v.why, ...(v.cause ? { cause: v.cause } : {}) }
     const sw = switchAt(n)
     if (!sw) return null
-    if (sw.dropMax != null) return { lo: 0, hi: sw.dropMax, why: `${sw.q.ref} 켜짐: ${sw.kind === 'bjt' ? 'VCE' : 'VDS'} 0~${V(sw.dropMax)} (트랜지스터 켜짐 참고)` }
+    if (sw.dropMax != null) {
+      // a sense resistor under the emitter/source lifts the collector/drain by its drop too (at the largest current)
+      const vs = sw.sense.ohms * loadI(sw.loads, 0)
+      return { lo: 0, hi: sw.dropMax + vs,
+        why: `${sw.q.ref} 켜짐: ${sw.kind === 'bjt' ? 'VCE' : 'VDS'} 0~${V(sw.dropMax)}${vs > 0 ? ` + 감지 저항 ${sw.sense.ref} 최대 ${V(vs)}` : ''} (트랜지스터 켜짐 참고)` }
+    }
     const cause = sw.result.state === 'error' ? (sw.result.cause ?? sw.q.ref) : sw.result.cause
     return { lo: 0, hi: null, why: sw.offWhy, ...(cause ? { cause } : {}) }
   }
