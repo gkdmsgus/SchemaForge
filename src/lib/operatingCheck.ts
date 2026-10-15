@@ -743,6 +743,8 @@ interface Load {
   cause?: string
   res?: OpPart                                          // a plain resistor load
   led?: string                                          // an LED string load: its first LED
+  /** an LED string: the most it may carry within its LEDs' rating */
+  iCap?: number
 }
 interface Regime { state: OpState; drop: number | null; line: string; need?: number }
 interface Switch {
@@ -759,6 +761,8 @@ interface Switch {
   dropMax: number | null
   offWhy: string
   result: OpResult         // the op_drive verdict
+  /** a failing verdict that comes from the load (too much or unknown current), not from the drive itself */
+  loadCaused?: boolean
 }
 
 const loadI = (loads: Load[], d: number) => loads.reduce((s, l) =>
@@ -789,10 +793,15 @@ function stringLoad(x: Ctx, s: LedString): Load {
   if (specs.some(sp => !sp)) return { ...base, kind: 'unknown', note: `${label} (색 자료 없음)` }
   if (s.opposed) return { ...base, kind: 'fixed', i: 0, note: `${label} (방향이 맞지 않아 전류 없음)` }
   if (R.bad) return { ...base, kind: 'unknown', note: `${label} (저항 ${R.bad.ref} 값을 읽지 못함)` }
-  if (R.ohms === 0 && (src || drivenNet(x, s.top))) return { ...base, kind: 'clamp', cause: led, note: `${label}에 직렬 저항이 없어 전류가 제한되지 않습니다` }
+  const iCap = Math.min(...(specs as LedSpec[]).map(sp => sp.if_max.v)) * s.k
+  if (R.ohms === 0 && (src || drivenNet(x, s.top))) return { ...base, iCap, kind: 'clamp', cause: led, note: `${label}에 직렬 저항이 없어 전류가 제한되지 않습니다` }
   if (!src) { const ns = x.noSource(s.top); return { ...base, kind: 'unknown', ...(ns?.cause ? { cause: ns.cause } : {}), note: `${label} (${s.top ? `위쪽 ${s.top} 전압 모름` : '위쪽 핀 연결 없음'})` } }
-  return { ...base, label: `${label}+${s.rs.map(r => r.ref).join('+')}`, kind: 'res', src, vf: stringVf(s, specs as LedSpec[]), rLo: R.ohms, rHi: R.ohms, note: '' }
+  return { ...base, iCap, label: `${label}+${s.rs.map(r => r.ref).join('+')}`, kind: 'res', src, vf: stringVf(s, specs as LedSpec[]), rLo: R.ohms, rHi: R.ohms, note: '' }
 }
+
+/** the loads with every LED string held to its rated current: what a correctly sized LED would draw at most */
+const capLeds = (loads: Load[]): Load[] => loads.map(l => (l.led && l.iCap != null && (l.kind === 'res' || l.kind === 'clamp')
+  ? { ...l, kind: 'fixed' as const, i: Math.min(l.kind === 'res' ? loadI([l], 0) : Infinity, l.iCap) } : l))
 
 /** what hangs on a collector/drain, as currents the switch has to carry */
 function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString>): Load[] {
@@ -1012,6 +1021,7 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
         const lines = sw.cands.map(cd => `${cd.label}: IB ${mA(Math.max(0, ib(cd)))}`)
         verdict('unknown', `${q.ref} 부하 전류를 몰라 켜짐을 판단할 수 없습니다`, [...head, ...lines, `부하: ${sw.loads.map(l => l.note || l.label).join(', ') || '없음'}`])
         sw.offWhy = `${q.ref} 부하 전류를 몰라 켜짐을 판단할 수 없습니다`
+        sw.loadCaused = true
         continue
       }
       const per = sw.cands.map(cd => ({ cd, ib: ib(cd), rg: bjtRegime(spec, ib(cd), d => loadI(sw.loads, d)) }))
@@ -1035,6 +1045,13 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
         verdict('unknown', `${q.ref} 켜짐을 보장할 수 없습니다: ${per.find(p => p.rg.state === 'unknown')!.rg.line}`, [...head, ...lines])
       }
       sw.offWhy = sw.dropMax == null ? `${ga(q.ref)} 켜지는지 보장되지 않아 계산하지 않았습니다 (트랜지스터 켜짐 참고)` : ''
+      // short of drive only because an LED string draws more than its rating? Then the LED is the fault
+      const capped = capLeds(sw.loads)
+      if (ok.length < per.length && capped.some((l, i) => l !== sw.loads[i])) {
+        const vEc = sw.sense.ohms * loadI(capped, 0)
+        const ibc = (cd: Cand) => (cd.lv.lo - vbe - vEc) / sw.drive!.ohms - (sw.pull ? (vbe + (sw.pull.toE ? 0 : vEc)) / sw.pull.ohms : 0)
+        sw.loadCaused = sw.cands.every(cd => bjtRegime(spec, ibc(cd), d => loadI(capped, d)).state === 'pass')
+      }
       continue
     }
 
@@ -1107,7 +1124,8 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
 
 // ── rules ──────────────────────────────────────────────────────────────────────
 
-interface Sink { lo: number; hi: number | null; why: string; cause?: string }
+/** `fromSwitch`: the cause is a switch that may not turn on, which can only lower a current */
+interface Sink { lo: number; hi: number | null; why: string; cause?: string; fromSwitch?: boolean }
 interface Heat { p: number; why: string; cause?: string }
 
 function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => Sink | null, heat: (r: OpPart, h: Heat) => void): OpResult[] {
@@ -1139,7 +1157,8 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     }
     const top = x.source(s.top)
     const bot = sinkOf(s.bot)
-    const cause = top?.cause ?? bot?.cause
+    // a switch that may not turn on only lowers the current, so it is never the cause of these verdicts
+    const cause = top?.cause ?? (bot?.fromSwitch ? undefined : bot?.cause)
     // reversed: the anode side sits lower than the cathode side
     if (top && bot && top.hi < bot.lo - 0.05) {
       res('error', `${name} 방향이 거꾸로입니다 (애노드 쪽 ${rangeV(top)}, 캐소드 쪽 ${V(bot.lo)})`, [`애노드 쪽: ${top.why}`, `캐소드 쪽: ${bot.why}`], cause)
@@ -1410,7 +1429,7 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
       `스위치 전압 강하는 0으로 둔 가장 큰 경우 · ${sw.bjt ? 'IC' : 'ID'} 최대: ${cite(lim)}`,
     ]
     // an LED string without enough resistance is the LED rule's fault; the switch overload follows from it
-    const ledCause = sw.loads.find(l => l.led && ledFailed(l.led))?.led
+    const ledCause = loadI(capLeds(sw.loads), 0) < NEAR * lim.v ? sw.loads.find(l => l.led && ledFailed(l.led))?.led : undefined
     if (atLeast(i, lim.v)) {
       const [a, b] = two(i, lim.v, mA)
       res('error', `${sw.q.ref} 부하 ${a} ≥ 최대 ${b}`, lines, ledCause)
@@ -1702,6 +1721,32 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
     const note = `${k} 코일은 자기 접점(COM–NO)이 붙기 전 상태로 계산합니다`
     out = [...out.slice(0, at).filter(r => !own(r)), ...before.map(r => ({ ...r, detail: [note, ...r.detail] })), ...out.slice(at).filter(r => !own(r))]
   }
+  // A result that leans on another relay's contact (K2's COM–NO feeding K1's coil, an LED, …) holds only
+  // if K2 pulls in. When K2 does not, or cannot be judged, the circuit is judged with K2's contact open too.
+  const occ = (rs: OpResult[]) => rs.map((r, i) => `${r.rule}/${r.ref}/${rs.slice(0, i).filter(o => o.rule === r.rule && o.ref === r.ref).length}`)
+  for (const k of c.parts.filter(p => p.part === 'Relay').map(p => p.ref)) {
+    const a = c.pins.get(pinKey(k, 3)), z = c.pins.get(pinKey(k, 4))
+    const kRes = out.find(r => r.ref === k && r.rule === 'op_relay')
+    if (!a || !z || a === z || !kRes) continue
+    // an overvoltage error still pulls in; any other error means the contact stays open
+    const pulls = kRes.state === 'pass' || kRes.state === 'warn' || /과전압/.test(kRes.summary)
+    if (pulls) continue
+    const alt = collect(c, new Set([k]))
+    const altKeys = occ(alt), outKeys = occ(out)
+    out = out.map((r, i) => {
+      if (r.ref === k && (r.rule === 'op_relay' || r.rule === 'op_flyback')) return r
+      const o = alt[altKeys.indexOf(outKeys[i])]
+      if (!o || (o.state === r.state && o.summary === r.summary)) return r
+      if (kRes.state === 'error') {
+        return { ...o, cause: k, detail: [`${ga(k)} 붙지 않아 ${k} 접점(COM–NO)이 열린 상태로 계산했습니다. 붙었다면: ${r.summary}`, ...o.detail] }
+      }
+      if (r.state === 'pass' || r.state === 'warn') {
+        return { ...r, state: 'unknown' as const, cause: k, summary: `${r.ref}: ${ga(k)} 붙는지 알 수 없어 판단하지 않았습니다`,
+          detail: [`${k} 접점이 닫히면: ${r.summary}`, `${k} 접점이 열려 있으면: ${o.summary}`, ...r.detail] }
+      }
+      return { ...r, detail: [`${k} 접점이 열려 있으면: ${o.summary}`, ...r.detail] }
+    })
+  }
   // say where a knock-on failure comes from, since the headline counts it under its cause
   const label = Object.fromEntries(OP_RULES) as Record<OpRule, string>
   for (const r of out) if (r.state === 'pass') delete r.cause
@@ -1736,7 +1781,7 @@ function collect(c: OpCircuit, open: ReadonlySet<string>): OpResult[] {
         why: `${sw.q.ref} 켜짐: ${sw.kind === 'bjt' ? 'VCE' : 'VDS'} 0~${V(sw.dropMax)}${vs > 0 ? ` + 감지 저항 ${sw.sense.ref} 최대 ${V(vs)}` : ''} (트랜지스터 켜짐 참고)` }
     }
     const cause = sw.result.state === 'error' ? (sw.result.cause ?? sw.q.ref) : sw.result.cause
-    return { lo: 0, hi: null, why: sw.offWhy, ...(cause ? { cause } : {}) }
+    return { lo: 0, hi: null, why: sw.offWhy, ...(cause ? { cause, fromSwitch: true } : {}) }
   }
   const run = (rule: OpRule, f: () => OpResult[]) => {
     try { out.push(...f()) } catch (e) {
@@ -1750,9 +1795,13 @@ function collect(c: OpCircuit, open: ReadonlySet<string>): OpResult[] {
   run('op_short', () => checkShorts(x))
   run('op_led', () => checkLeds(x, strings, sinkOf, (r, h) => { const cur = heats.get(r.ref); if (!cur || h.p > cur.h.p) heats.set(r.ref, { r, h }) }))
   const ledFailed = (ref: string) => out.some(o => o.rule === 'op_led' && o.ref === ref && o.state === 'error')
+  // a drive verdict that fails because of its load follows that load's fault; a wrong drive stays its own fault
   for (const sw of switches) {
     if (sw.result.state === 'pass' || sw.result.cause) continue
-    const from = sw.loads.find(l => l.led && ledFailed(l.led))?.led ?? sw.loads.find(l => l.cause)?.cause
+    // a drive voltage that comes from a faulty supply (a battery put in backwards) follows that fault
+    const fromDrive = sw.cands.find(cd => cd.lv.cause)?.lv.cause
+    const fromLoad = sw.loadCaused ? sw.loads.find(l => l.led && ledFailed(l.led))?.led ?? sw.loads.find(l => l.cause && l.kind === 'unknown')?.cause : undefined
+    const from = fromDrive ?? fromLoad
     if (from) sw.result = { ...sw.result, cause: from }
   }
   run('op_flyback', () => checkFlyback(x, switchAt))
