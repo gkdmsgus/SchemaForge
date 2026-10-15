@@ -109,7 +109,7 @@ export function parseVolts(v: string): number | null {
   const s = String(v ?? '').toUpperCase()
   let m = /(\d+)\s*[X×*]\s*(\d+(?:\.\d+)?)\s*V/.exec(s)      // cells in series
   if (m) return Number(m[1]) * Number(m[2])
-  m = /(\d+(?:\.\d+)?)\s*V\s*[X×*]\s*(\d+)(?![\d.])/.exec(s)  // the same written "1.5V x4"
+  m = /(\d+(?:\.\d+)?)\s*V\s*[X×*]\s*(\d+)(?![\d.]|\s*M?A(?![A-Z]))/.exec(s)  // the same written "1.5V x4 AA", but not "12V x 2A"
   if (m) return Number(m[1]) * Number(m[2])
   m = /(\d+)V(\d+)(?![\d.]*[A-Z])/.exec(s)                     // "3V3", but not "12V2A"
   if (m) return Number(`${m[1]}.${m[2]}`)

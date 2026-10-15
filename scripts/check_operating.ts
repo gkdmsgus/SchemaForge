@@ -747,7 +747,7 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     /감지 저항 R3으로/.test(texts[3]) && /전원 쪽 핀 연결 없음/.test(texts[4]) && !/null/.test(texts.join(' ')), texts.map(t => t.slice(0, 120)).join(' | '))
 
   // battery values written as a cell voltage times a count
-  const cells: [string, number | null][] = [['1.5V x4', 6], ['3.7V×2', 7.4], ['2x1.5V', 3], ['12V2A', 12], ['9V', 9]]
+  const cells: [string, number | null][] = [['1.5V x4', 6], ['3.7V×2', 7.4], ['1.5V x4 AA', 6], ['2x1.5V', 3], ['12V2A', 12], ['12V x 2A', 12], ['9V', 9]]
   const misread = cells.filter(([s, v]) => !near(parseVolts(s), v))
   add('"1.5V x4" is 6 V', misread.length === 0, misread.map(([s]) => `${s} → ${parseVolts(s)}`).join(', '))
 
