@@ -87,9 +87,12 @@ export function fromBoard(b: BoardModel): OpCircuit {
 
 // ── values ─────────────────────────────────────────────────────────────────────
 
-/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "10 Ω", "100m" (milliohm) -> ohms */
+/** the value part of a part value with a rating after it: "22uF 16V" -> "22uF", "680 1/4W" -> "680", "1k 1%" -> "1k" */
+const valuePart = (v: string) => String(v ?? '').trim().replace(/(?:(?<=[A-Za-zµμΩ])\s*[,/]\s*|\s+)(?=\d+(?:\.\d+)?\s*(?:V|W|%)|\d+\s*\/\s*\d+\s*W).*$/i, '')
+
+/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "10 Ω", "100m" (milliohm), "680 1/4W" -> ohms */
 export function parseOhms(v: string): number | null {
-  const s = String(v ?? '').trim().replace(/Ω|ohms?/gi, '').replace(/\s+/g, '')
+  const s = valuePart(v).replace(/Ω|ohms?/gi, '').replace(/\s+/g, '')
   // M is mega and m is milli (a 100 mΩ sense resistor), k/K kilo, r/R the decimal point
   const mul = (u: string) => (u === 'M' ? 1e6 : u === 'm' ? 1e-3 : u === 'k' || u === 'K' ? 1e3 : 1)
   let m = /^(\d+)([rRkKmM])(\d+)$/.exec(s)
@@ -101,7 +104,7 @@ export function parseOhms(v: string): number | null {
 
 /** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u" -> farads */
 export function parseFarads(v: string): number | null {
-  const m = /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(String(v ?? '').trim())
+  const m = /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(valuePart(v))
   if (!m || (!m[2] && !m[3])) return null      // "104" is a code, not 104 F
   const mul: Record<string, number> = { '': 1, p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3 }
   const f = Number(m[1]) * mul[(m[2] || '').toLowerCase()]
@@ -271,6 +274,8 @@ const isMotor = (p: OpPart) => /^Conn_/.test(p.part) && /MOTOR|모터/i.test(p.v
 interface Node { ref: string; pin: number }
 interface Volt {
   v: number; why: string; src: 'name' | 'battery' | 'reg'
+  /** the lowest it can be, when lower than v (after a series diode's forward drop) */
+  lo?: number
   /** the switch that has to be closed for this net to get its voltage */
   viaSwitch?: string
   /** an input a switch ties to GND (no part's ground on it): low only while the switch is closed */
@@ -348,10 +353,23 @@ function analyzePower(b: Base, force = false) {
 
   interface Edge { ref: string; plus: string; minus: string; dv: number }
   const edges: Edge[] = []
-  const loose: { ref: string; nets: string[] }[] = []
+  const loose: { ref: string; nets: string[]; why: string }[] = []
   for (const bt of b.of('Battery')) {
     const plus = b.net(bt.ref, 1), minus = b.net(bt.ref, 2), v = parseVolts(bt.value)
-    if (!plus || !minus || v == null) continue
+    if (!plus && !minus) continue
+    if (v == null) {
+      // a value with no voltage in it: the nets it feeds have no voltage we can trust (not even their names)
+      issues.push({ rule: 'op_power', ref: bt.ref, state: 'unknown', summary: `${bt.ref} 값 ${val(bt.value)}에서 전압을 읽지 못했습니다`,
+        detail: ['값에 전압을 적어야 합니다 (예: 9V, 3.7V, 2x1.5V)'] })
+      loose.push({ ref: bt.ref, nets: [plus, minus].filter((n): n is string => !!n), why: `${bt.ref} 값 ${val(bt.value)}에서 전압을 읽지 못해 이 넷의 전압을 모릅니다` })
+      continue
+    }
+    if (!plus || !minus) {
+      const which = !plus ? '+' : '−'
+      issue(bt.ref, `${bt.ref} ${which} 단자가 어디에도 연결되어 있지 않아 전류가 흐르지 않습니다`, [`${bt.ref} ${which} 단자(${!plus ? 1 : 2}번 핀)가 어느 넷에도 없습니다`])
+      loose.push({ ref: bt.ref, nets: [plus ?? minus!], why: `${bt.ref} 단자가 떠 있어 이 넷에 전원이 없습니다` })
+      continue
+    }
     if (plus === minus) {
       issue(bt.ref, `${bt.ref} 두 단자가 같은 넷 ${plus}에 있어 배터리가 단락됩니다`, [`${bt.ref} + 단자(1번 핀)와 − 단자(2번 핀)가 모두 ${plus}에 연결되어 있습니다`])
       continue
@@ -363,14 +381,14 @@ function analyzePower(b: Base, force = false) {
         issue(bt.ref, `${bt.ref} ${which} 단자(${n})가 아무 데도 연결되어 있지 않아 전류가 흐르지 않습니다`,
           [`넷 ${n}에는 ${bt.ref} ${which} 단자 하나뿐입니다`, '배터리 − 단자는 GND 넷에, + 단자는 전원 넷에 연결해야 합니다'])
       }
-      loose.push({ ref: bt.ref, nets: [plus, minus] })
+      loose.push({ ref: bt.ref, nets: [plus, minus], why: `${bt.ref} 단자가 떠 있어 이 넷에 전원이 없습니다` })
       continue
     }
     edges.push({ ref: bt.ref, plus, minus, dv: v })
   }
   // the loose battery's nets lose their voltage, unless a connector, a regulator or another battery feeds them
   for (const l of loose) for (const n of l.nets) {
-    if (!hasConn(n) && !regOut(n) && !edges.some(e => e.plus === n || e.minus === n)) blocked.set(n, { why: `${l.ref} 단자가 떠 있어 이 넷에 전원이 없습니다`, cause: l.ref })
+    if (!hasConn(n) && !regOut(n) && !edges.some(e => e.plus === n || e.minus === n)) blocked.set(n, { why: l.why, cause: l.ref })
   }
   interface Step { to: string; dv: number; label: string; sw?: string; bat?: string }
   const adj = new Map<string, Step[]>()
@@ -554,8 +572,31 @@ function analyzePower(b: Base, force = false) {
     }
     return changed
   }
+  /** a transistor's collector/drain or a 555 output: pulled down while on, not a supply rail */
+  const switchedNet = (n: string) => b.on(n).some(nd => { const p = b.part(nd.ref)?.part; return ((p === 'Q_NPN' || p === 'Q_NMOS') && nd.pin === 2) || (p === 'NE555' && (nd.pin === 3 || nd.pin === 7)) })
+  /** a relay coil or a motor between these two nets (a diode across it is a flyback diode, the flyback rule's) */
+  const acrossLoad = (n1: string, n2: string) => b.parts().some(p => (p.part === 'Relay' || isMotor(p)) &&
+    [b.net(p.ref, 1), b.net(p.ref, 2)].includes(n1) && [b.net(p.ref, 1), b.net(p.ref, 2)].includes(n2))
+  /** a diode whose anode net has a voltage and whose cathode net has no source of its own passes it on */
+  const diodes = () => {
+    let changed = false
+    for (const d of b.of('D')) {
+      const a = b.net(d.ref, 1), k = b.net(d.ref, 2)
+      if (!a || !k || a === k) continue
+      const va = known(a)
+      if (!va || volts.has(k) || blocked.has(k) || ownRail(k) || hasConn(k) || regOut(k) || batteryNet(k)) continue
+      if (va.v <= 0 || switchedNet(k) || acrossLoad(a, k)) continue
+      const spec = SPECS.diode[d.value.toUpperCase().replace(/\s+/g, '')]
+      if (!spec) { blocked.set(k, { why: `${d.ref}(${d.value || '값 없음'})의 순방향 전압 자료가 없어 ${k} 전압을 모릅니다`, cause: d.ref }); changed = true; continue }
+      volts.set(k, { v: va.v, lo: (va.lo ?? va.v) - spec.vf_max.v, src: va.src, why: `${va.why} → ${d.ref} 순방향 (VF 0~${V(spec.vf_max.v)}: ${spec.vf_max.src})`,
+        ...(va.viaSwitch ? { viaSwitch: va.viaSwitch } : {}), ...(va.cause ? { cause: va.cause } : {}) })
+      changed = true
+    }
+    return changed
+  }
   for (let guard = 0, assume = false; guard < 50; guard++) {
     let changed = carry(known)
+    if (diodes()) changed = true
     for (const r of b.of('REG')) {
       const reg = regSpec(r.value)
       const g = b.net(r.ref, 1), o = b.net(r.ref, 2), i = b.net(r.ref, 3)
@@ -575,7 +616,9 @@ function analyzePower(b: Base, force = false) {
         if (k) { blocked.set(o, { why: `${k} 접점이 열려 있어 ${r.ref} 입력에 전원이 없습니다`, cause: k, open: true }); changed = true; continue }
       }
       changed = true
-      if (!force && vin != null && reg.spec && vin - gv - reg.vout < reg.spec.dropout_max.v - 1e-9) {
+      // after a series diode the input can be as low as its forward drop allows
+      const vinLo = i ? volts.get(i)?.lo ?? vin : vin
+      if (!force && vinLo != null && reg.spec && vinLo - gv - reg.vout < reg.spec.dropout_max.v - 1e-9) {
         blocked.set(o, { why: `${r.ref} 입력이 모자라 출력 ${V(reg.vout)}를 보장하지 못합니다 (레귤레이터 전압 참고)`, cause: r.ref })
         continue
       }
@@ -597,7 +640,14 @@ function analyzePower(b: Base, force = false) {
   for (const n of named.keys()) {
     if (volts.has(n) || blocked.has(n)) continue
     const k = hasConn(n) || regOut(n) || batteryNet(n) ? undefined : openFeed(n, m => m !== n && have(m))
+    const back = hasConn(n) || regOut(n) || batteryNet(n) ? undefined
+      : b.of('D').find(d => {
+        // its cathode on a net a real source holds at about this net's voltage: the diode was meant to feed it
+        const kv = volts.get(b.net(d.ref, 2) ?? ''), want = named.get(n)!
+        return b.net(d.ref, 1) === n && want > 0 && !!kv && kv.src !== 'name' && kv.v >= want - 0.05 && kv.v <= want + 2
+      })
     if (k) blocked.set(n, { why: `${k} 접점이 열려 있어 ${n}에 전원이 없습니다`, cause: k, open: true })
+    else if (back) blocked.set(n, { why: `${ga(back.ref)} 거꾸로라(캐소드가 전원 쪽) ${n}에 전원이 없습니다`, cause: back.ref })
     else volts.set(n, { v: named.get(n)!, why: `넷 이름 ${n}`, src: 'name' })
   }
   for (let guard = 0; guard < 50 && carry(n => volts.get(n)); guard++) { /* until nothing changes */ }
@@ -669,11 +719,11 @@ function context(c: OpCircuit, open?: ReadonlySet<string>, force = false) {
       if (p?.part !== 'NE555' || nd.pin !== 3) continue
       const vccNet = b.net(p.ref, 8), vcc = voltOf(vccNet), bl = blockedWhy(vccNet)
       if (!vcc) return { ref: p.ref, level: null, why: bl ? `${p.ref} 전원: ${bl.why}` : `${p.ref} 전원 전압을 몰라 출력 전압을 계산하지 않았습니다`, cause: bl?.cause }
-      if (vcc.v < t.vcc_min.v || vcc.v > t.vcc_max.v) {
+      if ((vcc.lo ?? vcc.v) < t.vcc_min.v || vcc.v > t.vcc_max.v) {
         return { ref: p.ref, level: null, why: `${p.ref} 전원 ${V(vcc.v)}가 동작 범위 밖이라 출력 전압을 계산하지 않았습니다 (555 타이머 참고)`, cause: p.ref }
       }
       const d = t.voh_drop.v
-      return { ref: p.ref, why: '', level: { lo: vcc.v - d, hi: vcc.v, cause: vcc.cause, why: `${p.ref} 출력 높음 ${V(vcc.v - d)}~${V(vcc.v)}: VCC ${V(vcc.v)}에서 강하 0~${V(d)} (${t.voh_drop.src})` } }
+      return { ref: p.ref, why: '', level: { lo: (vcc.lo ?? vcc.v) - d, hi: vcc.v, cause: vcc.cause, why: `${p.ref} 출력 높음 ${V(vcc.v - d)}~${V(vcc.v)}: VCC ${V(vcc.v)}에서 강하 0~${V(d)} (${t.voh_drop.src})` } }
     }
     return null
   }
@@ -681,7 +731,7 @@ function context(c: OpCircuit, open?: ReadonlySet<string>, force = false) {
   /** what drives this node high: a supply or a 555 output */
   const source = (n: string | null): Level | null => {
     const v = voltOf(n)
-    if (v) return { lo: v.v, hi: v.v, why: v.why, ...(v.cause ? { cause: v.cause } : {}) }
+    if (v) return { lo: v.lo ?? v.v, hi: v.v, why: v.why, ...(v.cause ? { cause: v.cause } : {}) }
     return timerOut(n)?.level ?? null
   }
   /** why a node has no known source voltage, and the fault behind that if there is one */
@@ -836,6 +886,9 @@ interface Load {
   note: string
   cause?: string
   res?: OpPart                                          // a plain resistor load
+  motor?: boolean
+  /** a motor's rated voltage from its value ("MOTOR 3V 0.1A") */
+  ratedV?: number
   led?: string                                          // an LED string load: its first LED
   /** an LED string: the most it may carry within its LEDs' rating */
   iCap?: number
@@ -864,7 +917,7 @@ interface Switch {
 }
 
 const loadI = (loads: Load[], d: number) => loads.reduce((s, l) =>
-  s + (l.kind === 'fixed' ? l.i! : l.kind === 'res' ? Math.max(0, (l.src!.hi - l.vf! - d) / l.rLo!) : 0), 0)
+  s + (l.kind === 'fixed' ? l.i! : l.kind === 'res' && l.rLo! > 0 ? Math.max(0, (l.src!.hi - l.vf! - d) / l.rLo!) : 0), 0)
 const loadsKnown = (loads: Load[]) => loads.length > 0 && loads.every(l => l.kind === 'res' || l.kind === 'fixed')
 
 /** on-state VDS of a MOSFET with RDS(on) in series with every load (highest currents) */
@@ -912,6 +965,7 @@ const capLeds = (loads: Load[]): Load[] => loads.map(l => {
   if (l.kind === 'res' && loadI([l], 0) <= l.iCap) return l
   const src = l.src ?? l.supply, vf = l.vf ?? 0
   if (!src) return { ...l, kind: 'fixed' as const, i: l.iCap }
+  if (src.hi - vf <= 0) return { ...l, kind: 'fixed' as const, i: 0 }
   const r = Math.max(l.rLo ?? 0, (src.hi - vf) / l.iCap)
   return { ...l, kind: 'res' as const, src, vf, rLo: r, rHi: Math.max(l.rHi ?? r, r) }
 })
@@ -930,7 +984,7 @@ function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString
     if (!p) continue
     const s = strings.get(pinKey(nd.ref, nd.pin))
     if (s) { if (!counted.has(s)) { counted.add(s); loads.push(stringLoad(x, s)) } continue }
-    if (p.part === 'C' || p.part === 'CP' || p.part === 'LED') continue     // decoupling; an LED anode here points the wrong way (LED rule)
+    if (p.part === 'C' || p.part === 'CP' || p.part === 'LED' || (p.part === 'Q_NMOS' && nd.pin === 1)) continue     // decoupling; an LED anode here points the wrong way (LED rule)
     if (p.part === 'D') {
       if (nd.pin === 1) continue        // anode on the switch: the flyback diode, reverse biased while the switch conducts
       const a = x.net(p.ref, 1), lv = x.source(a)
@@ -969,9 +1023,12 @@ function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString
       continue
     }
     if (isMotor(p)) {
-      const i = parseAmps(p.value), sup = x.source(x.net(p.ref, nd.pin === 1 ? 2 : 1))
-      const extra = sup ? { supply: sup } : {}
-      if (i != null) loads.push({ label: `${p.ref} 모터`, kind: 'fixed', i, ...extra, note: `${p.ref} 값 ${p.value}에 적힌 전류` })
+      const i0 = parseAmps(p.value), sup = x.source(x.net(p.ref, nd.pin === 1 ? 2 : 1)), rated = parseVolts(p.value)
+      // above its rated voltage a motor draws more: taken as in proportion to the voltage (a rough figure)
+      const scale = rated != null && rated > 0 && sup && sup.hi > rated ? sup.hi / rated : 1
+      const extra = { motor: true, ...(sup ? { supply: sup } : {}), ...(rated != null && rated > 0 ? { ratedV: rated } : {}) }
+      if (i0 != null) loads.push({ label: `${p.ref} 모터`, kind: 'fixed', i: i0 * scale, ...extra,
+        note: scale > 1 ? `${p.ref} 값 ${p.value}: 정격 ${V(rated!)}에 ${V(sup!.hi)}가 걸려 전류를 ${mA(i0)} × ${scale.toFixed(2)} = 대략 ${mA(i0 * scale)}로 봄 (전압에 비례한다고 본 어림)` : `${p.ref} 값 ${p.value}에 적힌 전류` })
       else loads.push({ label: `${p.ref} 모터`, kind: 'unknown', ...extra, note: `${p.ref} (${p.value}): 값에 모터 전류를 적으면 판단합니다 (예: MOTOR 0.3A)` })
       continue
     }
@@ -1289,7 +1346,11 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
 // ── rules ──────────────────────────────────────────────────────────────────────
 
 /** `fromSwitch`: the cause is a switch that may not turn on, which can only lower a current */
-interface Sink { lo: number; hi: number | null; why: string; cause?: string; fromSwitch?: boolean }
+interface Sink {
+  lo: number; hi: number | null; why: string; cause?: string; fromSwitch?: boolean
+  /** what pulls it down, when its drop is not known ("트랜지스터", "U1 출력") */
+  by?: string
+}
 interface Heat { p: number; why: string; cause?: string }
 
 function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => Sink | null, heat: (r: OpPart, h: Heat) => void): OpResult[] {
@@ -1393,11 +1454,12 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     } else if (perLo == null && (top.lo - bot.lo - vfMax) / R.ohms / s.k < 0.001) {
       // the switch's drop is not known, but even with none the LED would be too dim or dark
       const best = (top.lo - bot.lo - vfMax) / R.ohms / s.k
-      state = 'warn'; summary = best <= 0 ? `${ga(name)} 켜지지 않을 수 있습니다: 스위치 강하가 없어도 걸리는 전압 ${V(top.lo - bot.lo)}가 순방향 전압 최대 ${V(vfMax)}보다 낮습니다`
-        : `${name} 전류가 스위치 강하 없이도 ${mA(best)}로 너무 어둡습니다 (${rText})`
+      const drop = bot.by ? `${bot.by} 강하` : '스위치 강하'
+      state = 'warn'; summary = best <= 0 ? `${ga(name)} 켜지지 않을 수 있습니다: ${drop}가 없어도 걸리는 전압 ${V(top.lo - bot.lo)}가 순방향 전압 최대 ${V(vfMax)}보다 낮습니다`
+        : `${name} 전류가 ${drop} 없이도 ${mA(best)}로 너무 어둡습니다 (${rText})`
     } else {
       state = 'pass'
-      summary = `${name} ${span(Math.max(0, perLo ?? perHi), perHi, a => mA(a))} (최대 ${mA(ifMax)}, ${rText})${perLo == null ? ' · 켜지는지는 트랜지스터 켜짐 참고' : ''}`
+      summary = `${name} ${span(Math.max(0, perLo ?? perHi), perHi, a => mA(a))} (최대 ${mA(ifMax)}, ${rText})${perLo == null ? (bot.by ? ` · ${bot.by} LOW 전압 자료가 없어 가장 작은 전류는 계산하지 않음` : ' · 켜지는지는 트랜지스터 켜짐 참고') : ''}`
     }
     res(state, summary, detail, cause)
     for (const r of s.rs) {
@@ -1465,7 +1527,16 @@ function checkFlyback(x: Ctx, switchAt: (n: string | null) => Switch | null): Op
     const lowV = x.voltOf(low)?.v ?? 0
     const wide = good ? undefined : highSide
       ? ds.find(d => x.net(d.ref, 2) === high && (x.voltOf(x.net(d.ref, 1))?.v ?? Infinity) <= lowV + 0.05)
-      : ds.find(d => x.net(d.ref, 1) === low && (x.voltOf(x.net(d.ref, 2))?.v ?? 0) > 0)
+      : ds.find(d => { const kv = x.voltOf(x.net(d.ref, 2))?.v ?? 0; return x.net(d.ref, 1) === low && kv > 0 && kv >= (x.voltOf(high)?.v ?? 0) - 0.05 })
+    // a diode from the switched end to a rail below the coil's supply: it conducts while the switch is off
+    const lowRail = good || wide || highSide ? undefined
+      : ds.find(d => x.net(d.ref, 1) === low && (x.voltOf(x.net(d.ref, 2))?.v ?? 0) > 0 && (x.voltOf(x.net(d.ref, 2))!.v) < (x.voltOf(high)?.v ?? Infinity) - 0.05)
+    if (lowRail) {
+      const kn = x.net(lowRail.ref, 2)!, kv = x.voltOf(kn)!.v, hv = x.voltOf(high)!.v
+      res('error', `${lowRail.ref} 캐소드가 코일 전원(${V(hv)})보다 낮은 ${kn}(${V(kv)})에 있어, 스위치가 꺼져도 코일 전류가 그쪽으로 계속 흐릅니다`,
+        [`${high} → ${l.ref} → ${lowRail.ref} → ${kn} 경로로 ${V(hv - kv)} 정도가 계속 걸립니다`, `캐소드는 ${high}에 연결해야 합니다`])
+      continue
+    }
     const swNet = highSide ? high : low
     const mech = v1?.viaSwitch !== v2?.viaSwitch ? v1?.viaSwitch ?? v2?.viaSwitch : undefined
     const mechName = mech ? `${mech} ${x.contactNoun(mech)}` : ''
@@ -1614,6 +1685,26 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
     // the collector/drain must stand the supply once the switch turns off, whatever the load current
     const supplies = sw.loads.filter(l => l.supply).map(l => l.supply!.hi)
     const vmax = supplies.length ? Math.max(...supplies) : 0
+    // a load supply below 0 V: the switch conducts backwards (body diode, reversed junction) even when off
+    const neg = sw.loads.find(l => l.supply && l.supply.hi < -0.05)
+    if (neg) {
+      res('error', `${sw.q.ref} 부하 ${neg.label}의 전원이 ${V(neg.supply!.hi)}로 0 V보다 낮아 꺼져 있어도 ${sw.kind === 'mos' ? '바디 다이오드' : '컬렉터 접합'}로 전류가 흐릅니다`,
+        [...notes, neg.supply!.why], neg.supply!.cause)
+      continue
+    }
+    const deadMotor = sw.loads.find(l => l.motor && l.supply && l.supply.hi <= 0.05)
+    if (deadMotor) {
+      res('error', `${deadMotor.label}에 전원 쪽이 없습니다: 반대쪽이 ${V(deadMotor.supply!.hi)}라 ${ga(sw.q.ref)} 켜져도 모터에 전압이 걸리지 않습니다`, [...notes, deadMotor.supply!.why], deadMotor.supply!.cause)
+      continue
+    }
+    const overMotor = sw.loads.find(l => l.motor && l.ratedV && l.supply && l.supply.hi > l.ratedV * 1.05)
+    if (overMotor) {
+      const over = overMotor.i != null && atLeast(loadI(sw.loads, 0), lim.v)
+      res('error', `${overMotor.label} 정격 ${V(overMotor.ratedV!)}보다 높은 ${V(overMotor.supply!.hi)}가 걸립니다`,
+        [...notes, overMotor.note, `전원: ${overMotor.supply!.why}`,
+          ...(over ? [`${sw.q.ref} 부하도 대략 ${mA(loadI(sw.loads, 0))}로 최대 ${mA(lim.v)}를 넘습니다 (${cite(lim)})`] : [])])
+      continue
+    }
     const vlim = sw.bjt ? sw.bjt.vceo : sw.mos!.vds_max
     if (atLeast(vmax, vlim.v)) {
       const [a, b] = two(vmax, vlim.v, V)
@@ -1674,20 +1765,45 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
       }
     }
   }
-  // between two fixed voltages
+  // between two fixed voltages, or a fixed voltage and a 555 output (which swings from 0 V to its high level)
+  const ends = (n: string | null): Level | null => { const s = x.source(n); return s && !x.voltOf(n) ? { ...s, lo: 0 } : s }
   for (const r of x.of('R')) {
-    const a = x.voltOf(x.net(r.ref, 1)), b = x.voltOf(x.net(r.ref, 2)), ohms = parseOhms(r.value)
-    if (a && b && ohms != null && ohms > 0 && Math.abs(a.v - b.v) > 0) {
-      add(r, { p: (a.v - b.v) ** 2 / ohms, why: `양 끝 ${V(a.v)}, ${V(b.v)} 사이 P = V² ÷ R`, cause: a.cause ?? b.cause })
+    const a = ends(x.net(r.ref, 1)), b = ends(x.net(r.ref, 2)), ohms = parseOhms(r.value)
+    const dv = a && b ? Math.max(Math.abs(a.hi - b.lo), Math.abs(b.hi - a.lo)) : 0
+    if (a && b && ohms != null && ohms > 0 && dv > 0) {
+      const fixed = a.lo === a.hi && b.lo === b.hi
+      add(r, { p: dv ** 2 / ohms, why: fixed ? `양 끝 ${V(a.hi)}, ${V(b.hi)} 사이 P = V² ÷ R` : `양 끝 ${rangeV(a)}, ${rangeV(b)} 사이 가장 큰 차 ${V(dv)}로 P = V² ÷ R`, cause: a.cause ?? b.cause })
+    }
+  }
+  // a resistor in series with a motor whose current is on its value: the only resistor on a motor pin's net,
+  // with nothing else there but diodes and capacitors (no DC path around it)
+  for (const m of x.parts().filter(isMotor)) {
+    const i = parseAmps(m.value)
+    if (i == null) continue
+    for (const pin of [1, 2]) {
+      const n = x.net(m.ref, pin)
+      if (!n || x.voltOf(n)) continue
+      const others = x.on(n).filter(nd => nd.ref !== m.ref).map(nd => x.part(nd.ref))
+      const rs = others.filter(p => p?.part === 'R')
+      if (rs.length !== 1 || others.some(p => !p || !['R', 'D', 'C', 'CP'].includes(p.part))) continue
+      const o = parseOhms(rs[0]!.value)
+      if (o) add(rs[0]!, { p: i * i * o, why: `${m.ref} 모터 전류 ${mA(i)}가 모두 지나 P = I² × R` })
     }
   }
   // 555 timing resistors: RA sees VCC while DISCH is low, RB at most 2/3 VCC
   for (const u of x.of('NE555')) {
     const vcc = x.voltOf(x.net(u.ref, 8)), vccNet = x.net(u.ref, 8), dis = x.net(u.ref, 7), thr = x.net(u.ref, 6)
     if (!vcc || !dis) continue
+    // astable: VCC sits on RA only while discharging, RB/(RA + 2RB) of the time (always under half)
+    const rbOhms = thr && thr !== dis ? x.between(dis, thr).map(r => parseOhms(r.value)) : []
+    const rb = rbOhms.length && rbOhms.every(o => o != null) ? par(rbOhms as number[]) : null
     if (vccNet) for (const r of x.between(vccNet, dis)) {
       const o = parseOhms(r.value)
-      if (o) add(r, { p: vcc.v ** 2 / o, why: `${u.ref} 방전 중 DISCH가 낮아 VCC ${V(vcc.v)}가 모두 걸림` })
+      if (!o) continue
+      const share = rb != null && rb > 0 ? rb / (o + 2 * rb) : 1
+      add(r, { p: vcc.v ** 2 / o * share, why: share < 1
+        ? `${u.ref} 방전 중(주기의 ${(share * 100).toFixed(0)}%)에만 VCC ${V(vcc.v)}가 걸려 평균 P = V² ÷ R × ${(share * 100).toFixed(0)}% (순간 ${W(vcc.v ** 2 / o)})`
+        : `${u.ref} 방전 중 DISCH가 낮아 VCC ${V(vcc.v)}가 모두 걸림` })
     }
     if (thr) for (const r of x.between(dis, thr)) {
       const o = parseOhms(r.value)
@@ -1716,6 +1832,18 @@ function checkShorts(x: Ctx): OpResult[] {
       detail: [`${a}: ${va.why}`, `${b}: ${vb.why}`] })
   }
   for (const s of x.of('SW')) pair(s.ref, x.net(s.ref, 1), x.net(s.ref, 2), w => `${eul(w)} 누르면`)
+  // a diode forward biased between two fixed voltages carries whatever the supplies give it
+  for (const d of x.of('D')) {
+    const a = x.net(d.ref, 1), k = x.net(d.ref, 2), va = x.voltOf(a), vk = x.voltOf(k)
+    if (!a || !k || a === k || !va || !vk) continue
+    const spec = SPECS.diode[d.value.toUpperCase().replace(/\s+/g, '')], vf = spec?.vf_max.v ?? SPECS.diode['1N4148'].vf_max.v
+    // across a relay coil the relay rule already reports it (the diode clamps the coil)
+    const coil = x.of('Relay').some(r => [x.net(r.ref, 1), x.net(r.ref, 2)].includes(a) && [x.net(r.ref, 1), x.net(r.ref, 2)].includes(k))
+    if (va.v - vk.v < vf || coil) continue
+    out.push({ rule: 'op_short', ref: d.ref, state: 'error', key: [a, k].sort().join('|'), ...(va.cause ?? vk.cause ? { cause: (va.cause ?? vk.cause)! } : {}),
+      summary: `${d.ref} 다이오드가 ${a}(${V(va.v)})에서 ${k}(${V(vk.v)})로 순방향이라 전원이 다이오드를 지나 바로 흐릅니다`,
+      detail: [`${a}: ${va.why}`, `${k}: ${vk.why}`, `순방향 전압 ${V(vf)}보다 큰 ${V(va.v - vk.v)}가 걸려 전류가 전원으로만 제한됩니다${spec ? '' : ` (${d.value || '값 없음'} 자료가 없어 ${SPECS.diode['1N4148'].vf_max.src} 기준)`}`] })
+  }
   for (const k of x.of('Relay')) {
     if (x.closedRelay(k.ref)) pair(k.ref, x.net(k.ref, 3), x.net(k.ref, 4), w => `${ga(w)} 붙으면 COM과 NO로`)
     if (!x.closedRelay(k.ref)) pair(k.ref, x.net(k.ref, 5), x.net(k.ref, 3), w => `${ga(w)} 떨어져 있으면 COM과 NC로`)
@@ -1771,8 +1899,11 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     else if (gs === 'unknown') unknowns.push(`1번 핀(GND) 넷 ${n(1)}의 전압을 알 수 없습니다${x.blockedWhy(n(1)) ? `: ${x.blockedWhy(n(1))!.why}` : ''}`)
     if (vcc) {
       detail.push(`VCC ${V(vcc.v)} (${vcc.why}), 동작 범위 ${V(t.vcc_min.v)}~${V(t.vcc_max.v)}: ${cite(t.vcc_min)}`)
-      if (vcc.v < t.vcc_min.v || vcc.v > t.vcc_max.v) errors.push(`전원 ${V(vcc.v)}가 동작 범위 ${V(t.vcc_min.v)}~${V(t.vcc_max.v)} 밖입니다`)
+      if ((vcc.lo ?? vcc.v) < t.vcc_min.v || vcc.v > t.vcc_max.v) errors.push(`전원 ${rangeV({ lo: vcc.lo ?? vcc.v, hi: vcc.v })}가 동작 범위 ${V(t.vcc_min.v)}~${V(t.vcc_max.v)} 밖입니다`)
     }
+    // OUT (3) tied to GND or a supply: the output stage drives into it
+    const outV = x.voltOf(n(3))
+    if (outV) errors.push(`3번 핀(OUT)이 ${outV.v === 0 ? 'GND' : `전원 ${V(outV.v)}`}에 바로 묶여 출력이 바뀔 때마다 단락됩니다`)
     // RESET (4) has to sit high
     const rst = n(4)
     const tiedTo = rst ? ([[2, 'TRIG'], [3, 'OUT'], [6, 'THRES'], [7, 'DISCH']] as const).filter(([p]) => n(p) === rst).map(([, w]) => w) : []
@@ -1887,8 +2018,9 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
       continue
     }
     if (!vin) { const ns = x.noSource(i); res('unknown', `${r.ref} 입력 전압을 몰라 판단할 수 없습니다${ns ? `: ${ns.why}` : ''}`, [pins], ns?.cause); continue }
-    const head = vin.v - reg.vout
-    const detail = [`입력 ${V(vin.v)} (${vin.why}) − 출력 ${V(reg.vout)} = ${V(head)}`,
+    // after a series diode the input is a range: the least of it decides the headroom
+    const inLv = { lo: vin.lo ?? vin.v, hi: vin.v }, head = inLv.lo - reg.vout
+    const detail = [`입력 ${rangeV(inLv)} (${vin.why}) − 출력 ${V(reg.vout)} = ${inLv.lo < inLv.hi ? '최소 ' : ''}${V(head)}`,
       `최소 전압 차 ${V(spec.dropout_max.v)}: ${cite(spec.dropout_max)}`, `최대 입력 ${V(spec.vin_max.v)}: ${cite(spec.vin_max)}`]
     if (atLeast(vin.v, spec.vin_max.v)) {
       const [a, b] = two(vin.v, spec.vin_max.v, V)
@@ -1911,7 +2043,7 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
       res('warn', `${r.ref} 출력 커패시터 ${uF(total)} < 권장 ${uF(spec.cout_min.v)} (발진 위험)`, [...detail, cite(spec.cout_min)]); continue
     }
     if (atLeast(vin.v, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 입력 ${V(vin.v)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
-    res('pass', `${r.ref} 입력 ${V(vin.v)} → ${V(reg.vout)} (여유 ${V(head)})`, detail)
+    res('pass', `${r.ref} 입력 ${rangeV(inLv)} → ${V(reg.vout)} (여유 ${inLv.lo < inLv.hi ? '최소 ' : ''}${V(head)})`, detail)
   }
   return out
 }
@@ -2083,9 +2215,13 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   const switchAt = (n: string | null) => (n ? switches.find(s => s.grounded && s.c === n) ?? null : null)
   const sinkOf = (n: string | null): Sink | null => {
     const v = x.voltOf(n)
-    if (v) return { lo: v.v, hi: v.v, why: v.why, ...(v.cause ? { cause: v.cause } : {}) }
+    if (v) return { lo: v.lo ?? v.v, hi: v.v, why: v.why, ...(v.cause ? { cause: v.cause } : {}) }
     const sw = switchAt(n)
-    if (!sw) return null
+    if (!sw) {
+      // a 555 output sinks current while low; its low level (VOL) is not in the parts table, so only 0 V is used
+      const tm = x.timerOut(n)
+      return tm?.level ? { lo: 0, hi: null, by: `${tm.ref} 출력`, why: `${tm.ref} 출력이 LOW일 때 받아 내림: 0 V~VOL (VOL은 자료가 없어 가장 큰 전류에만 0 V로 씀)` } : null
+    }
     if (sw.dropMax != null) {
       // a sense resistor under the emitter/source lifts the collector/drain by its drop too (at the largest current)
       const vs = sw.sense.ohms * loadI(sw.loads, 0)
