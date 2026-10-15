@@ -911,12 +911,157 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const open = run(hot('1k', 'NOWHERE')), weak = run(hot('1M', 'VCC')), ok = run(hot('1k', 'VCC'))
   add('LED fault does not hide an independent base fault; a drive short only because of the LED follows the LED',
     !pick(open, 'op_drive', 'Q1')?.cause && head(open) === '동작 안 됨 2' &&
-    // with the real 610 mA the gain table says nothing (판단 불가), but even a 30 mA LED would need more base current: its own fault
-    !pick(weak, 'op_drive', 'Q1')?.cause && head(weak) === '동작 안 됨 1 · 판단 불가 1' &&
+    // even with the LED held to 30 mA the 1 MΩ base falls short: an error of its own, counted next to the LED
+    is(weak, 'op_drive', 'error', 'Q1', /LED를 정격 전류로 줄여도/) && !pick(weak, 'op_drive', 'Q1')?.cause && head(weak) === '동작 안 됨 2' &&
     head(ok) === '동작 안 됨 1',
     `${show(open, 'op_drive')} [${head(open)}] | ${show(weak, 'op_drive')} [${head(weak)}] | ${head(ok)}`)
 
   for (const [name, ok2, info] of F) check(`O17 ${name}`, ok2, info)
+}
+
+// O18. review round 4: relays that never pull in, and whose fault a verdict follows ───────
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const notPass = (rs: OpResult[], rule: OpRule, ref: string) => !!pick(rs, rule, ref) && pick(rs, rule, ref)!.state !== 'pass'
+  const reversed = (g: NetGraph): NetGraph => ({ components: [...g.components].reverse(), nets: [...g.nets].reverse().map(n => ({ ...n, nodes: [...n.nodes].reverse() })) })
+  const states = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}`).sort().join(' ')
+
+  // two relays holding each other only through their contacts never start; with a start button they do
+  const mutual = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['K2', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.3', 'K2.3', 'R1.1'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'K2.2', 'D2.1', 'L1.2'], ['A', 'K2.4', 'K1.1', 'D1.2'], ['B', 'K1.4', 'K2.1', 'D2.2'], ['LA', 'R1.2', 'L1.1']])
+  const started = variant(mutual, c => { c.components.push({ ref: 'SW1', name: 'SW', value: 'START' }); c.nets.find(n => n.name === '+5V')!.nodes.push({ ref: 'SW1', pin: '1' }); c.nets.find(n => n.name === 'A')!.nodes.push({ ref: 'SW1', pin: '2' }) })
+  add('mutual latch never starts; with a start button it does', notPass(run(mutual), 'op_relay', 'K1') && notPass(run(mutual), 'op_relay', 'K2') && head(run(mutual)) !== '동작 검사 통과' &&
+    is(run(started), 'op_relay', 'pass', 'K1') && is(run(started), 'op_relay', 'pass', 'K2'),
+    `${show(run(mutual), 'op_relay', 'K1')} · ${head(run(mutual))} | ${show(run(started), 'op_relay', 'K1')}`)
+
+  // a self-holding relay whose only start path is a relay that never pulls in
+  const deadStart = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['K2', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.3', 'K2.3', 'K2.1', 'D2.2'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'K2.2', 'D2.1', 'L1.2'], ['H', 'K1.4', 'K2.4', 'K1.1', 'D1.2', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const ds = run(deadStart)
+  add('latch started only by a dead relay: K1 and its LED not passed, one fault', notPass(ds, 'op_relay', 'K1') && notPass(ds, 'op_led', 'L1') && head(ds) === '동작 안 됨 1',
+    `${show(ds, 'op_relay', 'K1')} | ${show(ds, 'op_led', 'L1')} | ${head(ds)}`)
+
+  // an unrelated dead relay does not turn a self-fed coil into a pass, nor become its cause
+  const selfFedPlus = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'],
+    ['K2', 'Relay', '12V'], ['D2', 'D', '1N4148'], ['R9', 'R', '330'], ['L9', 'LED', 'RED']],
+  [['+5V', 'J1.1', 'K1.3', 'RB.1', 'K2.1', 'D2.2', 'K2.3'], ['KH', 'K1.4', 'K1.1', 'D1.2'], ['COIL', 'K1.2', 'D1.1', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'],
+    ['GND', 'J1.2', 'Q1.3', 'K2.2', 'D2.1', 'L9.2'], ['N9', 'K2.4', 'R9.1'], ['A9', 'R9.2', 'L9.1']])
+  const sp = run(selfFedPlus)
+  add('unrelated dead relay leaves a self-fed coil alone', notPass(sp, 'op_relay', 'K1') && pick(sp, 'op_relay', 'K1')?.cause !== 'K2',
+    `${show(sp, 'op_relay', 'K1')} cause=${pick(sp, 'op_relay', 'K1')?.cause}`)
+
+  // an overvoltage relay on a transistor that never turns on does not close its contact
+  const overOff = circuit([['J1', 'Conn_01x03', 'PWR'], ['K2', 'Relay', '5V'], ['D2', 'D', '1N4148'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['Q1', 'Q_NPN', '2N3904'],
+    ['RB', 'R', '1k'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+  [['+12V', 'J1.1', 'K2.1', 'D2.2'], ['+5V', 'J1.3', 'K2.3', 'K1.3'], ['GND', 'J1.2', 'Q1.3', 'K1.2', 'D1.1', 'L1.2', 'RB.1'], ['COIL', 'K2.2', 'D2.1', 'Q1.2'],
+    ['B', 'RB.2', 'Q1.1'], ['T1', 'K2.4', 'K1.1', 'D1.2'], ['L', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('overvoltage relay behind a transistor that never turns on: K1 and L1 not passed', notPass(run(overOff), 'op_relay', 'K1') && notPass(run(overOff), 'op_led', 'L1'),
+    `${show(run(overOff), 'op_relay', 'K1')} | ${show(run(overOff), 'op_led', 'L1')}`)
+
+  // a regulator fed through a dead relay's contact has no output
+  const regBehind = circuit([['J1', 'Conn_01x03', 'PWR'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['U1', 'REG', 'L7805'], ['C1', 'CP', '10uF'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+9V', 'J1.1', 'K1.3'], ['+5V', 'J1.3', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'U1.1', 'C1.2', 'L1.2'], ['VIN', 'K1.4', 'U1.3'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('regulator behind a dead contact: its LED not passed, one fault', notPass(run(regBehind), 'op_led', 'L1') && head(run(regBehind)) === '동작 안 됨 1',
+    `${show(run(regBehind), 'op_led', 'L1')} | ${head(run(regBehind))}`)
+
+  // a three-relay chain gives the same answers in any listing order
+  const chain3 = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['K2', 'Relay', '5V'], ['K3', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148'], ['D3', 'D', '1N4148'],
+    ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+  [['+5V', 'J1.1', 'K3.1', 'D3.2', 'K3.3', 'K2.3', 'K1.3'], ['GND', 'J1.2', 'K3.2', 'D3.1', 'K2.2', 'D2.1', 'K1.2', 'D1.1', 'L1.2'], ['T2', 'K3.4', 'K2.1', 'D2.2'],
+    ['T1', 'K2.4', 'K1.1', 'D1.2'], ['L', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const c3a = run(chain3), c3b = run(reversed(chain3))
+  add('three-relay chain: same in any order, L1 not passed, one fault', states(c3a) === states(c3b) && notPass(c3a, 'op_led', 'L1') && head(c3a) === '동작 안 됨 1' && head(c3b) === '동작 안 됨 1',
+    `${head(c3a)} / ${head(c3b)} · ${show(c3a, 'op_led', 'L1')}`)
+
+  // a changeover contact: COM fed only through its own NO is no short through NC
+  const spdt = circuit([['J1', 'Conn_01x03', 'PWR'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'K1.4'], ['+3V3', 'J1.3', 'K1.5'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'L1.2'], ['OUT', 'K1.3', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('changeover contact is not a short', !pick(run(spdt), 'op_short'), show(run(spdt), 'op_short'))
+
+  // two results of one rule and part keep their own texts and causes
+  const twoNames = circuit([['BT1', 'Battery', '4.5V'], ['K2', 'Relay', '12V'], ['D2', 'D', '1N4148'], ['SW1', 'SW', 'S'], ['R1', 'R', '1k'], ['R2', 'R', '1k']],
+    [['VBAT', 'BT1.1', 'K2.3', 'SW1.1', 'K2.1', 'D2.2'], ['GND', 'BT1.2', 'K2.2', 'D2.1', 'R1.2', 'R2.2'], ['+5V', 'K2.4', 'R1.1'], ['+3V3', 'SW1.2', 'R2.1']])
+  const tn = run(twoNames).filter(r => r.rule === 'op_power' && /\+3V3/.test(r.summary))
+  add('+3V3 mismatch reported once, not blamed on K2', tn.length === 1 && !tn[0].cause, tn.map(r => `${r.state}/${r.cause}: ${r.summary}`).join(' | '))
+
+  // a fault that stays when the dead relay's contact closes is its own fault
+  const hotBehind = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['R1', 'R', '10'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'K1.3'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'L1.2'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const hb = run(hotBehind)
+  add('10 Ω LED behind a dead relay: its own error, two faults', is(hb, 'op_led', 'error', 'L1') && !pick(hb, 'op_led', 'L1')?.cause && head(hb) === '동작 안 됨 2',
+    `${show(hb, 'op_led', 'L1')} | ${head(hb)}`)
+
+  // a chain through a relay that cannot be judged still ends at the first fault
+  const viaUnknown = circuit([['J1', 'Conn_01x02', 'PWR'], ['K2', 'Relay', '12V'], ['D2', 'D', '1N4148'], ['K3', 'Relay', '5V'], ['D3', 'D', '1N4148'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'],
+    ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+  [['+5V', 'J1.1', 'K2.1', 'D2.2', 'K2.3', 'K3.1', 'D3.2', 'K3.3'], ['GND', 'J1.2', 'K2.2', 'D2.1', 'Q1.3', 'L1.2'], ['DRV', 'K2.4', 'RB.1'], ['B', 'RB.2', 'Q1.1'],
+    ['COIL', 'K3.2', 'D3.1', 'Q1.2'], ['NO', 'K3.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  const openBase = circuit([['J1', 'Conn_01x02', 'PWR'], ['Q3', 'Q_NPN', '2N3904'], ['R8', 'R', '1k'], ['K3', 'Relay', '5V'], ['D3', 'D', '1N4148'], ['R1', 'R', '1k'], ['D1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K3.1', 'D3.2', 'K3.3'], ['GND', 'J1.2', 'Q3.3', 'D1.2'], ['B3', 'Q3.1', 'R8.2'], ['NOWHERE', 'R8.1'], ['C3', 'K3.2', 'D3.1', 'Q3.2'], ['LA', 'K3.4', 'R1.1'], ['LB', 'R1.2', 'D1.1']])
+  add('chains through results that could not be judged count once', head(run(viaUnknown)) === '동작 안 됨 1' && head(run(openBase)) === '동작 안 됨 1',
+    `${head(run(viaUnknown))} | ${head(run(openBase))}`)
+
+  // the cause named is the relay's coil, not its other fault
+  const ncShort = circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '12V'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['L1', 'LED', 'RED']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'K1.3'], ['GND', 'J1.2', 'K1.2', 'D1.1', 'L1.2', 'K1.5'], ['NO', 'K1.4', 'R1.1'], ['LA', 'R1.2', 'L1.1']])
+  add('knock-on text names the relay coil', !!pick(run(ncShort), 'op_led', 'L1')?.detail.some(d => /K1 릴레이 코일 전압 문제에서 이어진/.test(d)),
+    pick(run(ncShort), 'op_led', 'L1')?.detail[0] ?? '')
+
+  // a backwards battery is the cause only of what it feeds
+  const twoBats = circuit([['BT1', 'Battery', '9V'], ['BT2', 'Battery', '5V'], ['R5', 'R', '1k'], ['RB', 'R', '1M'], ['Q1', 'Q_NPN', '2N3904'], ['RL', 'R', '470'], ['D1', 'LED', 'RED']],
+    [['+9V', 'BT1.1', 'RB.1', 'RL.1'], ['GND', 'BT1.2', 'BT2.1', 'Q1.3'], ['+5V', 'BT2.2', 'R5.1'], ['N5', 'R5.2'], ['BASE', 'RB.2', 'Q1.1'], ['LK', 'Q1.2', 'D1.2'], ['LA', 'RL.2', 'D1.1']])
+  const noRb = circuit([['BT1', 'Battery', '9V'], ['Q1', 'Q_NPN', '2N3904'], ['R1', 'R', '470'], ['D1', 'LED', 'RED']],
+    [['GND', 'BT1.1', 'Q1.3'], ['+9V', 'BT1.2', 'Q1.1', 'R1.1'], ['LA', 'R1.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2']])
+  add('backwards battery does not swallow faults on other rails or a missing base resistor',
+    !pick(run(twoBats), 'op_drive', 'Q1')?.cause && head(run(twoBats)) === '동작 안 됨 2' && !pick(run(noRb), 'op_drive', 'Q1')?.cause && head(run(noRb)) === '동작 안 됨 2',
+    `${show(run(twoBats), 'op_drive')} [${head(run(twoBats))}] | ${show(run(noRb), 'op_drive')} [${head(run(noRb))}]`)
+
+  // transistor attribution: a weak base under an LED with no resistor, a source resistor lifted by an LED,
+  // a load drawing less as the switch voltage rises, a shared resistor with a switched LED
+  const bareWeak = circuit([['J1', 'Conn_01x02', 'PWR'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '1M']],
+    [['+5V', 'J1.1', 'D1.1', 'RB.1'], ['GND', 'J1.2', 'Q1.3'], ['COL', 'D1.2', 'Q1.2'], ['B', 'RB.2', 'Q1.1']])
+  const mosSense = circuit([['J1', 'Conn_01x02', 'PWR'], ['BT1', 'Battery', '9V'], ['R1', 'R', '2'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NMOS', '2N7000'], ['RS', 'R', '1'], ['RG', 'R', '100'], ['RP', 'R', '100k']],
+    [['+5V', 'J1.1', 'RG.1'], ['+9V', 'BT1.1', 'R1.1'], ['GND', 'J1.2', 'BT1.2', 'RS.2', 'RP.2'], ['LA', 'R1.2', 'D1.1'], ['D', 'D1.2', 'Q1.2'], ['S', 'Q1.3', 'RS.1'], ['G', 'RG.2', 'RP.1', 'Q1.1']])
+  const res47 = circuit([['J1', 'Conn_01x02', 'PWR'], ['RB', 'R', '10k'], ['RL', 'R', '47'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'RB.1', 'RL.1'], ['GND', 'J1.2', 'Q1.3'], ['B', 'RB.2', 'Q1.1'], ['LA', 'RL.2', 'D1.1'], ['COL', 'D1.2', 'Q1.2']])
+  const sharedSw = circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '62'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'S'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '7.5k']],
+    [['+5V', 'J1.1', 'R1.1', 'RB.1'], ['X', 'R1.2', 'D1.1', 'D2.1'], ['COL', 'D1.2', 'SW1.2', 'Q1.2'], ['K2', 'D2.2', 'SW1.1'], ['B', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']])
+  add('transistor attribution: weak base under a bare LED is its own; LED-lifted source, a 47 Ω LED and a shared resistor follow the LED',
+    is(run(bareWeak), 'op_drive', 'error', 'Q1') && !pick(run(bareWeak), 'op_drive', 'Q1')?.cause && head(run(bareWeak)) === '동작 안 됨 2' &&
+    pick(run(mosSense), 'op_drive', 'Q1')?.cause === 'D1' && head(run(mosSense)) === '동작 안 됨 1' &&
+    pick(run(res47), 'op_drive', 'Q1')?.cause === 'D1' && head(run(res47)) === '동작 안 됨 1' &&
+    head(run(sharedSw)) === '동작 안 됨 1',
+    [show(run(bareWeak), 'op_drive'), head(run(bareWeak)), show(run(mosSense), 'op_drive'), head(run(mosSense)), show(run(res47), 'op_drive'), head(run(res47)), head(run(sharedSw))].join(' | '))
+
+  // an unknown motor current is not the LED's fault; the overloaded switch follows the LED over its rating
+  const motorLed = circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '10'], ['D1', 'LED', 'RED'], ['J2', 'Conn_01x02', 'MOTOR'], ['D2', 'D', '1N4148'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '1k']],
+    [['+5V', 'J1.1', 'R1.1', 'J2.1', 'D2.2', 'RB.1'], ['LA', 'R1.2', 'D1.1'], ['COL', 'D1.2', 'J2.2', 'D2.1', 'Q1.2'], ['B', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']])
+  const twoStrings = circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['D3', 'LED', 'RED'], ['R4', 'R', '10'], ['D4', 'LED', 'RED'],
+    ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '1k']],
+  [['+5V', 'J1.1', 'R1.1', 'R4.1', 'RB.1'], ['A1', 'R1.2', 'D1.1'], ['M1', 'D1.2', 'D2.1'], ['M2', 'D2.2', 'D3.1'], ['A4', 'R4.2', 'D4.1'], ['COL', 'D3.2', 'D4.2', 'Q1.2'],
+    ['B', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']])
+  add('unknown motor current is not blamed on an LED; overload follows the LED over its rating',
+    !pick(run(motorLed), 'op_drive', 'Q1')?.cause && pick(run(twoStrings), 'op_switch', 'Q1')?.cause === 'D4',
+    `${show(run(motorLed), 'op_drive')} cause=${pick(run(motorLed), 'op_drive', 'Q1')?.cause} | op_switch cause=${pick(run(twoStrings), 'op_switch', 'Q1')?.cause}`)
+
+  // a coil with no supply side, and a diode across a plain connector
+  const coilGnd = circuit([['J1', 'Conn_01x02', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'R1.1'], ['GND', 'J1.2', 'Q1.3', 'K1.1', 'D1.2'], ['BASE', 'R1.2', 'Q1.1'], ['COL', 'Q1.2', 'K1.2', 'D1.1']])
+  const solenoid = circuit([['J2', 'Conn_01x02', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['J1', 'Conn_01x02', 'SOLENOID'], ['D1', 'D', '1N4148']],
+    [['+5V', 'J2.1', 'R1.1', 'J1.1', 'D1.1'], ['GND', 'J2.2', 'Q1.3'], ['BASE', 'R1.2', 'Q1.1'], ['COL', 'Q1.2', 'J1.2', 'D1.2']])
+  add('coil pin on GND says the coil has no supply; a diode across a plain connector counts once',
+    is(run(coilGnd), 'op_relay', 'error', 'K1', /전원 쪽이 없습니다/) && head(run(solenoid)) === '동작 안 됨 1',
+    `${show(run(coilGnd), 'op_relay')} | ${head(run(solenoid))}`)
+
+  // a drive that fails with or without the relay contact is its own fault
+  const weakSig = circuit([['J1', 'Conn_01x02', 'PWR'], ['K2', 'Relay', '12V'], ['D3', 'D', '1N4148'], ['RB', 'R', '1M'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'K2.1', 'D3.2', 'K2.3', 'R1.1'], ['GND', 'J1.2', 'K2.2', 'D3.1', 'Q1.3'], ['SIG', 'K2.4', 'RB.1'], ['B', 'RB.2', 'Q1.1'], ['LA', 'R1.2', 'D1.1'], ['COL', 'D1.2', 'Q1.2']])
+  add('weak base behind a dead relay contact stays its own fault', is(run(weakSig), 'op_drive', 'error', 'Q1') && !pick(run(weakSig), 'op_drive', 'Q1')?.cause && head(run(weakSig)) === '동작 안 됨 2',
+    `${show(run(weakSig), 'op_drive')} | ${head(run(weakSig))}`)
+
+  for (const [name, ok, info] of F) check(`O18 ${name}`, ok, info)
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
