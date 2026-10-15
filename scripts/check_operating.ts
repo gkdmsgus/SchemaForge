@@ -807,6 +807,18 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(relayReset, 'op_555', 'pass', 'U1') && !!pick(relayReset, 'op_555', 'U1')?.detail.some(d => /K2 접점이 닫혀 있는 동안/.test(d)),
     [show(rmNone, 'op_flyback', 'J2'), show(rmGood, 'op_flyback', 'J2'), show(rmBad, 'op_flyback', 'J2'), show(relayLed, 'op_led'), show(relayReset, 'op_555')].join(' | '))
 
+  // a relay pulls in before its contacts close: a coil fed only through its own NO contact never starts, and a
+  // latch contact across a weak transistor does not make the first pull-in good
+  const selfFed = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['RB', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'K1.3', 'RB.1'], ['KH', 'K1.4', 'K1.1', 'D1.2'], ['COIL', 'K1.2', 'D1.1', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']]))
+  const latch = (rb: string) => op(circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148'], ['RB', 'R', rb], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2', 'RB.1'], ['COIL', 'K1.2', 'D1.1', 'Q1.2', 'K1.4'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3', 'K1.3']]))
+  const weak = latch('100k')
+  add('relay coil judged with its own contacts open: self-fed coil and weak latch are not a pass',
+    !is(selfFed, 'op_relay', 'pass', 'K1') && operatingHeadline(selfFed).text !== '동작 검사 통과' && !is(weak, 'op_relay', 'pass', 'K1') &&
+    !!pick(selfFed, 'op_relay', 'K1')?.detail.some(d => /자기 접점/.test(d)),
+    `${show(selfFed, 'op_relay')} · ${operatingHeadline(selfFed).text} | ${show(weak, 'op_relay')}`)
+
   // a 555 reset button to GND with no pull-up floats when released: a warning; a reset wired to GND, or to the 555's own switched ground, stays an error
   const resetPlain = (extra: (c: NetGraph) => void) => variant(variant(timer, movePin('U1.4', 'RST')), c => {
     c.components.push({ ref: 'SW1', name: 'SW', value: 'STOP' })
