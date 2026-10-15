@@ -673,6 +673,22 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(hiRelay, 'op_flyback', 'pass', 'K1') && is(acrossBat, 'op_flyback', 'warn', 'J2', /보호 다이오드가 없습니다/),
     [good, shorting, negSw, hiRelay, acrossBat].map(r => show(r, 'op_flyback')).join(' | '))
 
+  // a loose battery terminal only takes away nets nothing else feeds
+  const coinOnUsb = run(circuit([['J1', 'Conn_01x02', 'USB'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['BT1', 'Battery', '3V']],
+    [['+5V', 'J1.1', 'R1.1'], ['GND', 'J1.2', 'D1.2', 'BT1.2'], ['LA', 'R1.2', 'D1.1'], ['CELL', 'BT1.1']]))
+  add('loose coin cell on a USB board: the USB part is still judged', is(coinOnUsb, 'op_power', 'error', 'BT1') && is(coinOnUsb, 'op_led', 'pass', 'D1', /9\.39 mA/) &&
+    head(coinOnUsb) === '동작 안 됨 1', `${all(coinOnUsb)} | ${head(coinOnUsb)}`)
+
+  // a regulator with no power in gives no output: what it feeds is not judged at its nominal voltage
+  const deadReg = run(circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'LM7805'], ['C1', 'CP', '22uF'], ['R1', 'R', '68'], ['D1', 'LED', 'RED']],
+    [['VIN', 'BT1.1', 'U1.3'], ['BN', 'BT1.2'], ['GND', 'U1.1', 'C1.2', 'D1.2'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'D1.1']]))
+  const swReg = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'POWER'], ['U1', 'REG', 'LM7805'], ['C1', 'CP', '22uF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
+    [['+3.3V', 'J1.1', 'SW1.1'], ['VSW', 'SW1.2', 'U1.3'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'D1.2'], ['VOUT', 'U1.2', 'C1.1', 'R1.1'], ['LA', 'R1.2', 'D1.1']]))
+  add('regulator on a dead battery / short of input behind a switch: LED not judged, one fault',
+    is(deadReg, 'op_led', 'unknown', 'D1') && head(deadReg) === '동작 안 됨 1' && is(swReg, 'op_reg', 'error', 'U1', /유지하지 못합니다/) &&
+    is(swReg, 'op_led', 'unknown', 'D1') && head(swReg) === '동작 안 됨 1',
+    `${all(deadReg)} ${head(deadReg)} | ${all(swReg)} ${head(swReg)}`)
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
