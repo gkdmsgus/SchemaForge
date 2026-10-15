@@ -302,13 +302,19 @@ function baseIndex(c: OpCircuit) {
     of: (kind: string) => parts.filter(p => p.part === kind),
     /** the net on a two-pin part's other pin */
     other: (ref: string, pin: number) => net(ref, pin === 1 ? 2 : 1),
+    /** a closed contact in text: "SW1", or "K1 접점" for a relay's COM–NO */
+    contact: (ref: string) => (byRef.get(ref)?.part === 'Relay' ? `${ref} 접점` : ref),
+    contactNoun: (ref: string) => (byRef.get(ref)?.part === 'Relay' ? '접점' : '스위치'),
+    /** the time a contact pulls its net low: "SW1을 누르는 동안", "K1 접점이 닫혀 있는 동안" */
+    whileClosed: (ref: string) => (byRef.get(ref)?.part === 'Relay' ? `${ref} 접점이 닫혀 있는 동안` : `${eul(ref)} 누르는 동안`),
   }
 }
 type Base = ReturnType<typeof baseIndex>
 
 /**
  * Supply voltages. Physical sources come first: batteries (their voltages added along any
- * chain, whatever order the parts are listed in, switches taken as closed) and regulator
+ * chain, whatever order the parts are listed in, switches and relay COM–NO contacts taken as
+ * closed: the circuit is judged switched on, with each relay pulled in) and regulator
  * outputs. Net names fill in the rest. Where a name and a physical source disagree, the
  * physical value is used and the disagreement is reported. Nets whose voltage cannot be
  * trusted (a battery with a loose terminal, a regulator short of input) are `blocked`.
@@ -358,13 +364,14 @@ function analyzePower(b: Base) {
     link(e.minus, { to: e.plus, dv: e.dv, label: `${e.ref} ${V(e.dv)}` })
     link(e.plus, { to: e.minus, dv: -e.dv, label: `−${e.ref} ${V(e.dv)}` })
   }
-  const switches: { ref: string; a: string; z: string }[] = []
-  for (const sw of b.of('SW')) {
-    const a = b.net(sw.ref, 1), z = b.net(sw.ref, 2)
+  const switches: { ref: string; a: string; z: string; label: string }[] = []
+  for (const sw of b.parts().filter(p => p.part === 'SW' || p.part === 'Relay')) {
+    const [pa, pz] = sw.part === 'Relay' ? [3, 4] : [1, 2]
+    const a = b.net(sw.ref, pa), z = b.net(sw.ref, pz), label = `${b.contact(sw.ref)} 닫힘`
     if (!a || !z || a === z) continue
-    switches.push({ ref: sw.ref, a, z })
-    link(a, { to: z, dv: 0, label: `${sw.ref} 닫힘`, sw: sw.ref })
-    link(z, { to: a, dv: 0, label: `${sw.ref} 닫힘`, sw: sw.ref })
+    switches.push({ ref: sw.ref, a, z, label })
+    link(a, { to: z, dv: 0, label, sw: sw.ref })
+    link(z, { to: a, dv: 0, label, sw: sw.ref })
   }
   /**
    * voltages relative to `from` and the parts crossed to get there. Batteries first; a closed
@@ -470,7 +477,7 @@ function analyzePower(b: Base) {
     for (const sw of switches) for (const [a, z] of [[sw.a, sw.z], [sw.z, sw.a]]) {
       const v = from(a)
       if (!v || volts.has(z) || blocked.has(z) || named.has(z) || ownRail(z)) continue
-      volts.set(z, { ...v, why: `${v.why} → ${sw.ref} 닫힘`, viaSwitch: v.viaSwitch ?? sw.ref })
+      volts.set(z, { ...v, why: `${v.why} → ${sw.label}`, viaSwitch: v.viaSwitch ?? sw.ref })
       changed = true
     }
     return changed
@@ -628,9 +635,10 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
       if ((dir === 'up') !== (o.pin === 2)) { opposed = p.ref; break }
       leds.push(p); seen.add(p.ref); at = { ref: p.ref, pin: dir === 'up' ? 1 : 2 }; n = x.net(p.ref, at.pin); continue
     }
-    // a two-pin switch, taken as closed like the power analysis does
-    if (p.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null) {
-      const far = o.pin === 1 ? 2 : 1
+    // a two-pin switch or a relay's COM–NO contact, taken as closed like the power analysis does
+    const sw = p.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null
+    if (sw || (p.part === 'Relay' && (o.pin === 3 || o.pin === 4))) {
+      const far = sw ? (o.pin === 1 ? 2 : 1) : o.pin === 3 ? 4 : 3
       if (!x.net(p.ref, far)) break
       sws.push(p); seen.add(p.ref); at = { ref: p.ref, pin: far }; n = x.net(p.ref, far); continue
     }
@@ -838,7 +846,7 @@ function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: strin
   if (ctl === e) return fail('error', `${q.ref} ${word}가 ${kind === 'bjt' ? '이미터' : '소스'}와 같은 넷(${ctl})에 있어 켜지지 않습니다`, [`${word}와 ${kind === 'bjt' ? '이미터' : '소스'} 사이에 전압이 생기지 않습니다`])
   // a button that pulls the base/gate to GND turns it off while pressed; worked out with the button open
   const button = x.voltOf(ctl)?.pulled ? x.voltOf(ctl) : null
-  if (button) out.note = `${eul(button.viaSwitch!)} 누르는 동안 ${word}가 GND로 내려가 꺼집니다. 아래는 스위치가 열렸을 때입니다`
+  if (button) out.note = `${x.whileClosed(button.viaSwitch!)} ${word}가 GND로 내려가 꺼집니다. 아래는 ${ga(x.contactNoun(button.viaSwitch!))} 열렸을 때입니다`
   if (x.isGnd(ctl) && !button) return fail('error', `${q.ref} ${word}가 GND에 묶여 있어 켜지지 않습니다`, [`${ctl}: ${x.voltOf(ctl)!.why}`])
   const direct = button ? null : x.source(ctl)
   if (direct) {
@@ -864,7 +872,7 @@ function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: strin
       if (ohms == null) return fail('unknown', `${q.ref} ${word} 저항 ${p.ref} 값 ${eul(val(p.value))} 읽지 못했습니다`)
       const fb = x.voltOf(from)
       if (fb?.pulled) {
-        return fail('unknown', `${q.ref} ${word} 저항 ${p.ref} 반대쪽 ${eun(from!)} ${ga(fb.viaSwitch!)} 닫히면 GND, 열리면 ${ro(fb.pulled.ref)} 올라가는 버튼 입력이라 켜짐을 계산하지 않았습니다`,
+        return fail('unknown', `${q.ref} ${word} 저항 ${p.ref} 반대쪽 ${eun(from!)} ${ga(x.contact(fb.viaSwitch!))} 닫히면 GND, 열리면 ${ro(fb.pulled.ref)} 올라가는 ${x.contactNoun(fb.viaSwitch!) === '접점' ? '릴레이 접점' : '버튼'} 입력이라 켜짐을 계산하지 않았습니다`,
           [`${wa(p.ref)} ${ga(fb.pulled.ref)} 이어진 구동은 계산하지 않습니다`])
       }
       if (x.isGnd(from) || from === e) pulls.push({ r: p, ohms, toE: from === e })
@@ -1097,7 +1105,7 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
   for (const s of strings) {
     if (s.opposed || !s.top || !s.bot) continue          // an unconnected pin: the connection checks report it
     const head = s.leds[0], name = stringName(s)
-    const closed = s.sws.length ? [`${eun(s.sws.map(p => p.ref).join('·'))} 닫힌 것으로 계산합니다 (열리면 ${ga(name)} 꺼짐)`] : []
+    const closed = s.sws.length ? [`${eun(s.sws.map(p => x.contact(p.ref)).join('·'))} 닫힌 것으로 계산합니다 (열리면 ${ga(name)} 꺼짐)`] : []
     const res = (state: OpState, summary: string, detail: string[], cause?: string) =>
       out.push({ rule: 'op_led', ref: head.ref, state, summary, detail: [...detail, ...closed], ...(cause && state !== 'pass' ? { cause } : {}) })
     const specs = s.leds.map(l => ledSpec(l.value, x.style))
@@ -1232,6 +1240,7 @@ function checkFlyback(x: Ctx, switchAt: (n: string | null) => Switch | null): Op
       : ds.find(d => x.net(d.ref, 1) === low && (x.voltOf(x.net(d.ref, 2))?.v ?? 0) > 0)
     const swNet = highSide ? high : low
     const mech = v1?.viaSwitch !== v2?.viaSwitch ? v1?.viaSwitch ?? v2?.viaSwitch : undefined
+    const mechName = mech ? `${mech} ${x.contactNoun(mech)}` : ''
     if (bad) {
       res('error', `${bad.ref} 방향이 거꾸로입니다: 스위치가 켜지면 전원이 이 다이오드를 지나 바로 GND로 흐릅니다`,
         [`${l.ref} 양단 ${high}(전원 쪽) · ${low}, 스위치 쪽 ${swNet}, ${bad.ref} 캐소드가 ${low}에 있음 → 캐소드는 ${high} 쪽이어야 합니다`])
@@ -1244,7 +1253,7 @@ function checkFlyback(x: Ctx, switchAt: (n: string | null) => Switch | null): Op
           [`${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드가 필요합니다`])
       } else {
         res('warn', `${l.ref} ${l.kind} 양단에 보호 다이오드가 없습니다: 스위치 쪽이 트랜지스터는 아니지만 끊길 때 역전압으로 접점에 불꽃이 생기거나 구동하는 쪽이 상할 수 있습니다`,
-          [`스위치 쪽 넷 ${swNet}${mech ? ` (${mech} 스위치)` : ''}`, `${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드를 권합니다`])
+          [`스위치 쪽 넷 ${swNet}${mech ? ` (${mechName})` : ''}`, `${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드를 권합니다`])
       }
       continue
     }
@@ -1516,10 +1525,13 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     else if (rst && x.isGnd(rst) && !rv?.pulled) errors.push('4번 핀(RESET)이 GND에 묶여 있어 동작하지 않습니다')
     else if (rst && (rst === vccNet || pulledUp(rst) || driven(rst))) {
       // held high; a reset button stops it only while pressed
-      if (rv?.pulled) detail.push(`4번 핀(RESET)은 ${eul(rv.viaSwitch!)} 누르는 동안 GND로 내려가 멈추고, 평소에는 ${ro(rv.pulled.ref)} 높게 유지됩니다`)
+      if (rv?.pulled) detail.push(`4번 핀(RESET)은 ${x.whileClosed(rv.viaSwitch!)} GND로 내려가 멈추고, 평소에는 ${ro(rv.pulled.ref)} 높게 유지됩니다`)
     }
     else if (rst && rv && rv.v > 0) {
-      if (rv.viaSwitch && rv.viaSwitch !== vcc?.viaSwitch) warns.push(`4번 핀(RESET)은 ${rv.viaSwitch} 스위치가 닫혀야 높아져, 스위치가 열리면 멈춥니다`)
+      if (rv.viaSwitch && rv.viaSwitch !== vcc?.viaSwitch) {
+        const what = x.contactNoun(rv.viaSwitch)
+        warns.push(`4번 핀(RESET)은 ${rv.viaSwitch} ${ga(what)} 닫혀야 높아져, ${ga(what)} 열리면 멈춥니다`)
+      }
     } else if (rst && pulledDown(rst)) warns.push('4번 핀(RESET)이 GND 쪽 저항으로 낮게 잡혀 있어 평소에는 멈춰 있습니다 (VCC에 연결)')
     else warns.push('4번 핀(RESET)이 떠 있어 잡음에 멈출 수 있습니다 (VCC에 연결)')
     // CTRL (5): a capacitor or nothing; tied to a rail it moves the thresholds to that rail
