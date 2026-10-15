@@ -754,6 +754,21 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
+// O16. gaps the third review left open: one circuit per item ──────────────────
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+
+  // a MOSFET has to stand the load supply across drain and source once it turns off (VDSS 60 V, like a BJT's VCEO)
+  const highV = (v: string) => circuit([['J1', 'Conn_01x02', 'PWR'], ['BT1', 'Battery', v], ['RL', 'R', '10k'], ['RG', 'R', '100'], ['RP', 'R', '100k'], ['Q1', 'Q_NMOS', '2N7002']],
+    [['+5V', 'J1.1', 'RG.1'], ['VH', 'BT1.1', 'RL.1'], ['GND', 'J1.2', 'BT1.2', 'RP.2', 'Q1.3'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['D', 'RL.2', 'Q1.2']])
+  const v60 = run(highV('60V')), v48 = run(highV('48V'))
+  add('MOSFET drain: 60 V supply ≥ VDSS 60 V is an error, 48 V passes', is(v60, 'op_switch', 'error', 'Q1', /60 V ≥ VDSS 60 V/) && is(v48, 'op_switch', 'pass', 'Q1'),
+    `${show(v60, 'op_switch')} | ${show(v48, 'op_switch')}`)
+
+  for (const [name, ok, info] of F) check(`O16 ${name}`, ok, info)
+}
+
 // O14. every verdict from the circuits above: basis shown, no NaN, no "same < same" ────
 {
   const problems: string[] = []
