@@ -793,12 +793,12 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const rmNone = op(relayMotor(null)), rmGood = op(relayMotor(['D2.1', 'D2.2'])), rmBad = op(relayMotor(['D2.2', 'D2.1']))
   // an LED behind the contacts, and a 555 reset that the contacts pull low against a pull-up (not "tied to GND")
   const relayLed = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['K1', 'Relay', '5V'], ['R1', 'R', '330'], ['D1', 'LED', 'RED']],
-    [['+5V', 'J1.1', 'R1.1'], ['C', 'R1.2', 'K1.3'], ['NO', 'K1.4', 'D1.1'], ['GND', 'J1.2', 'D1.2']]))
+    [['+5V', 'J1.1', 'R1.1', 'K1.1'], ['C', 'R1.2', 'K1.3'], ['NO', 'K1.4', 'D1.1'], ['GND', 'J1.2', 'D1.2', 'K1.2']]))
   const relayReset = op(variant(variant(timer, movePin('U1.4', 'RST')), c => {
     c.components.push({ ref: 'R4', name: 'R', value: '10k' }, { ref: 'K2', name: 'Relay', value: '5V' })
     c.nets.find(n => n.name === 'RST')!.nodes.push({ ref: 'R4', pin: '2' }, { ref: 'K2', pin: '4' })
-    c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'R4', pin: '1' })
-    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'K2', pin: '3' })
+    c.nets.find(n => n.name === 'VCC')!.nodes.push({ ref: 'R4', pin: '1' }, { ref: 'K2', pin: '1' })
+    c.nets.find(n => n.name === 'GND')!.nodes.push({ ref: 'K2', pin: '3' }, { ref: 'K2', pin: '2' })
   }))
   add('relay contacts carry like a closed switch: motor flyback warns/passes/errors, LED judged, pulled-up reset not tied',
     is(rmNone, 'op_flyback', 'warn', 'J2', /보호 다이오드가 없습니다/) && !!pick(rmNone, 'op_flyback', 'J2')?.detail.some(d => /K1 접점/.test(d)) &&
@@ -818,6 +818,18 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     !is(selfFed, 'op_relay', 'pass', 'K1') && operatingHeadline(selfFed).text !== '동작 검사 통과' && !is(weak, 'op_relay', 'pass', 'K1') &&
     !!pick(selfFed, 'op_relay', 'K1')?.detail.some(d => /자기 접점/.test(d)),
     `${show(selfFed, 'op_relay')} · ${operatingHeadline(selfFed).text} | ${show(weak, 'op_relay')}`)
+
+  // a closed contact does not overwrite a regulator output (two sources meet: a short), and a relay whose coil
+  // has nowhere to get current never closes its contact
+  const regContact = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF'], ['K1', 'Relay', '5V'],
+    ['RK', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['D1', 'D', '1N4148']],
+  [['+5V', 'J1.1', 'K1.1', 'D1.2', 'RK.1', 'K1.3'], ['GND', 'J1.2', 'BT1.2', 'U1.1', 'C1.2', 'Q1.3'], ['VIN', 'BT1.1', 'U1.3'], ['V33', 'U1.2', 'C1.1', 'K1.4'],
+    ['COIL', 'K1.2', 'D1.1', 'Q1.2'], ['B', 'RK.2', 'Q1.1']]))
+  const openCoilRelay = op(circuit([['BT1', 'Battery', '12V'], ['K1', 'Relay', '5V'], ['J2', 'Conn_01x02', 'MOTOR 0.2A']],
+    [['VBAT', 'BT1.1', 'K1.3', 'K1.1'], ['M', 'K1.4', 'J2.1'], ['GND', 'BT1.2', 'J2.2']]))
+  add('contact onto a regulator output is a short; a relay with an open coil pin does not close',
+    is(regContact, 'op_short', 'error', 'K1', /V33\(3\.3 V\)/) && is(openCoilRelay, 'op_flyback', 'unknown', 'J2'),
+    `${show(regContact, 'op_short')} | ${show(regContact, 'op_cap')} | ${show(openCoilRelay, 'op_flyback', 'J2')}`)
 
   // a 555 reset button to GND with no pull-up floats when released: a warning; a reset wired to GND, or to the 555's own switched ground, stays an error
   const resetPlain = (extra: (c: NetGraph) => void) => variant(variant(timer, movePin('U1.4', 'RST')), c => {
