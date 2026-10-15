@@ -710,6 +710,11 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(shunt, 'op_led', 'pass', 'D1', /8\.18~9\.39 mA/) && is(pressOn, 'op_drive', 'pass', 'Q1'),
     [show(rb, 'op_555'), show(offButton, 'op_drive'), show(viaInput, 'op_drive'), show(shunt, 'op_led'), show(pressOn, 'op_drive')].join(' | '))
 
+  // math: the source resistor's drop adds to the switch's: 3.95 − (3 Ω × 62.7 mA ÷ 1.048 + 1 Ω × 62.7 mA) = 3.71 V < 3.75 V
+  const senseRelay = run(circuit([['J1', 'Conn_01x03', 'PWR'], ['Q1', 'Q_NMOS', 'NDS7002A'], ['RS', 'R', '1'], ['D1', 'D', '1N4148'], ['K1', 'Relay', '5V']],
+    [['+3.95V', 'J1.1', 'K1.1', 'D1.2'], ['+12V', 'J1.2', 'Q1.1'], ['GND', 'J1.3', 'RS.2'], ['S', 'Q1.3', 'RS.1'], ['COIL', 'Q1.2', 'K1.2', 'D1.1']]))
+  add('sense resistor drop counted in the coil voltage', is(senseRelay, 'op_relay', 'error', 'K1', /3\.71 V < 동작 전압 3\.75 V/), show(senseRelay, 'op_relay'))
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
