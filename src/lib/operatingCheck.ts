@@ -255,6 +255,8 @@ function hfeAt(spec: BjtSpec, ic: number) {
 // Parts that drive a signal of their own (a connector pin, an IC); everything else is passive.
 const PASSIVE = new Set(['R', 'C', 'CP', 'L', 'D', 'LED', 'Q_NPN', 'Q_NMOS', 'SW', 'Battery', 'Relay', 'Buzzer', 'Crystal', 'REG'])
 const isExternal = (p: OpPart) => /^Conn_/.test(p.part) || !PASSIVE.has(p.part)
+/** a motor wired through a connector: a load, never a supply */
+const isMotor = (p: OpPart) => /^Conn_/.test(p.part) && /MOTOR|모터/i.test(p.value)
 
 // ── circuit index and supplies ─────────────────────────────────────────────────
 
@@ -312,7 +314,7 @@ function analyzePower(b: Base) {
   for (const n of b.nets()) { const v = voltsFromName(n); if (v != null) named.set(n, v) }
   const volts = new Map<string, Volt>()
   const blocked = new Map<string, { why: string; cause: string }>()
-  const hasConn = (n: string) => b.on(n).some(nd => /^Conn_/.test(b.part(nd.ref)?.part ?? ''))
+  const hasConn = (n: string) => b.on(n).some(nd => { const p = b.part(nd.ref); return !!p && /^Conn_/.test(p.part) && !isMotor(p) })
   /** a named rail fed from outside (a connector) or by a regulator: a closed switch does not change it */
   const ownRail = (n: string) => named.has(n) && (hasConn(n) || b.of('REG').some(r => b.net(r.ref, 2) === n))
 
@@ -752,7 +754,7 @@ function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString
       else { const ns = src ? null : x.noSource(other); loads.push({ label: p.ref, kind: 'unknown', ...sup, ...(ns?.cause ? { cause: ns.cause } : {}), note: `${p.ref} (${p.value || '값 없음'})` }) }
       continue
     }
-    if (/^Conn_/.test(p.part) && /MOTOR|모터/i.test(p.value)) {
+    if (isMotor(p)) {
       const i = parseAmps(p.value), sup = x.source(x.net(p.ref, nd.pin === 1 ? 2 : 1))
       const extra = sup ? { supply: sup } : {}
       if (i != null) loads.push({ label: `${p.ref} 모터`, kind: 'fixed', i, ...extra, note: `${p.ref} 값 ${p.value}에 적힌 전류` })
@@ -1127,7 +1129,7 @@ function inductiveLoads(x: Ctx) {
     const n1 = x.net(k.ref, 1), n2 = x.net(k.ref, 2), r = relaySpec(k.value)
     if (n1 && n2) loads.push({ ref: k.ref, kind: '릴레이 코일', n1, n2, amps: null, coilR: r ? r.spec.r_coil.v * (1 - r.spec.r_tol) : null })
   }
-  for (const p of x.parts().filter(q => /^Conn_/.test(q.part) && /MOTOR|모터/i.test(q.value))) {
+  for (const p of x.parts().filter(isMotor)) {
     const n1 = x.net(p.ref, 1), n2 = x.net(p.ref, 2)
     if (n1 && n2) loads.push({ ref: p.ref, kind: '모터', n1, n2, amps: parseAmps(p.value), coilR: null })
   }
@@ -1140,11 +1142,15 @@ function checkFlyback(x: Ctx, switchAt: (n: string | null) => Switch | null): Op
     const res = (state: OpState, summary: string, detail: string[]) => out.push({ rule: 'op_flyback', ref: l.ref, state, summary, detail })
     const v1 = x.voltOf(l.n1), v2 = x.voltOf(l.n2)
     let high: string, low: string
+    /** a mechanical switch on the supply side: it cuts the high end, and the low end stays put */
+    let highSide = false
     if (v1 && v2) {
-      // fixed voltages on both ends: only a mechanical switch in the loop (if any) turns it off
-      if (v2.viaSwitch && !v1.viaSwitch) { high = l.n1; low = l.n2 }
-      else if (v1.viaSwitch && !v2.viaSwitch) { high = l.n2; low = l.n1 }
-      else continue
+      // fixed voltages on both ends: only a mechanical switch in the loop turns it off. The
+      // current flows from the higher end, whichever side the switch is on
+      if (v1.viaSwitch === v2.viaSwitch || Math.abs(v1.v - v2.v) <= 0.05) continue
+      const first = v1.v > v2.v
+      high = first ? l.n1 : l.n2; low = first ? l.n2 : l.n1
+      highSide = !!(first ? v1 : v2).viaSwitch && !(first ? v2 : v1).viaSwitch
     } else if (v1 && v1.v > 0) { high = l.n1; low = l.n2 }
     else if (v2 && v2.v > 0) { high = l.n2; low = l.n1 }
     else if (switchAt(l.n2)) { high = l.n1; low = l.n2 }
@@ -1154,29 +1160,34 @@ function checkFlyback(x: Ctx, switchAt: (n: string | null) => Switch | null): Op
     const ds = x.of('D')
     const good = ds.find(d => x.net(d.ref, 1) === low && x.net(d.ref, 2) === high)
     const bad = ds.find(d => x.net(d.ref, 1) === high && x.net(d.ref, 2) === low)
-    // a diode from the switch side to another supply also clamps the switch (across a series resistor and the coil)
-    const wide = good ? undefined : ds.find(d => x.net(d.ref, 1) === low && (x.voltOf(x.net(d.ref, 2))?.v ?? 0) > 0)
+    // a diode from the switched end to a net past the far end also clamps the switch (around a series resistor and the coil)
+    const lowV = x.voltOf(low)?.v ?? 0
+    const wide = good ? undefined : highSide
+      ? ds.find(d => x.net(d.ref, 2) === high && (x.voltOf(x.net(d.ref, 1))?.v ?? Infinity) <= lowV + 0.05)
+      : ds.find(d => x.net(d.ref, 1) === low && (x.voltOf(x.net(d.ref, 2))?.v ?? 0) > 0)
+    const swNet = highSide ? high : low
+    const mech = v1?.viaSwitch !== v2?.viaSwitch ? v1?.viaSwitch ?? v2?.viaSwitch : undefined
     if (bad) {
       res('error', `${bad.ref} 방향이 거꾸로입니다: 스위치가 켜지면 전원이 이 다이오드를 지나 바로 GND로 흐릅니다`,
-        [`${l.ref} 양단 ${high}(전원) · ${low}(스위치 쪽), ${bad.ref} 캐소드가 ${low}에 있음 → 캐소드는 ${high} 쪽이어야 합니다`])
+        [`${l.ref} 양단 ${high}(전원 쪽) · ${low}, 스위치 쪽 ${swNet}, ${bad.ref} 캐소드가 ${low}에 있음 → 캐소드는 ${high} 쪽이어야 합니다`])
       continue
     }
     const guard = good ?? wide
     if (!guard) {
       if (transistor) {
-        res('error', `${l.ref} ${l.kind} 양단에 보호 다이오드가 없습니다: 스위치가 꺼질 때 역전압이 ${transistor.q.ref}를 망가뜨릴 수 있습니다`,
+        res('error', `${l.ref} ${l.kind} 양단에 보호 다이오드가 없습니다: 스위치가 꺼질 때 역전압이 ${eul(transistor.q.ref)} 망가뜨릴 수 있습니다`,
           [`${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드가 필요합니다`])
       } else {
         res('warn', `${l.ref} ${l.kind} 양단에 보호 다이오드가 없습니다: 스위치 쪽이 트랜지스터는 아니지만 끊길 때 역전압으로 접점에 불꽃이 생기거나 구동하는 쪽이 상할 수 있습니다`,
-          [`스위치 쪽 넷 ${low}${v1?.viaSwitch || v2?.viaSwitch ? ` (${v1?.viaSwitch ?? v2?.viaSwitch} 스위치)` : ''}`, `${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드를 권합니다`])
+          [`스위치 쪽 넷 ${swNet}${mech ? ` (${mech} 스위치)` : ''}`, `${wa(high)} ${low} 사이에 캐소드를 ${high} 쪽으로 한 다이오드를 권합니다`])
       }
       continue
     }
-    const gnet = x.net(guard.ref, 2)!
+    const gnet = x.net(guard.ref, 2)!, anode = x.net(guard.ref, 1)!
     const d = SPECS.diode[guard.value.toUpperCase().replace(/\s+/g, '')] as (typeof SPECS.diode)[string] | undefined
     const vs = x.voltOf(gnet)
-    const detail = [`${guard.ref} 캐소드 ${gnet}${vs ? `(${V(vs.v)})` : ''} · 애노드 ${low}: 스위치가 꺼질 때 코일 전류를 돌려보냅니다`,
-      ...(wide ? [`${l.ref} 바로 양단이 아니라 ${gnet}까지 이어진 경로 전체를 감쌉니다`] : [])]
+    const detail = [`${guard.ref} 캐소드 ${gnet}${vs ? `(${V(vs.v)})` : ''} · 애노드 ${anode}: 스위치가 꺼질 때 코일 전류를 돌려보냅니다`,
+      ...(wide ? [`${l.ref} 바로 양단이 아니라 ${anode}–${gnet} 사이 경로 전체를 감쌉니다`] : [])]
     if (!d) { res('pass', `${guard.ref} 방향 맞음 (캐소드 ${gnet} 쪽) · ${guard.value || '값 없음'}의 정격 자료가 없어 전압·전류는 보지 않았습니다`, detail); continue }
     detail.push(`역전압 정격 ${V(d.vrrm.v)}: ${cite(d.vrrm)}`)
     // the diode carries the load current for a moment when the switch opens
