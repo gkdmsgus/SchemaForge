@@ -598,15 +598,16 @@ interface LedString {
   leds: OpPart[]           // anode end first; for a group, the LEDs side by side
   k: number                // LEDs side by side sharing one resistor (1 for a series string)
   rs: OpPart[]             // resistors in series with the string
+  sws: OpPart[]            // closed switches in series with the string
   top: string | null       // the net feeding the anode end
   bot: string | null       // the net at the cathode end
   botNodes: Node[]         // the string's own pins on `bot`
   opposed: string | null   // an LED in the chain facing the other way
 }
 
-/** follow a chain of two-node nets (resistors and same-direction LEDs) away from one LED pin */
+/** follow a chain of two-node nets (resistors, same-direction LEDs, closed switches) away from one LED pin */
 function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: Set<string>) {
-  const leds: OpPart[] = [], rs: OpPart[] = []
+  const leds: OpPart[] = [], rs: OpPart[] = [], sws: OpPart[] = []
   let at: Node = { ref, pin }
   let n = x.net(ref, pin)
   let opposed: string | null = null
@@ -627,9 +628,15 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
       if ((dir === 'up') !== (o.pin === 2)) { opposed = p.ref; break }
       leds.push(p); seen.add(p.ref); at = { ref: p.ref, pin: dir === 'up' ? 1 : 2 }; n = x.net(p.ref, at.pin); continue
     }
+    // a two-pin switch, taken as closed like the power analysis does
+    if (p.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null) {
+      const far = o.pin === 1 ? 2 : 1
+      if (!x.net(p.ref, far)) break
+      sws.push(p); seen.add(p.ref); at = { ref: p.ref, pin: far }; n = x.net(p.ref, far); continue
+    }
     break
   }
-  return { leds, rs, end: n, at, opposed }
+  return { leds, rs, sws, end: n, at, opposed }
 }
 
 function ledStrings(x: Ctx): LedString[] {
@@ -640,17 +647,18 @@ function ledStrings(x: Ctx): LedString[] {
     const seen = new Set([led.ref])
     const up = walkSeries(x, led.ref, 1, 'up', seen), down = walkSeries(x, led.ref, 2, 'down', seen)
     const s: LedString = {
-      leds: [...up.leds.reverse(), led, ...down.leds], k: 1, rs: [...up.rs, ...down.rs],
+      leds: [...up.leds.reverse(), led, ...down.leds], k: 1, rs: [...up.rs, ...down.rs], sws: [...up.sws, ...down.sws],
       top: up.end, bot: down.end, botNodes: [down.at], opposed: up.opposed ?? down.opposed,
     }
     s.leds.forEach(l => taken.add(l.ref))
     if (s.opposed) taken.add(s.opposed)
     all.push(s)
   }
-  // LEDs side by side that share one resistor (on the anode or the cathode side)
+  // LEDs side by side that share one resistor (on the anode or the cathode side). An LED behind a
+  // switch is not one of them: with the switch open the others take its share
   const byLed = new Map<string, LedString>()
   for (const s of all) for (const l of s.leds) byLed.set(l.ref, s)
-  const lone = (s?: LedString) => !!s && s.leds.length === 1 && s.rs.length === 0 && !s.opposed
+  const lone = (s?: LedString) => !!s && s.leds.length === 1 && s.rs.length === 0 && s.sws.length === 0 && !s.opposed
   const merged = new Set<LedString>()
   const groups: LedString[] = []
   for (const s of all) {
@@ -669,7 +677,7 @@ function ledStrings(x: Ctx): LedString[] {
       const members = [s, ...mates.map(m => m!)]
       members.forEach(m => merged.add(m))
       groups.push({
-        leds: members.map(m => m.leds[0]), k: members.length, rs: [r],
+        leds: members.map(m => m.leds[0]), k: members.length, rs: [r], sws: [],
         top: side === 'top' ? rFar : s.top, bot: side === 'bot' ? rFar : s.bot,
         botNodes: side === 'bot' ? [{ ref: r.ref, pin: rNodes[0].pin === 1 ? 2 : 1 }] : members.map(m => m.botNodes[0]),
         opposed: null,
@@ -1089,8 +1097,9 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
   for (const s of strings) {
     if (s.opposed || !s.top || !s.bot) continue          // an unconnected pin: the connection checks report it
     const head = s.leds[0], name = stringName(s)
+    const closed = s.sws.length ? [`${eun(s.sws.map(p => p.ref).join('·'))} 닫힌 것으로 계산합니다 (열리면 ${ga(name)} 꺼짐)`] : []
     const res = (state: OpState, summary: string, detail: string[], cause?: string) =>
-      out.push({ rule: 'op_led', ref: head.ref, state, summary, detail, ...(cause && state !== 'pass' ? { cause } : {}) })
+      out.push({ rule: 'op_led', ref: head.ref, state, summary, detail: [...detail, ...closed], ...(cause && state !== 'pass' ? { cause } : {}) })
     const specs = s.leds.map(l => ledSpec(l.value, x.style))
     const miss = s.leds.find((_, i) => !specs[i])
     if (miss) {

@@ -766,6 +766,22 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   add('MOSFET drain: 60 V supply ≥ VDSS 60 V is an error, 48 V passes', is(v60, 'op_switch', 'error', 'Q1', /60 V ≥ VDSS 60 V/) && is(v48, 'op_switch', 'pass', 'Q1'),
     `${show(v60, 'op_switch')} | ${show(v48, 'op_switch')}`)
 
+  // battery → resistor → switch → LED: the series walk goes on through the closed switch
+  const swLed = run(circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['SW1', 'SW', 'ON'], ['D1', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'R1.1'], ['N1', 'R1.2', 'SW1.1'], ['N2', 'SW1.2', 'D1.1'], ['GND', 'BT1.2', 'D1.2']]))
+  // and on to a transistor below the LED
+  const swQ = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['RL', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', 'ON'], ['RB', 'R', '4.7k'], ['Q1', 'Q_NPN', '2N3904']],
+    [['+5V', 'J1.1', 'RL.1', 'RB.1'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'SW1.1'], ['COL', 'SW1.2', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']]))
+  // two LEDs on one resistor, one of them behind a switch: with the switch open the other takes all 31 mA, so no shared-current pass
+  const swPair = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
+    [['+5V', 'J1.1', 'R1.1'], ['X', 'R1.2', 'D1.1', 'D2.1'], ['Z', 'D2.2', 'SW1.1'], ['GND', 'J1.2', 'D1.2', 'SW1.2']]))
+  const ledOf = (rs: OpResult[]) => rs.filter(r => r.rule === 'op_led')
+  add('LED behind a closed switch: judged through it, the switch shown, a switched LED not shared',
+    is(swLed, 'op_led', 'pass', 'D1', /10\.4 mA/) && !!pick(swLed, 'op_led', 'D1')?.detail.some(d => /SW1.*닫힌 것으로/.test(d)) &&
+    is(swQ, 'op_led', 'pass', 'D1') && is(swQ, 'op_switch', 'pass', 'Q1') &&
+    !ledOf(swPair).some(r => r.state === 'pass' || /D1·D2|D2·D1|나눠/.test(r.summary)),
+    `${show(swLed, 'op_led')} | ${show(swQ, 'op_led')} | ${show(swQ, 'op_switch')} | ${ledOf(swPair).map(r => `${r.state}: ${r.summary}`).join(' / ')}`)
+
   for (const [name, ok, info] of F) check(`O16 ${name}`, ok, info)
 }
 
