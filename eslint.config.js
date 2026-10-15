@@ -6,7 +6,8 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   // server/index.ts is the API entry point; index.js is an unused pre-TypeScript copy.
-  globalIgnores(['dist', 'server/index.js']),
+  // .claude holds local tool settings and session worktrees (whole copies of the repository).
+  globalIgnores(['dist', 'server/index.js', '.claude']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
