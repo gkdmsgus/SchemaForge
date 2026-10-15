@@ -1340,12 +1340,14 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
       out.push({ rule: 'op_switch', ref: sw.q.ref, state, summary, detail, ...(cause ? { cause } : {}) })
     const lim = sw.bjt ? sw.bjt.ic_max : sw.mos!.id_max
     const notes = sw.note ? [sw.note] : []
-    // the collector must stand the supply once the switch turns off, whatever the load current
+    // the collector/drain must stand the supply once the switch turns off, whatever the load current
     const supplies = sw.loads.filter(l => l.supply).map(l => l.supply!.hi)
     const vmax = supplies.length ? Math.max(...supplies) : 0
-    if (sw.bjt && atLeast(vmax, sw.bjt.vceo.v)) {
-      const [a, b] = two(vmax, sw.bjt.vceo.v, V)
-      res('error', `${sw.q.ref} 전원 ${a} ≥ VCEO ${b}: 꺼졌을 때 컬렉터 전압을 견디지 못합니다`, [...notes, `부하 쪽 전원 최대 ${V(vmax)}`, cite(sw.bjt.vceo)])
+    const vlim = sw.bjt ? sw.bjt.vceo : sw.mos!.vds_max
+    if (atLeast(vmax, vlim.v)) {
+      const [a, b] = two(vmax, vlim.v, V)
+      res('error', `${sw.q.ref} 전원 ${a} ≥ ${sw.bjt ? 'VCEO' : 'VDSS'} ${b}: 꺼졌을 때 ${sw.bjt ? '컬렉터' : '드레인'} 전압을 견디지 못합니다`,
+        [...notes, `부하 쪽 전원 최대 ${V(vmax)}`, cite(vlim)])
       continue
     }
     const clamp = sw.loads.find(l => l.kind === 'clamp')

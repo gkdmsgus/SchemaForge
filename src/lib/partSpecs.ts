@@ -23,6 +23,8 @@ export interface MosSpec {
   rds_on: Num
   id_max: Num
   vgs_max: Num
+  /** drain-source voltage it stands while off */
+  vds_max: Num
 }
 export interface TimerSpec {
   vcc_min: Num; vcc_max: Num; voh_drop: Num; formula_src: string
@@ -109,6 +111,7 @@ export const SPECS = {
       rds_on: { v: 7.5, src: `${ON_NDS}, 2N7002 행: RDS(on) 최대 7.5 Ω @ VGS 5 V, ID 50 mA` },
       id_max: { v: 0.115, src: `${ON_NDS}, 2N7002: 드레인 연속 전류 115 mA` },
       vgs_max: { v: 20, src: `${ON_NDS}, 절대 최대 정격: 게이트-소스 전압 연속 ±20 V` },
+      vds_max: { v: 60, src: `${ON_NDS}, 절대 최대 정격: 드레인-소스 전압 VDSS 60 V (2N7000·2N7002·NDS7002A 공통)` },
     },
     NDS7002A: {
       vgs_th_max: { v: 2.5, src: `${ON_NDS}, NDS7002A 행: VGS(th) 최대 2.5 V @ ID 250 µA` },
@@ -116,6 +119,7 @@ export const SPECS = {
       rds_on: { v: 3, src: `${ON_NDS}, NDS7002A 행: RDS(on) 최대 3 Ω @ VGS 5 V, ID 50 mA` },
       id_max: { v: 0.28, src: `${ON_NDS}, NDS7002A: 드레인 연속 전류 280 mA` },
       vgs_max: { v: 20, src: `${ON_NDS}, 절대 최대 정격: 게이트-소스 전압 연속 ±20 V` },
+      vds_max: { v: 60, src: `${ON_NDS}, 절대 최대 정격: 드레인-소스 전압 VDSS 60 V (2N7000·2N7002·NDS7002A 공통)` },
     },
     '2N7000': {
       vgs_th_max: { v: 3.0, src: `${ON_NDS}, 2N7000 행: VGS(th) 최대 3 V @ ID 1 mA` },
@@ -123,6 +127,7 @@ export const SPECS = {
       rds_on: { v: 5.3, src: `${ON_NDS}, 2N7000 행: RDS(on) 최대 5.3 Ω @ VGS 4.5 V, ID 75 mA` },
       id_max: { v: 0.2, src: `${ON_NDS}, 2N7000: 드레인 연속 전류 200 mA` },
       vgs_max: { v: 20, src: `${ON_NDS}, 절대 최대 정격: 게이트-소스 전압 연속 ±20 V` },
+      vds_max: { v: 60, src: `${ON_NDS}, 절대 최대 정격: 드레인-소스 전압 VDSS 60 V (2N7000·2N7002·NDS7002A 공통)` },
     },
   } as Record<string, MosSpec>,
 
