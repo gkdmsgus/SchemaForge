@@ -1681,18 +1681,34 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
   run('op_reg', () => checkRegs(x, reversedCaps))
   // say where a knock-on failure comes from, since the headline counts it under its cause
   const label = Object.fromEntries(OP_RULES) as Record<OpRule, string>
+  for (const r of out) if (r.state === 'pass') delete r.cause
   for (const r of out) {
-    if (r.state === 'pass') { delete r.cause; continue }
-    const root = r.cause ? out.find(o => o !== r && o.ref === r.cause && o.state === 'error' && !o.cause) : undefined
-    if (root) r.detail = [`${root.ref} ${label[root.rule]} 문제에서 이어진 결과라 머리글 개수에는 한 번만 셉니다`, ...r.detail]
+    const root = rootOf(r, out)
+    if (root !== r) r.detail = [`${root.ref} ${label[root.rule]} 문제에서 이어진 결과라 머리글 개수에는 한 번만 셉니다`, ...r.detail]
   }
   return out
+}
+
+/**
+ * The fault a result traces back to: its cause's error, that one's cause, and so on. Results that
+ * name each other as cause are one fault, counted at the first of them in the list.
+ */
+function rootOf(r: OpResult, results: OpResult[]): OpResult {
+  const chain = [r]
+  for (let cur = r; cur.cause;) {
+    const errs = results.filter(o => o !== cur && o.ref === cur.cause && o.state === 'error')
+    const next = errs.find(o => !o.cause) ?? errs[0]
+    if (!next) return cur
+    if (chain.includes(next)) return chain.slice(chain.indexOf(next)).reduce((a, o) => (results.indexOf(o) < results.indexOf(a) ? o : a))
+    chain.push(next); cur = next
+  }
+  return chain[chain.length - 1]
 }
 
 /** Worst state and a one-line headline; a fault and the failures it causes count once. */
 export function operatingHeadline(results: OpResult[]): { state: OpState; text: string } {
   if (!results.length) return { state: 'pass', text: '검사할 부품 없음' }
-  const isRoot = (r: OpResult) => !r.cause || !results.some(o => o !== r && o.ref === r.cause && o.state === 'error' && !o.cause)
+  const isRoot = (r: OpResult) => rootOf(r, results) === r
   const n = (s: OpState) => results.filter(r => r.state === s && isRoot(r)).length
   const any = (s: OpState) => results.some(r => r.state === s)
   const unk = n('unknown') ? ` · 판단 불가 ${n('unknown')}` : ''

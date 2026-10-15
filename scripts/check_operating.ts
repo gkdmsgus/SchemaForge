@@ -725,6 +725,15 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   add('coil sunk by a 555 output: not an error, same in either pin order', is(sk1, 'op_relay', 'unknown', 'K1') && is(sk2, 'op_relay', 'unknown', 'K1') &&
     is(sk1, 'op_flyback', 'pass', 'K1'), `${show(sk1, 'op_relay')} | ${show(sk2, 'op_relay')}`)
 
+  // one fault counts once even two steps away: battery backwards → LED reversed → transistor gets no base current
+  const revChain = run(circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', '1k']],
+    [['GND', 'BT1.1', 'Q1.3'], ['+9V', 'BT1.2', 'R1.1', 'RB.1'], ['LA', 'R1.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1']]))
+  const err = (rule: OpRule, ref: string, cause?: string): OpResult => ({ rule, ref, state: 'error', summary: ref, detail: ['x'], ...(cause ? { cause } : {}) })
+  const loop = operatingHeadline([err('op_led', 'D1', 'Q1'), err('op_drive', 'Q1', 'D1'), err('op_power', 'BT1')]).text
+  const deep = operatingHeadline([err('op_power', 'BT1'), err('op_led', 'D1', 'BT1'), err('op_drive', 'Q1', 'D1'), err('op_switch', 'Q2', 'Q1')]).text
+  add('cause chains and loops count once', head(revChain) === '동작 안 됨 1' && loop === '동작 안 됨 2' && deep === '동작 안 됨 1' &&
+    !!pick(revChain, 'op_drive')?.detail.some(d => /BT1 전원 전압 문제에서 이어진/.test(d)), `${head(revChain)} | ${loop} | ${deep} | ${pick(revChain, 'op_drive')?.detail[0]}`)
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
