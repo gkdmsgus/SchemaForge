@@ -315,11 +315,13 @@ function analyzePower(b: Base) {
   const volts = new Map<string, Volt>()
   const blocked = new Map<string, { why: string; cause: string }>()
   const hasConn = (n: string) => b.on(n).some(nd => { const p = b.part(nd.ref); return !!p && /^Conn_/.test(p.part) && !isMotor(p) })
+  const regOut = (n: string) => b.of('REG').some(r => b.net(r.ref, 2) === n)
   /** a named rail fed from outside (a connector) or by a regulator: a closed switch does not change it */
-  const ownRail = (n: string) => named.has(n) && (hasConn(n) || b.of('REG').some(r => b.net(r.ref, 2) === n))
+  const ownRail = (n: string) => named.has(n) && (hasConn(n) || regOut(n))
 
   interface Edge { ref: string; plus: string; minus: string; dv: number }
   const edges: Edge[] = []
+  const loose: { ref: string; nets: string[] }[] = []
   for (const bt of b.of('Battery')) {
     const plus = b.net(bt.ref, 1), minus = b.net(bt.ref, 2), v = parseVolts(bt.value)
     if (!plus || !minus || v == null) continue
@@ -328,16 +330,20 @@ function analyzePower(b: Base) {
       continue
     }
     // a terminal whose net holds nothing else: no current can flow, nothing it feeds has a voltage
-    const loose = ([[plus, '+'], [minus, '−']] as const).filter(([n]) => b.on(n).length <= 1)
-    if (loose.length) {
-      for (const [n, which] of loose) {
+    const open = ([[plus, '+'], [minus, '−']] as const).filter(([n]) => b.on(n).length <= 1)
+    if (open.length) {
+      for (const [n, which] of open) {
         issue(bt.ref, `${bt.ref} ${which} 단자(${n})가 아무 데도 연결되어 있지 않아 전류가 흐르지 않습니다`,
           [`넷 ${n}에는 ${bt.ref} ${which} 단자 하나뿐입니다`, '배터리 − 단자는 GND 넷에, + 단자는 전원 넷에 연결해야 합니다'])
       }
-      for (const n of [plus, minus]) blocked.set(n, { why: `${bt.ref} 단자가 떠 있어 이 넷에 전원이 없습니다`, cause: bt.ref })
+      loose.push({ ref: bt.ref, nets: [plus, minus] })
       continue
     }
     edges.push({ ref: bt.ref, plus, minus, dv: v })
+  }
+  // the loose battery's nets lose their voltage, unless a connector, a regulator or another battery feeds them
+  for (const l of loose) for (const n of l.nets) {
+    if (!hasConn(n) && !regOut(n) && !edges.some(e => e.plus === n || e.minus === n)) blocked.set(n, { why: `${l.ref} 단자가 떠 있어 이 넷에 전원이 없습니다`, cause: l.ref })
   }
   interface Step { to: string; dv: number; label: string; sw?: string }
   const adj = new Map<string, Step[]>()
@@ -433,48 +439,69 @@ function analyzePower(b: Base) {
     }
   }
 
-  // regulator outputs (a few passes so one regulator can feed another)
-  const nameOf = (n: string) => (blocked.has(n) ? undefined : named.get(n))
-  for (let pass = 0; pass < 3; pass++) for (const r of b.of('REG')) {
-    const reg = regSpec(r.value)
-    const g = b.net(r.ref, 1), o = b.net(r.ref, 2), i = b.net(r.ref, 3)
-    if (!reg || !g || !o || o === g || o === i || volts.has(o) || blocked.has(o) || hasConn(o)) continue
-    const gv = volts.get(g)?.v ?? nameOf(g)
-    if (gv == null) continue
-    const vin = i ? volts.get(i)?.v ?? nameOf(i) : undefined
-    if (vin != null && reg.spec && vin - gv - reg.vout < reg.spec.dropout_max.v - 1e-9) {
-      blocked.set(o, { why: `${r.ref} 입력이 모자라 출력 ${V(reg.vout)}를 보장하지 못합니다 (레귤레이터 전압 참고)`, cause: r.ref })
-      continue
-    }
-    const v = gv + reg.vout
-    volts.set(o, { v, why: `${r.ref} ${reg.name} 출력${vin == null ? ' (입력 전압을 몰라 입력이 충분하다고 가정)' : ''}`, src: 'reg' })
-    const want = named.get(o)
-    if (want != null && Math.abs(want - v) > 0.05) {
-      issue(r.ref, `넷 이름 ${eun(o)} ${V(want)}인데 ${r.ref}(${reg.name}) 출력은 ${V(v)}입니다`, ['계산에는 레귤레이터 출력 전압을 씁니다'])
-    }
-  }
-
-  // names for everything else. A GND-named net that no battery reaches and nothing else feeds
-  // (no connector) cannot return current to a battery whose group has no GND of its own.
-  const orphans = [...named.keys()].filter(n => !volts.has(n) && !blocked.has(n))
-  const deadGround = noGround.length ? orphans.filter(n => named.get(n) === 0 && !hasConn(n)) : []
+  // A GND-named net that no battery reaches and nothing else feeds (no connector) cannot return
+  // current to a battery whose group has no GND of its own.
+  const deadGround = noGround.length ? [...named.keys()].filter(n => named.get(n) === 0 && !volts.has(n) && !blocked.has(n) && !hasConn(n)) : []
   if (deadGround.length) {
     issue(noGround[0], `${noGround.join('·')} 배터리가 ${deadGround.slice(0, 3).join(', ')} 넷과 이어져 있지 않습니다: 이 넷에 연결된 부품은 배터리로 전류가 돌아가지 못합니다`,
       ['배터리 − 단자를 GND 넷에 연결해야 합니다', `${deadGround.join(', ')}의 전압은 이름만 보고 정하지 않습니다`])
     for (const n of deadGround) blocked.set(n, { why: `${ga(n)} 배터리와 이어져 있지 않습니다`, cause: noGround[0] })
   }
-  for (const n of orphans) if (!blocked.has(n)) volts.set(n, { v: named.get(n)!, why: `넷 이름 ${n}`, src: 'name' })
 
-  // a closed switch carries a known voltage on to a net nothing else fixes
-  for (let changed = true, guard = 0; changed && guard < 50; guard++) {
-    changed = false
-    for (const sw of switches) for (const [from, to] of [[sw.a, sw.z], [sw.z, sw.a]]) {
-      const v = volts.get(from)
-      if (!v || volts.has(to) || blocked.has(to) || ownRail(to)) continue
-      volts.set(to, { ...v, why: `${v.why} → ${sw.ref} 닫힘`, viaSwitch: v.viaSwitch ?? sw.ref })
+  // Regulator outputs and closed switches, until nothing changes: one regulator can feed another,
+  // and a switch can carry a named rail to a regulator's input. A regulator whose input is not
+  // known yet waits until nothing else can give it one, and only then is assumed to have enough.
+  const nameOf = (n: string) => (blocked.has(n) ? undefined : named.get(n))
+  /** a net's voltage so far, or its name (not a regulator output's name: the regulator decides that one) */
+  const known = (n: string): Volt | undefined => {
+    const nv = nameOf(n)
+    return volts.get(n) ?? (nv != null && !regOut(n) ? { v: nv, why: `넷 이름 ${n}`, src: 'name' } : undefined)
+  }
+  /** no power here: a loose battery terminal, a ground no battery reaches, a regulator short of input */
+  const dead = (n: string | null) => (n && !volts.has(n) ? blocked.get(n) : undefined)
+  const carry = (from: (n: string) => Volt | undefined) => {
+    let changed = false
+    for (const sw of switches) for (const [a, z] of [[sw.a, sw.z], [sw.z, sw.a]]) {
+      const v = from(a)
+      if (!v || volts.has(z) || blocked.has(z) || named.has(z) || ownRail(z)) continue
+      volts.set(z, { ...v, why: `${v.why} → ${sw.ref} 닫힘`, viaSwitch: v.viaSwitch ?? sw.ref })
       changed = true
     }
+    return changed
   }
+  for (let guard = 0, assume = false; guard < 50; guard++) {
+    let changed = carry(known)
+    for (const r of b.of('REG')) {
+      const reg = regSpec(r.value)
+      const g = b.net(r.ref, 1), o = b.net(r.ref, 2), i = b.net(r.ref, 3)
+      if (!reg || !g || !o || o === g || o === i || volts.has(o) || blocked.has(o) || hasConn(o)) continue
+      const off = dead(g) ?? dead(i)
+      if (off) { blocked.set(o, { why: `${r.ref} ${dead(g) ? 'GND' : '입력'} 쪽: ${off.why}`, cause: off.cause }); changed = true; continue }
+      const gv = volts.get(g)?.v ?? nameOf(g)
+      if (gv == null) continue
+      const vin = i ? volts.get(i)?.v ?? nameOf(i) : undefined
+      if (vin == null && !assume) continue
+      changed = true
+      if (vin != null && reg.spec && vin - gv - reg.vout < reg.spec.dropout_max.v - 1e-9) {
+        blocked.set(o, { why: `${r.ref} 입력이 모자라 출력 ${V(reg.vout)}를 보장하지 못합니다 (레귤레이터 전압 참고)`, cause: r.ref })
+        continue
+      }
+      const v = gv + reg.vout
+      volts.set(o, { v, why: `${r.ref} ${reg.name} 출력${vin == null ? ' (입력 전압을 몰라 입력이 충분하다고 가정)' : ''}`, src: 'reg' })
+      const want = named.get(o)
+      if (want != null && Math.abs(want - v) > 0.05) {
+        issue(r.ref, `넷 이름 ${eun(o)} ${V(want)}인데 ${r.ref}(${reg.name}) 출력은 ${V(v)}입니다`, ['계산에는 레귤레이터 출력 전압을 씁니다'])
+      }
+    }
+    if (changed) assume = false
+    else if (assume) break
+    else assume = true
+  }
+
+  // names for everything else, and closed switches next to them
+  for (const n of named.keys()) if (!volts.has(n) && !blocked.has(n)) volts.set(n, { v: named.get(n)!, why: `넷 이름 ${n}`, src: 'name' })
+  for (let guard = 0; guard < 50 && carry(n => volts.get(n)); guard++) { /* until nothing changes */ }
+  for (const n of volts.keys()) blocked.delete(n)
   return { volts, issues, blocked }
 }
 
