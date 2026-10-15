@@ -883,6 +883,42 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   check('O14 every verdict above: basis, no NaN, distinct numbers', problems.length === 0 && ALL.length > 100, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
 }
 
+// O17. cause attribution left open after review round 3 ────────────────────────
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+
+  // K2 (12 V coil on 5 V) never pulls in, and its contact is what feeds K1's coil: K1 cannot pass
+  const chain = circuit(
+    [['J1', 'Conn_01x03', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['D1', 'D', '1N4148'], ['K2', 'Relay', '12V'],
+      ['K1', 'Relay', '5V'], ['D2', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'K2.1', 'D1.2', 'K2.3'], ['IN', 'J1.2', 'R1.1'], ['GND', 'J1.3', 'Q1.3', 'K1.2', 'D2.1'], ['BASE', 'R1.2', 'Q1.1'],
+      ['COIL2', 'Q1.2', 'K2.2', 'D1.1'], ['K1TOP', 'K2.4', 'K1.1', 'D2.2']])
+  const ch = run(chain)
+  const k1 = pick(ch, 'op_relay', 'K1')
+  add('relay fed through a relay that never pulls in: not passed, caused by K2, counted once',
+    is(ch, 'op_relay', 'error', 'K2', /붙지 않습니다/) && !!k1 && k1.state !== 'pass' && k1.cause === 'K2' && head(ch).startsWith('동작 안 됨 1') && !/판단 불가/.test(head(ch)),
+    `${show(ch, 'op_relay', 'K2')} | ${k1 ? `${k1.state}/${k1.cause}: ${k1.summary}` : '(none)'} | ${head(ch)}`)
+  // the same with K2 pulling in (5 V coil): K1 is judged through the closed contact and passes
+  const chainOk = variant(chain, setValue('K2', '5V'))
+  add('relay fed through a working relay still passes', is(run(chainOk), 'op_relay', 'pass', 'K1'), show(run(chainOk), 'op_relay', 'K1'))
+
+  // a 10 Ω LED on a transistor whose base resistor also goes nowhere: two faults, not one
+  const hot = (rb: string, baseFrom: string) => circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '10'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904'], ['RB', 'R', rb]],
+    [['VCC', 'BT1.1', 'R1.1', ...(baseFrom === 'VCC' ? ['RB.1'] : [])], ['LA', 'R1.2', 'D1.1'], ['LK', 'D1.2', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'BT1.2', 'Q1.3'],
+      ...(baseFrom === 'VCC' ? [] : [[baseFrom, 'RB.1'] as [string, string]])])
+  const open = run(hot('1k', 'NOWHERE')), weak = run(hot('1M', 'VCC')), ok = run(hot('1k', 'VCC'))
+  add('LED fault does not hide an independent base fault; a drive short only because of the LED follows the LED',
+    !pick(open, 'op_drive', 'Q1')?.cause && head(open) === '동작 안 됨 2' &&
+    // with the real 610 mA the gain table says nothing (판단 불가), but even a 30 mA LED would need more base current: its own fault
+    !pick(weak, 'op_drive', 'Q1')?.cause && head(weak) === '동작 안 됨 1 · 판단 불가 1' &&
+    head(ok) === '동작 안 됨 1',
+    `${show(open, 'op_drive')} [${head(open)}] | ${show(weak, 'op_drive')} [${head(weak)}] | ${head(ok)}`)
+
+  for (const [name, ok2, info] of F) check(`O17 ${name}`, ok2, info)
+}
+
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
 function parseNetlist(text: string): NetGraph {
   const components: NetGraph['components'] = []
