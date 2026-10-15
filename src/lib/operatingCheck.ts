@@ -281,7 +281,8 @@ interface Level { lo: number; hi: number; why: string; cause?: string }
 
 const natural = (a: string, z: string) => a.localeCompare(z, 'en', { numeric: true })
 
-function baseIndex(c: OpCircuit) {
+/** `open`: relays whose COM–NO contact is taken as open (a coil is judged before its own contact closes) */
+function baseIndex(c: OpCircuit, open: ReadonlySet<string> = new Set()) {
   // sorted, so that no answer depends on the order the parts and pins happen to be listed in
   const parts = [...c.parts].sort((a, z) => natural(a.ref, z.ref))
   const byNet = new Map<string, Node[]>()
@@ -296,6 +297,8 @@ function baseIndex(c: OpCircuit) {
   const nets = [...byNet.keys()].sort(natural)
   return {
     style: c.style,
+    /** a relay's COM–NO contact taken as closed (the circuit judged switched on, the relay pulled in) */
+    closedRelay: (ref: string) => !open.has(ref),
     parts: () => parts,
     nets: () => nets,
     net,
@@ -367,7 +370,7 @@ function analyzePower(b: Base) {
     link(e.plus, { to: e.minus, dv: -e.dv, label: `−${e.ref} ${V(e.dv)}` })
   }
   const switches: { ref: string; a: string; z: string; label: string }[] = []
-  for (const sw of b.parts().filter(p => p.part === 'SW' || p.part === 'Relay')) {
+  for (const sw of b.parts().filter(p => p.part === 'SW' || (p.part === 'Relay' && b.closedRelay(p.ref)))) {
     const [pa, pz] = sw.part === 'Relay' ? [3, 4] : [1, 2]
     const a = b.net(sw.ref, pa), z = b.net(sw.ref, pz), label = `${b.contact(sw.ref)} 닫힘`
     if (!a || !z || a === z) continue
@@ -532,8 +535,8 @@ function analyzePower(b: Base) {
   return { volts, issues, blocked }
 }
 
-function context(c: OpCircuit) {
-  const b = baseIndex(c)
+function context(c: OpCircuit, open?: ReadonlySet<string>) {
+  const b = baseIndex(c, open)
   const power = analyzePower(b)
   const voltOf = (n: string | null): Volt | null => (n ? power.volts.get(n) ?? null : null)
   const isGnd = (n: string | null) => voltOf(n)?.v === 0
@@ -640,7 +643,7 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
     }
     // a two-pin switch or a relay's COM–NO contact, taken as closed like the power analysis does
     const sw = p.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null
-    if (sw || (p.part === 'Relay' && (o.pin === 3 || o.pin === 4))) {
+    if (sw || (p.part === 'Relay' && (o.pin === 3 || o.pin === 4) && x.closedRelay(p.ref))) {
       const far = sw ? (o.pin === 1 ? 2 : 1) : o.pin === 3 ? 4 : 3
       if (!x.net(p.ref, far)) break
       sws.push(p); seen.add(p.ref); at = { ref: p.ref, pin: far }; n = x.net(p.ref, far); continue
@@ -1665,10 +1668,34 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
       detail: ['게이트와 드레인처럼 핀을 구분할 수 없으면 계산이 틀립니다. PCB를 다시 생성하면 검사합니다',
         `핀 대응이 없는 부품: ${c.missing.slice(0, 12).join(', ')}${c.missing.length > 12 ? ' …' : ''}`] }]
   }
+  const out = collect(c, new Set())
+  // A relay pulls in before its contact closes, so its coil is judged with its own COM–NO open:
+  // a coil fed through its own contact never starts, a latch contact does not help the first pull-in
+  for (const k of c.parts.filter(p => p.part === 'Relay').map(p => p.ref)) {
+    const a = c.pins.get(pinKey(k, 3)), z = c.pins.get(pinKey(k, 4))
+    const i = out.findIndex(r => r.rule === 'op_relay' && r.ref === k)
+    if (!a || !z || a === z || i < 0) continue
+    const before = collect(c, new Set([k])).find(r => r.rule === 'op_relay' && r.ref === k)
+    if (before && (before.state !== out[i].state || before.summary !== out[i].summary)) {
+      out[i] = { ...before, detail: [`${k} 코일은 자기 접점(COM–NO)이 붙기 전 상태로 계산합니다`, ...before.detail] }
+    }
+  }
+  // say where a knock-on failure comes from, since the headline counts it under its cause
+  const label = Object.fromEntries(OP_RULES) as Record<OpRule, string>
+  for (const r of out) if (r.state === 'pass') delete r.cause
+  for (const r of out) {
+    const root = rootOf(r, out)
+    if (root !== r) r.detail = [`${root.ref} ${label[root.rule]} 문제에서 이어진 결과라 머리글 개수에는 한 번만 셉니다`, ...r.detail]
+  }
+  return out
+}
+
+/** the checks with the relays in `open` taken as not pulled in */
+function collect(c: OpCircuit, open: ReadonlySet<string>): OpResult[] {
   const out: OpResult[] = []
   let x: Ctx, strings: LedString[], switches: Switch[]
   try {
-    x = context(c)
+    x = context(c, open)
     strings = ledStrings(x)
     switches = analyzeSwitches(x, strings)
   } catch (e) {
@@ -1713,13 +1740,6 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
   run('op_rpower', () => checkResistorPower(x, switches, heats))
   run('op_555', () => check555(x, reversedCaps))
   run('op_reg', () => checkRegs(x, reversedCaps))
-  // say where a knock-on failure comes from, since the headline counts it under its cause
-  const label = Object.fromEntries(OP_RULES) as Record<OpRule, string>
-  for (const r of out) if (r.state === 'pass') delete r.cause
-  for (const r of out) {
-    const root = rootOf(r, out)
-    if (root !== r) r.detail = [`${root.ref} ${label[root.rule]} 문제에서 이어진 결과라 머리글 개수에는 한 번만 셉니다`, ...r.detail]
-  }
   return out
 }
 
