@@ -86,6 +86,16 @@ export const SPECS = {
       if_max: { v: 0.3, src: 'Vishay 1N4148: 순방향 연속 전류 300 mA' },
       vrrm: { v: 100, src: 'Vishay 1N4148: 반복 최대 역전압 VRRM 100 V' },
     },
+    '1N4007': {
+      vf_max: { v: 1.1, src: 'Vishay 1N4001~1N4007 (문서 88503, 2020-04-29 개정): VF 최대 1.1 V @ IF 1.0 A' },
+      if_max: { v: 1.0, src: 'Vishay 1N4001~1N4007 (88503): 평균 정류 전류 IF(AV) 1.0 A' },
+      vrrm: { v: 1000, src: 'Vishay 1N4001~1N4007 (88503): 1N4007 반복 최대 역전압 VRRM 1000 V' },
+    },
+    '1N5819': {
+      vf_max: { v: 0.6, src: 'onsemi 1N5817/D (1N5817~1N5819): 1N5819 VF 최대 0.6 V @ iF 1.0 A' },
+      if_max: { v: 1.0, src: 'onsemi 1N5817/D: 평균 정류 전류 IO 1.0 A' },
+      vrrm: { v: 40, src: 'onsemi 1N5817/D: 1N5819 반복 최대 역전압 VRRM 40 V' },
+    },
   } as Record<string, DiodeSpec>,
 
   bjt: {

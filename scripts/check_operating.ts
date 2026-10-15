@@ -326,7 +326,7 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const across = circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '10']], [['VCC', 'BT1.1', 'R1.1'], ['GND', 'BT1.2', 'R1.2']])
   const ra10 = run(variant(timer, setValue('R1', '10')))
   add('resistor heat: collector load, across a battery, 555 RA', is(run(coll), 'op_rpower', 'error', 'RC', /144 mW/) && is(run(across), 'op_rpower', 'error', 'R1', /8\.1 W/) &&
-    is(ra10, 'op_rpower', 'error', 'R1', /8\.1 W/), `${show(run(coll), 'op_rpower', 'RC')} | ${show(run(across), 'op_rpower')} | ${show(ra10, 'op_rpower', 'R1')}`)
+    is(ra10, 'op_rpower', 'error', 'R1', /4\.05 W/), `${show(run(coll), 'op_rpower', 'RC')} | ${show(run(across), 'op_rpower')} | ${show(ra10, 'op_rpower', 'R1')}`)
 
   // a switch or relay contact that shorts the supply
   const swShort = circuit([['BT1', 'Battery', '9V'], ['SW1', 'SW', 'PUSH']], [['VCC', 'BT1.1', 'SW1.1'], ['GND', 'BT1.2', 'SW1.2']])
@@ -871,16 +871,21 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
 }
 
 // O14. every verdict from the circuits above: basis shown, no NaN, no "same < same" ────
-{
+/** what is wrong with these verdicts as text: NaN, no basis, "x < x", a pass carrying a cause line */
+function verdictProblems(rs: OpResult[]): string[] {
   const problems: string[] = []
   const strict = /(?<![\d.\-−])([\d.]+ (?:mA|µA|V|mW|W|Ω|kΩ|MΩ)) [<>] (?:최대 |최소 |필요 |허용 |정격 |동작 전압 )?\1(?![\d.])/
-  for (const r of ALL) {
+  for (const r of rs) {
     const text = `${r.summary} ${r.detail.join(' ')}`
     if (/NaN|undefined|Infinity/.test(text)) problems.push(`${r.rule}/${r.ref}: ${r.summary}`)
     if (r.state !== 'unknown' && r.detail.length === 0) problems.push(`${r.rule}/${r.ref} no basis: ${r.summary}`)
     if (strict.test(r.summary)) problems.push(`${r.rule}/${r.ref} reads equal: ${r.summary}`)
     if (r.state === 'pass' && r.detail.some(d => /이어진 결과/.test(d))) problems.push(`${r.rule}/${r.ref} pass with a cause line`)
   }
+  return problems
+}
+{
+  const problems = verdictProblems(ALL)
   check('O14 every verdict above: basis, no NaN, distinct numbers', problems.length === 0 && ALL.length > 100, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
 }
 
@@ -1222,6 +1227,153 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     `${pick(coilNotDiode, 'op_led', 'L1')?.detail[0]} | ${pick(offTransistor, 'op_led', 'L1')?.detail[0]} | ${head(ruleOnly)}`)
 
   for (const [name, ok, info] of F) check(`O19 ${name}`, ok, info)
+}
+
+// O20. review round 6: series diodes, rated values, 555 outputs, motors, diodes across supplies ──
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const notPass = (rs: OpResult[], rule: OpRule, ref: string) => !!pick(rs, rule, ref) && pick(rs, rule, ref)!.state !== 'pass'
+  const cz = (refs: Comp[], nets: [string, ...string[]][], style: 'smd' | 'tht' | null = null) => run(circuit(refs, nets), style)
+  const PWR3: Comp = ['J1', 'Conn_01x03', 'PWR']
+  const drop = (pin: string) => (c: NetGraph) => { const [ref, p] = pin.split('.'); for (const n of c.nets) n.nodes = n.nodes.filter(nd => !(nd.ref === ref && String(nd.pin) === p)) }
+  const rename = (from: string, to: string) => (c: NetGraph) => { c.nets.find(n => n.name === from)!.name = to }
+
+  // [0] an LED the 555 output sinks: (9 − 0 − 1.9) / 680 = 10.4 mA at most; a 10 Ω one is its own fault
+  const sinkLed = (r4: string) => cz([['BT1', 'Battery', '9V'], ['U1', 'NE555', 'NE555'], ['RA', 'R', '10k'], ['RB', 'R', '68k'], ['CT', 'CP', '10uF'], ['C2', 'C', '10nF'],
+    ['R3', 'R', '680'], ['D1', 'LED', 'RED'], ['R4', 'R', r4], ['D2', 'LED', 'RED']],
+  [['+9V', 'BT1.1', 'U1.8', 'U1.4', 'RA.1', 'R4.1'], ['GND', 'BT1.2', 'U1.1', 'CT.2', 'C2.2', 'D1.2'], ['DISCH', 'RA.2', 'U1.7', 'RB.1'], ['THRES', 'RB.2', 'U1.6', 'U1.2', 'CT.1'],
+    ['CTRL', 'U1.5', 'C2.1'], ['OUT', 'U1.3', 'R3.1', 'D2.2'], ['LA', 'R3.2', 'D1.1'], ['LB', 'R4.2', 'D2.1']])
+  const sink = sinkLed('680'), sink10 = sinkLed('10')
+  add('[0] LED sunk by a 555 output: passes at 10.4 mA without naming a transistor; 10 Ω is an error',
+    is(sink, 'op_led', 'pass', 'D2', /10\.4 mA/) && !/트랜지스터/.test(pick(sink, 'op_led', 'D2')?.summary ?? '트랜지스터') && head(sink) === '동작 검사 통과' &&
+    is(sink10, 'op_led', 'error', 'D2') && notPass(sink10, 'op_rpower', 'R4'),
+    `${show(sink, 'op_led', 'D2')} | ${head(sink)} | ${show(sink10, 'op_led', 'D2')} | ${show(sink10, 'op_rpower', 'R4')}`)
+
+  // [1] RA 1k at 12 V carries VCC only while discharging: 144 mW × 10/21 = 68.6 mW on average
+  const ra1k = cz([['J1', 'Conn_01x02', 'PWR'], ['U1', 'NE555', 'NE555'], ['RA', 'R', '1k'], ['RB', 'R', '10k'], ['CT', 'C', '100nF'], ['C2', 'C', '10nF'], ['R3', 'R', '1k'], ['D1', 'LED', 'RED']],
+    [['+12V', 'J1.1', 'U1.8', 'U1.4', 'RA.1'], ['GND', 'J1.2', 'U1.1', 'CT.2', 'C2.2', 'D1.2'], ['DISCH', 'RA.2', 'U1.7', 'RB.1'], ['THRES', 'RB.2', 'U1.6', 'U1.2', 'CT.1'],
+      ['CTRL', 'U1.5', 'C2.1'], ['OUT', 'U1.3', 'R3.1'], ['LA', 'R3.2', 'D1.1']])
+  add('[1] 555 RA heat averaged over the discharge share', is(ra1k, 'op_rpower', 'pass', 'RA', /68\.6 mW/) && head(ra1k) === '동작 검사 통과', `${show(ra1k, 'op_rpower', 'RA')} | ${head(ra1k)}`)
+
+  // [2] a MOSFET gate on an NPN collector draws no current: the NPN's load is RPU alone (1.2 mA)
+  const shifter = cz([['J1', 'Conn_01x03', 'PWR'], ['RB', 'R', '10k'], ['Q1', 'Q_NPN', '2N3904'], ['RPU', 'R', '10k'], ['Q2', 'Q_NMOS', '2N7000'], ['M1', 'Conn_01x02', 'MOTOR 150mA'], ['D1', 'D', '1N4148']],
+    [['+12V', 'J1.1', 'RPU.1', 'M1.1', 'D1.2'], ['IN', 'J1.2', 'RB.1'], ['GND', 'J1.3', 'Q1.3', 'Q2.3'], ['B', 'RB.2', 'Q1.1'], ['G', 'RPU.2', 'Q1.2', 'Q2.1'], ['MOT', 'M1.2', 'Q2.2', 'D1.1']])
+  add('[2] MOSFET gate is not a load', is(shifter, 'op_drive', 'pass', 'Q1') && is(shifter, 'op_switch', 'pass', 'Q1', /1\.2 mA/), `${show(shifter, 'op_drive', 'Q1')} | ${show(shifter, 'op_switch', 'Q1')}`)
+
+  // [3] a series diode passes its supply on, less up to its forward drop (1N4007 1.1 V, 1N5819 0.6 V)
+  const diodeReg = cz([['J1', 'Conn_01x02', 'PWR'], ['D1', 'D', '1N4007'], ['U1', 'REG', 'LM7805'], ['C1', 'CP', '100uF'], ['C2', 'CP', '10uF'], ['R1', 'R', '330'], ['D2', 'LED', 'RED']],
+    [['+12V', 'J1.1', 'D1.1'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2', 'D2.2'], ['VIN', 'D1.2', 'U1.3', 'C1.1'], ['+5V', 'U1.2', 'C2.1', 'R1.1'], ['LA', 'R1.2', 'D2.1']])
+  const diodeLed = cz([['BT1', 'Battery', '9V'], ['D1', 'D', '1N5819'], ['R1', 'R', '680'], ['D2', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'D1.1'], ['VCC', 'D1.2', 'R1.1'], ['LA', 'R1.2', 'D2.1'], ['GND', 'BT1.2', 'D2.2']])
+  const diode555 = cz([['BT1', 'Battery', '9V'], ['D1', 'D', '1N4007'], ['U1', 'NE555', 'NE555'], ['R1', 'R', '10k'], ['R2', 'R', '68k'], ['C1', 'CP', '10uF'], ['C2', 'C', '10nF'],
+    ['C3', 'C', '100nF'], ['R3', 'R', '680'], ['D2', 'LED', 'RED']],
+  [['VBAT', 'BT1.1', 'D1.1'], ['VCC', 'D1.2', 'U1.8', 'U1.4', 'R1.1', 'C3.1'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'C2.2', 'C3.2', 'D2.2'], ['DISCH', 'R1.2', 'U1.7', 'R2.1'],
+    ['THRES', 'R2.2', 'U1.6', 'U1.2', 'C1.1'], ['CTRL', 'U1.5', 'C2.1'], ['OUT', 'U1.3', 'R3.1'], ['LED_A', 'R3.2', 'D2.1']])
+  // 8 V through a 1N4007 into a 7805: as low as 8 − 1.1 = 6.9 V, 1.9 V over the output, under the 2.5 V dropout
+  const lowReg = cz([['BT1', 'Battery', '8V'], ['D1', 'D', '1N4007'], ['U1', 'REG', 'LM7805'], ['C2', 'CP', '10uF']],
+    [['VBAT', 'BT1.1', 'D1.1'], ['GND', 'BT1.2', 'U1.1', 'C2.2'], ['VIN', 'D1.2', 'U1.3'], ['+5V', 'U1.2', 'C2.1']])
+  add('[3] series diode: regulator, LED and 555 behind it are judged (with its drop)',
+    is(diodeReg, 'op_reg', 'pass', 'U1') && !!pick(diodeReg, 'op_cap', 'C1') && is(diodeLed, 'op_led', 'pass', 'D2', /8\.97~10\.4 mA/) &&
+    is(diode555, 'op_555', 'pass', 'U1', /0\.986 Hz/) && is(diode555, 'op_led', 'pass', 'D2') && is(lowReg, 'op_reg', 'error', 'U1'),
+    `${show(diodeReg, 'op_reg')} | ${show(diodeLed, 'op_led', 'D2')} | ${show(diode555, 'op_555')} | ${show(lowReg, 'op_reg')}`)
+
+  // [4] values with a rating after them
+  const ams = cz([['J1', 'Conn_01x02', 'USB'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '10uF 16V'], ['C2', 'CP', '22uF 16V']],
+    [['+5V', 'J1.1', 'U1.3', 'C1.1'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2'], ['+3V3', 'U1.2', 'C2.1']])
+  const ct25 = run(variant(timer, setValue('C1', '10uF 25V'))), r14 = run(variant(led, setValue('R1', '680 1/4W')))
+  const parsed = near(parseFarads('22uF 16V'), 22e-6) && near(parseFarads('100uF/25V'), 100e-6) && near(parseFarads('10uF,25V'), 10e-6) && near(parseFarads('22µF 10V'), 22e-6) &&
+    parseOhms('680 1/4W') === 680 && parseOhms('470 ohm 1/4W') === 470 && parseOhms('330R 0.25W') === 330 && parseOhms('1k 1%') === 1000 &&
+    parseFarads('104') === null && parseOhms('1/4W') === null && parseOhms('4k7') === 4700
+  add('[4] "22uF 16V", "680 1/4W", "1k 1%" are read', parsed && is(ams, 'op_reg', 'pass', 'U1') && is(ct25, 'op_555', 'pass', 'U1', /0\.986 Hz/) && is(r14, 'op_led', 'pass', 'D1', /10\.4 mA/),
+    `parsed=${parsed} | ${show(ams, 'op_reg')} | ${show(ct25, 'op_555')} | ${show(r14, 'op_led')}`)
+
+  // [5] a battery terminal in no net at all is as loose as one alone on its net
+  const noMinus = run(variant(timer, drop('BT1.2')))
+  add('[5] battery − terminal in no net: error, the 555 and its LED are not passed',
+    is(noMinus, 'op_power', 'error', 'BT1', /어디에도/) && notPass(noMinus, 'op_555', 'U1') && notPass(noMinus, 'op_led', 'D1'),
+    `${show(noMinus, 'op_power')} | ${show(noMinus, 'op_555')} | ${show(noMinus, 'op_led')}`)
+
+  // [6] a battery value with no voltage in it: its rails are not taken from their names
+  const unread = ['2xAA', 'CR2032', '18650'].map(v => run(variant(timer, c => { rename('VCC', '+5V')(c); setValue('BT1', v)(c) })))
+  add('[6] battery value not read: op_power unknown, 555 not passed',
+    unread.every(rs => is(rs, 'op_power', 'unknown', 'BT1') && notPass(rs, 'op_555', 'U1') && head(rs) !== '동작 검사 통과'),
+    unread.map(rs => `${show(rs, 'op_power')} · ${show(rs, 'op_555')}`).join(' | '))
+
+  // [7] a battery whose + is on GND makes the motor supply −9 V: the MOSFET conducts backwards
+  const negSupply = cz([['BT1', 'Battery', '9V'], ['J1', 'Conn_01x02', 'P5'], ['J2', 'Conn_01x02', 'MOTOR 0.1A'], ['D1', 'D', '1N4148'], ['Q1', 'Q_NMOS', '2N7000'], ['R1', 'R', '100'], ['R2', 'R', '10k']],
+    [['GND', 'BT1.1', 'J1.2', 'Q1.3', 'R2.2'], ['VBAT', 'BT1.2', 'J2.1', 'D1.2'], ['MOT', 'J2.2', 'D1.1', 'Q1.2'], ['+5V', 'J1.1', 'R1.1'], ['G', 'R1.2', 'R2.1', 'Q1.1']])
+  add('[7] load supply below 0 V: switch error', is(negSupply, 'op_switch', 'error', 'Q1', /0 V보다 낮아/) && head(negSupply) !== '동작 검사 통과', `${show(negSupply, 'op_switch')} | ${head(negSupply)}`)
+
+  // [8] a flyback diode to +5V while the coil sits on +12V keeps conducting
+  const lowK = cz([PWR3, ['J2', 'Conn_01x02', 'SIG'], ['K1', 'Relay', '12V'], ['Q1', 'Q_NPN', '2N3904'], ['R1', 'R', '1k'], ['D1', 'D', '1N4148']],
+    [['+12V', 'J1.1', 'K1.1'], ['+5V', 'J1.2', 'D1.2'], ['GND', 'J1.3', 'Q1.3', 'J2.2'], ['COIL_LOW', 'K1.2', 'Q1.2', 'D1.1'], ['B', 'R1.2', 'Q1.1'], ['SIG', 'J2.1', 'R1.1']])
+  const lowM = cz([PWR3, ['J2', 'Conn_01x02', 'MOTOR 0.1A'], ['Q1', 'Q_NMOS', '2N7000'], ['RG', 'R', '100'], ['D1', 'D', '1N4148']],
+    [['+12V', 'J1.1', 'J2.1'], ['+5V', 'J1.2', 'RG.1', 'D1.2'], ['GND', 'J1.3', 'Q1.3'], ['MOT', 'J2.2', 'Q1.2', 'D1.1'], ['G', 'RG.2', 'Q1.1']])
+  add('[8] flyback diode to a lower rail: error', is(lowK, 'op_flyback', 'error', 'K1', /낮은/) && is(lowM, 'op_flyback', 'error', 'J2', /낮은/),
+    `${show(lowK, 'op_flyback')} | ${show(lowM, 'op_flyback')}`)
+
+  // [9] a diode forward across the supply; put the right way round it is not a short
+  const fwdM = cz([['J1', 'Conn_01x02', 'PWR'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148']], [['+12V', 'J1.1', 'J2.1', 'D1.1'], ['GND', 'J1.2', 'J2.2', 'D1.2']])
+  const shunt = (a: string, k: string) => cz([['BT1', 'Battery', '9V'], ['D1', 'D', '1N4007'], ['R1', 'R', '680'], ['D2', 'LED', 'RED']],
+    [['+9V', 'BT1.1', `D1.${a}`, 'R1.1'], ['GND', 'BT1.2', `D1.${k}`, 'D2.2'], ['LA', 'R1.2', 'D2.1']])
+  const fwdS = shunt('1', '2'), okS = shunt('2', '1')
+  add('[9] diode forward across a supply: op_short error; reverse shunt passes',
+    is(fwdM, 'op_short', 'error', 'D1') && is(fwdS, 'op_short', 'error', 'D1') && !pick(okS, 'op_short') && head(okS) === '동작 검사 통과',
+    `${show(fwdM, 'op_short')} | ${show(fwdS, 'op_short')} | ${head(okS)}`)
+
+  // [10] a series diode put in backwards leaves the named rail behind it without a supply
+  const backD = cz([['BT1', 'Battery', '9V'], ['D1', 'D', '1N4007'], ['R1', 'R', '680'], ['D2', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'D1.2'], ['+9V', 'D1.1', 'R1.1'], ['GND', 'BT1.2', 'D2.2'], ['LA', 'R1.2', 'D2.1']])
+  const fwdD = cz([['BT1', 'Battery', '9V'], ['D1', 'D', '1N4007'], ['R1', 'R', '680'], ['D2', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'D1.1'], ['+9V', 'D1.2', 'R1.1'], ['GND', 'BT1.2', 'D2.2'], ['LA', 'R1.2', 'D2.1']])
+  add('[10] reversed series diode: LED not passed, caused by D1; the right way round passes',
+    notPass(backD, 'op_led', 'D2') && pick(backD, 'op_led', 'D2')?.cause === 'D1' && is(fwdD, 'op_led', 'pass', 'D2', /8\.24~10\.4 mA/),
+    `${show(backD, 'op_led')} cause=${pick(backD, 'op_led', 'D2')?.cause} | ${show(fwdD, 'op_led')}`)
+
+  // [11] a motor between GND and the drain has no supply side
+  const gndMotor = cz([PWR3, ['J2', 'Conn_01x02', 'MOTOR 0.1A'], ['D1', 'D', '1N4148'], ['Q1', 'Q_NMOS', '2N7000'], ['RG', 'R', '100']],
+    [['+12V', 'J1.1'], ['+5V', 'J1.2', 'RG.1'], ['GND', 'J1.3', 'J2.1', 'D1.2', 'Q1.3'], ['MOT', 'J2.2', 'D1.1', 'Q1.2'], ['G', 'RG.2', 'Q1.1']])
+  add('[11] motor with no supply side: error', is(gndMotor, 'op_switch', 'error', 'Q1', /전원 쪽이 없습니다/), show(gndMotor, 'op_switch'))
+
+  // [12] the rated voltage written on a motor: 3 V on 12 V is an error; 5 V 100 mA on 12 V draws about 240 mA
+  const rated = (v: string) => cz([PWR3, ['J2', 'Conn_01x02', v], ['D1', 'D', '1N4148'], ['Q1', 'Q_NMOS', '2N7000'], ['RG', 'R', '100']],
+    [['+12V', 'J1.1', 'J2.1', 'D1.2'], ['+5V', 'J1.2', 'RG.1'], ['GND', 'J1.3', 'Q1.3'], ['MOT', 'J2.2', 'D1.1', 'Q1.2'], ['G', 'RG.2', 'Q1.1']])
+  const m3 = rated('MOTOR 3V 0.1A'), m5 = rated('MOTOR 5V 100mA'), m12 = rated('MOTOR 12V 0.1A')
+  add('[12] motor over its rated voltage: error (and the switch current scaled); at its rating it passes',
+    is(m3, 'op_switch', 'error', 'Q1', /정격 3 V/) && is(m5, 'op_switch', 'error', 'Q1', /정격 5 V/) && !!pick(m5, 'op_switch', 'Q1')?.detail.some(d => /240 mA/.test(d)) &&
+    is(m12, 'op_switch', 'pass', 'Q1'),
+    `${show(m3, 'op_switch')} | ${pick(m5, 'op_switch', 'Q1')?.detail.join(' / ')} | ${show(m12, 'op_switch')}`)
+
+  // [13] the 555 output tied to GND or VCC
+  const outGnd = run(variant(timer, movePin('U1.3', 'GND'))), outVcc = run(variant(timer, movePin('U1.3', 'VCC')))
+  add('[13] 555 OUT on a rail: error', is(outGnd, 'op_555', 'error', 'U1', /OUT/) && is(outVcc, 'op_555', 'error', 'U1', /OUT/), `${show(outGnd, 'op_555')} | ${show(outVcc, 'op_555')}`)
+
+  // [14] 470 Ω from the 555 output to GND: 9² / 470 = 172 mW; 10 Ω in series with a 0.2 A motor: 0.4 W
+  const outR = run(variant(timer, c => { setValue('R3', '470')(c); movePin('R3.2', 'GND')(c) }))
+  const motorR = cz([PWR3, ['RS', 'R', '10'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148'], ['Q1', 'Q_NMOS', 'NDS7002A'], ['RG', 'R', '100']],
+    [['+12V', 'J1.1', 'RS.1'], ['+5V', 'J1.2', 'RG.1'], ['GND', 'J1.3', 'Q1.3'], ['MT', 'RS.2', 'J2.1', 'D1.2'], ['MOT', 'J2.2', 'D1.1', 'Q1.2'], ['G', 'RG.2', 'Q1.1']])
+  add('[14] resistor heat at a 555 output and in series with a motor', is(outR, 'op_rpower', 'error', 'R3', /172 mW/) && is(motorR, 'op_rpower', 'error', 'RS', /400 mW/),
+    `${show(outR, 'op_rpower', 'R3')} | ${show(motorR, 'op_rpower', 'RS')}`)
+
+  // [15] three red LEDs (2.0 V each, smd) on exactly 6 V with no resistor: no NaN, same verdict as 6.1 V
+  const bare = (v: string) => cz([['BT1', 'Battery', v], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['D3', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904'], ['R1', 'R', '1k']],
+    [['VBAT', 'BT1.1', 'D1.1', 'R1.1'], ['N1', 'D1.2', 'D2.1'], ['N2', 'D2.2', 'D3.1'], ['C', 'D3.2', 'Q1.2'], ['B', 'R1.2', 'Q1.1'], ['GND', 'BT1.2', 'Q1.3']], 'smd')
+  const exact = bare('4x1.5V'), over = bare('6.1V')
+  add('[15] LED string exactly at the supply: no NaN, same drive verdict as just above it',
+    verdictProblems(exact).length === 0 && pick(exact, 'op_drive', 'Q1')?.state === pick(over, 'op_drive', 'Q1')?.state && pick(exact, 'op_drive', 'Q1')?.cause === 'D1',
+    `${show(exact, 'op_drive')} cause=${pick(exact, 'op_drive', 'Q1')?.cause} | ${show(over, 'op_drive')} | ${verdictProblems(exact).slice(0, 2).join(' / ')}`)
+
+  // the two diodes added to the parts table
+  add('1N4007 and 1N5819 in the parts table', SPECS.diode['1N4007']?.vf_max.v === 1.1 && SPECS.diode['1N4007']?.vrrm.v === 1000 && SPECS.diode['1N5819']?.vf_max.v === 0.6 && SPECS.diode['1N5819']?.vrrm.v === 40,
+    `${SPECS.diode['1N4007']?.vf_max.src} | ${SPECS.diode['1N5819']?.vf_max.src}`)
+
+  // every verdict since O14 reads as text too
+  const problems = verdictProblems(ALL)
+  add('every verdict from O15 on: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+
+  for (const [name, ok, info] of F) check(`O20 ${name}`, ok, info)
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
