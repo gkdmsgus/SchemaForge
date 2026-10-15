@@ -650,6 +650,29 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const orderDiff = [twoButtons, chain, railSwitch, relay, timer, motor].filter(g => full(run(g)) !== full(run(reversed(g))))
   add('listing order does not change the answer', orderDiff.length === 0, orderDiff.map(g => `${full(run(g))} ≠ ${full(run(reversed(g)))}`).join(' || ').slice(0, 600))
 
+  // a motor on a connector is a load, not a supply: the 12 V behind the switch reaches the rail named +9V
+  const motorRail = circuit([['BT1', 'Battery', '12V'], ['SW1', 'SW', 'POWER'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148'], ['R1', 'R', '330'], ['D2', 'LED', 'RED']],
+    [['VBAT', 'BT1.1', 'SW1.1'], ['+9V', 'SW1.2', 'J2.1', 'D1.2', 'R1.1'], ['GND', 'BT1.2', 'J2.2', 'D1.1', 'D2.2'], ['LA', 'R1.2', 'D2.1']])
+  const mr = run(motorRail)
+  add('motor connector does not make a rail: wrong name, not a short; LED at 12 V', !pick(mr, 'op_short') && is(mr, 'op_power', 'error', undefined, /\+9V/) &&
+    is(mr, 'op_led', 'error', 'D2', /30\.6 mA/), `${all(mr)} | ${show(mr, 'op_led')}`)
+
+  // flyback with a mechanical switch: the diode's cathode goes to the higher end, wherever the switch is
+  const hiSw = (d: [string, string]) => circuit([['BT1', 'Battery', '9V'], ['SW1', 'SW', 'POWER'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148']],
+    [['+9V', 'BT1.1', 'SW1.1'], ['X', 'SW1.2', 'J2.1', d[1]], ['GND', 'BT1.2', 'J2.2', d[0]]])
+  const good = run(hiSw(['D1.1', 'D1.2'])), shorting = run(hiSw(['D1.2', 'D1.1']))
+  const negSw = run(circuit([['BT1', 'Battery', '9V'], ['SW1', 'SW', 'POWER'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148']],
+    [['VBAT', 'BT1.1', 'J2.1', 'D1.2'], ['BN', 'BT1.2', 'SW1.1'], ['GND', 'SW1.2', 'J2.2', 'D1.1']]))
+  const hiRelay = run(circuit([['J1', 'Conn_01x02', 'PWR'], ['SW1', 'SW', 'BTN'], ['K1', 'Relay', '5V'], ['D1', 'D', '1N4148']],
+    [['+5V', 'J1.1', 'SW1.1'], ['KH', 'SW1.2', 'K1.1', 'D1.2'], ['GND', 'J1.2', 'K1.2', 'D1.1']]))
+  // a diode across the battery does not protect a motor behind a high-side switch
+  const acrossBat = run(circuit([['BT1', 'Battery', '9V'], ['SW1', 'SW', 'POWER'], ['J2', 'Conn_01x02', 'MOTOR 0.2A'], ['D1', 'D', '1N4148']],
+    [['+9V', 'BT1.1', 'SW1.1', 'D1.2'], ['X', 'SW1.2', 'J2.1'], ['GND', 'BT1.2', 'J2.2', 'D1.1']]))
+  add('flyback: high-side and battery-side switches, cathode to the higher end',
+    is(good, 'op_flyback', 'pass', 'J2') && is(shorting, 'op_flyback', 'error', 'J2', /거꾸로/) && is(negSw, 'op_flyback', 'pass', 'J2') &&
+    is(hiRelay, 'op_flyback', 'pass', 'K1') && is(acrossBat, 'op_flyback', 'warn', 'J2', /보호 다이오드가 없습니다/),
+    [good, shorting, negSw, hiRelay, acrossBat].map(r => show(r, 'op_flyback')).join(' | '))
+
   for (const [name, ok, info] of F) check(`O15 ${name}`, ok, info)
 }
 
