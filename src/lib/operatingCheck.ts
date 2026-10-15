@@ -613,12 +613,21 @@ const rangeV = (l: { lo: number; hi: number }) => span(l.lo, l.hi, x => V(x))
 interface LedString {
   leds: OpPart[]           // anode end first; for a group, the LEDs side by side
   k: number                // LEDs side by side sharing one resistor (1 for a series string)
+  kMin: number             // the fewest of them lit at once: the ones behind a switch can be off
   rs: OpPart[]             // resistors in series with the string
   sws: OpPart[]            // closed switches in series with the string
   top: string | null       // the net feeding the anode end
   bot: string | null       // the net at the cathode end
   botNodes: Node[]         // the string's own pins on `bot`
   opposed: string | null   // an LED in the chain facing the other way
+}
+
+/** the pin across a two-pin switch or a relay's COM–NO contact taken as closed (as the power analysis does), or null */
+function contactFar(x: Ctx, o: Node): number | null {
+  const p = x.part(o.ref)
+  if (p?.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null) return o.pin === 1 ? 2 : 1
+  if (p?.part === 'Relay' && (o.pin === 3 || o.pin === 4) && x.closedRelay(p.ref)) return o.pin === 3 ? 4 : 3
+  return null
 }
 
 /** follow a chain of two-node nets (resistors, same-direction LEDs, closed switches) away from one LED pin */
@@ -633,7 +642,9 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
     const v = x.voltOf(n)
     const button = !!v?.pulled && dir === 'up'
     const others = x.on(n).filter(o => !(o.ref === at.ref && o.pin === at.pin) && !(button && x.part(o.ref)?.part === 'SW'))
-    if ((v && !(button && others.length === 1 && others[0].ref === v.pulled!.ref)) || x.blockedWhy(n) || x.timerOut(n)) break
+    // a net whose voltage only came through the closed switch beside it: the chain goes on through the switch
+    const carried = !!v?.viaSwitch && !button && others.length === 1 && contactFar(x, others[0]) != null
+    if (!carried && ((v && !(button && others.length === 1 && others[0].ref === v.pulled!.ref)) || x.blockedWhy(n) || x.timerOut(n))) break
     if (others.length !== 1) break
     const o = others[0], p = x.part(o.ref)
     if (!p || seen.has(p.ref)) break
@@ -644,10 +655,8 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
       if ((dir === 'up') !== (o.pin === 2)) { opposed = p.ref; break }
       leds.push(p); seen.add(p.ref); at = { ref: p.ref, pin: dir === 'up' ? 1 : 2 }; n = x.net(p.ref, at.pin); continue
     }
-    // a two-pin switch or a relay's COM–NO contact, taken as closed like the power analysis does
-    const sw = p.part === 'SW' && (o.pin === 1 || o.pin === 2) && x.net(p.ref, 3) == null
-    if (sw || (p.part === 'Relay' && (o.pin === 3 || o.pin === 4) && x.closedRelay(p.ref))) {
-      const far = sw ? (o.pin === 1 ? 2 : 1) : o.pin === 3 ? 4 : 3
+    const far = contactFar(x, o)
+    if (far != null) {
       if (!x.net(p.ref, far)) break
       sws.push(p); seen.add(p.ref); at = { ref: p.ref, pin: far }; n = x.net(p.ref, far); continue
     }
@@ -659,42 +668,44 @@ function walkSeries(x: Ctx, ref: string, pin: number, dir: 'up' | 'down', seen: 
 function ledStrings(x: Ctx): LedString[] {
   const all: LedString[] = []
   const taken = new Set<string>()
+  /** each string by the pin it reaches its top / bottom net with */
+  const ends = { top: new Map<string, LedString>(), bot: new Map<string, LedString>() }
   for (const led of x.of('LED')) {
     if (taken.has(led.ref)) continue
     const seen = new Set([led.ref])
     const up = walkSeries(x, led.ref, 1, 'up', seen), down = walkSeries(x, led.ref, 2, 'down', seen)
     const s: LedString = {
-      leds: [...up.leds.reverse(), led, ...down.leds], k: 1, rs: [...up.rs, ...down.rs], sws: [...up.sws, ...down.sws],
+      leds: [...up.leds.reverse(), led, ...down.leds], k: 1, kMin: 1, rs: [...up.rs, ...down.rs], sws: [...up.sws, ...down.sws],
       top: up.end, bot: down.end, botNodes: [down.at], opposed: up.opposed ?? down.opposed,
     }
     s.leds.forEach(l => taken.add(l.ref))
     if (s.opposed) taken.add(s.opposed)
     all.push(s)
+    ends.top.set(pinKey(up.at.ref, up.at.pin), s)
+    ends.bot.set(pinKey(down.at.ref, down.at.pin), s)
   }
-  // LEDs side by side that share one resistor (on the anode or the cathode side). An LED behind a
-  // switch is not one of them: with the switch open the others take its share
-  const byLed = new Map<string, LedString>()
-  for (const s of all) for (const l of s.leds) byLed.set(l.ref, s)
-  const lone = (s?: LedString) => !!s && s.leds.length === 1 && s.rs.length === 0 && s.sws.length === 0 && !s.opposed
+  // LEDs side by side that share one resistor (on the anode or the cathode side). One behind a
+  // switch joins them, but can be off: then the others take its share
+  const single = (s?: LedString) => !!s && s.leds.length === 1 && s.rs.length === 0 && !s.opposed
   const merged = new Set<LedString>()
   const groups: LedString[] = []
   for (const s of all) {
-    if (merged.has(s) || !lone(s)) continue
+    if (merged.has(s) || !single(s)) continue
     for (const side of ['top', 'bot'] as const) {
       const end = side === 'top' ? s.top : s.bot, far = side === 'top' ? s.bot : s.top
       if (!end || !far) continue
-      const pinHere = side === 'top' ? 1 : 2
-      const others = x.on(end).filter(o => !(o.ref === s.leds[0].ref && o.pin === pinHere))
+      // every other pin on the shared net: one resistor, and the near ends of other single LEDs
+      const others = x.on(end).filter(o => ends[side].get(pinKey(o.ref, o.pin)) !== s)
       const rNodes = others.filter(o => x.part(o.ref)?.part === 'R')
-      const lNodes = others.filter(o => x.part(o.ref)?.part === 'LED' && o.pin === pinHere)
-      if (rNodes.length !== 1 || !lNodes.length || rNodes.length + lNodes.length !== others.length) continue
-      const mates = lNodes.map(o => byLed.get(o.ref))
-      if (!mates.every(m => lone(m) && !merged.has(m!) && (side === 'top' ? m!.bot : m!.top) === far)) continue
+      const mates = others.filter(o => !rNodes.includes(o)).map(o => ends[side].get(pinKey(o.ref, o.pin)))
+      if (rNodes.length !== 1 || !mates.length) continue
+      if (!mates.every(m => single(m) && m !== s && !merged.has(m!) && (side === 'top' ? m!.bot : m!.top) === far)) continue
       const r = x.part(rNodes[0].ref)!, rFar = x.other(r.ref, rNodes[0].pin)
       const members = [s, ...mates.map(m => m!)]
       members.forEach(m => merged.add(m))
       groups.push({
-        leds: members.map(m => m.leds[0]), k: members.length, rs: [r], sws: [],
+        leds: members.map(m => m.leds[0]), k: members.length, kMin: Math.max(1, members.filter(m => !m.sws.length).length),
+        rs: [r], sws: members.flatMap(m => m.sws),
         top: side === 'top' ? rFar : s.top, bot: side === 'bot' ? rFar : s.bot,
         botNodes: side === 'bot' ? [{ ref: r.ref, pin: rNodes[0].pin === 1 ? 2 : 1 }] : members.map(m => m.botNodes[0]),
         opposed: null,
@@ -1114,7 +1125,10 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
   for (const s of strings) {
     if (s.opposed || !s.top || !s.bot) continue          // an unconnected pin: the connection checks report it
     const head = s.leds[0], name = stringName(s)
-    const closed = s.sws.length ? [`${eun(s.sws.map(p => x.contact(p.ref)).join('·'))} 닫힌 것으로 계산합니다 (열리면 ${ga(name)} 꺼짐)`] : []
+    const swNames = s.sws.map(p => x.contact(p.ref)).join('·')
+    const closed = !s.sws.length ? []
+      : s.k > 1 ? [`${ga(swNames)} 열리면 그 LED가 꺼지고 나머지가 ${s.rs[0].ref} 전류를 나눠 받습니다: 가장 큰 전류는 LED ${s.kMin}개만 켜졌을 때, 가장 작은 전류는 ${s.k}개 모두 켜졌을 때로 계산합니다`]
+        : [`${eun(swNames)} 닫힌 것으로 계산합니다 (열리면 ${ga(name)} 꺼짐)`]
     const res = (state: OpState, summary: string, detail: string[], cause?: string) =>
       out.push({ rule: 'op_led', ref: head.ref, state, summary, detail: [...detail, ...closed], ...(cause && state !== 'pass' ? { cause } : {}) })
     const specs = s.leds.map(l => ledSpec(l.value, x.style))
@@ -1158,7 +1172,7 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     if (!top) {
       const ns = x.noSource(s.top)
       if (ns) { res('unknown', `${name}: ${ns.why}`, [`위쪽 넷 ${s.top}`], ns.cause); continue }
-      const cands = SIGNAL_CANDIDATES.map(v => `${V(v)}면 ${mA(Math.max(0, (v - bot.lo - vf) / R.ohms / s.k))}`)
+      const cands = SIGNAL_CANDIDATES.map(v => `${V(v)}면 ${mA(Math.max(0, (v - bot.lo - vf) / R.ohms / s.kMin))}`)
       res('unknown', `${name}: 걸리는 전압을 몰라 판단할 수 없습니다 (${cands.join(', ')})`,
         [`넷 ${s.top}의 전압이 이름·배터리·레귤레이터로 정해지지 않습니다`], bot.cause)
       continue
@@ -1168,11 +1182,13 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     const iHi = (top.hi - bot.lo - vf) / R.ohms
     // "does it light" uses the largest forward voltage the datasheet allows
     const iLo = bot.hi == null ? null : (top.lo - bot.hi - vfMax) / R.ohms
-    const perHi = iHi / s.k, perLo = iLo == null ? null : iLo / s.k
+    // the most per LED with the fewest lit (switched ones open), the least with all of them lit
+    const perHi = iHi / s.kMin, perLo = iLo == null ? null : iLo / s.k
+    const share = span(Math.max(0, iHi / s.k), Math.max(0, perHi), a => mA(a))
     const detail = [
       `가장 큰 전류 I = (${V(top.hi)} − ${V(bot.lo)} − Vf ${V(vf)}) ÷ ${ohm(R.ohms)} = ${mA(Math.max(0, iHi))}`,
       ...(iLo != null ? [`가장 작은 전류 I = (${V(top.lo)} − ${V(bot.hi!)} − Vf 최대 ${V(vfMax)}) ÷ ${ohm(R.ohms)} = ${mA(Math.max(0, iLo))}`] : []),
-      ...(s.k > 1 ? [`LED ${s.k}개가 ${s.rs[0].ref} 하나를 나눠 써 LED당 평균 ${mA(Math.max(0, perHi))}입니다. LED마다 Vf가 달라 한쪽으로 몰릴 수 있습니다`] : []),
+      ...(s.k > 1 ? [`LED ${s.k}개가 ${s.rs[0].ref} 하나를 나눠 써 LED당 평균 ${share}입니다. LED마다 Vf가 달라 한쪽으로 몰릴 수 있습니다`] : []),
       `위쪽: ${top.why}`, `아래쪽: ${bot.why}`,
       `Vf 일반 ${V(spec.vf_typ.v)}${many}: ${cite(spec.vf_typ)} (최소값은 자료에 없어 가장 큰 전류에도 일반값 사용)`,
       `Vf 최대 ${V(spec.vf_max.v)}${many}: ${cite(spec.vf_max)}`,
@@ -1188,7 +1204,7 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     } else if (atLeast(perHi, NEAR * ifMax)) {
       state = 'warn'; summary = `${name} 전류 최대 ${two(perHi, ifMax, mA)[0]}로 한계 ${mA(ifMax)}에 가깝습니다 (${rText})`
     } else if (s.k > 1) {
-      state = 'warn'; summary = `${ga(name)} ${s.rs[0].ref} 하나를 나눠 씁니다: 합계 ${mA(iHi)}, LED당 평균 ${mA(perHi)} (전류가 고르지 않을 수 있음)`
+      state = 'warn'; summary = `${ga(name)} ${s.rs[0].ref} 하나를 나눠 씁니다: 합계 ${mA(iHi)}, LED당 평균 ${share} (전류가 고르지 않을 수 있음)`
     } else if (perLo != null && perLo < 0.001) {
       state = 'warn'; summary = `${name} 전류가 가장 작은 경우 ${mA(perLo)}로 너무 어둡습니다 (${rText})`
     } else {

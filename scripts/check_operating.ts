@@ -774,14 +774,14 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   // and on to a transistor below the LED
   const swQ = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['RL', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', 'ON'], ['RB', 'R', '4.7k'], ['Q1', 'Q_NPN', '2N3904']],
     [['+5V', 'J1.1', 'RL.1', 'RB.1'], ['LA', 'RL.2', 'D1.1'], ['LK', 'D1.2', 'SW1.1'], ['COL', 'SW1.2', 'Q1.2'], ['BASE', 'RB.2', 'Q1.1'], ['GND', 'J1.2', 'Q1.3']]))
-  // two LEDs on one resistor, one of them behind a switch: with the switch open the other takes all 31 mA, so no shared-current pass
+  // two LEDs on one resistor, one of them behind a switch: with the switch open the other takes all 31 mA, never the 15.5 mA average
   const swPair = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '100'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
     [['+5V', 'J1.1', 'R1.1'], ['X', 'R1.2', 'D1.1', 'D2.1'], ['Z', 'D2.2', 'SW1.1'], ['GND', 'J1.2', 'D1.2', 'SW1.2']]))
   const ledOf = (rs: OpResult[]) => rs.filter(r => r.rule === 'op_led')
-  add('LED behind a closed switch: judged through it, the switch shown, a switched LED not shared',
+  add('LED behind a closed switch: judged through it, the switch shown, the share of a switched LED counted on the others',
     is(swLed, 'op_led', 'pass', 'D1', /10\.4 mA/) && !!pick(swLed, 'op_led', 'D1')?.detail.some(d => /SW1.*닫힌 것으로/.test(d)) &&
     is(swQ, 'op_led', 'pass', 'D1') && is(swQ, 'op_switch', 'pass', 'Q1') &&
-    !ledOf(swPair).some(r => r.state === 'pass' || /D1·D2|D2·D1|나눠/.test(r.summary)),
+    is(swPair, 'op_led', 'error', 'D1', /31 mA ≥ 최대 30 mA/) && !ledOf(swPair).some(r => r.state === 'pass'),
     `${show(swLed, 'op_led')} | ${show(swQ, 'op_led')} | ${show(swQ, 'op_switch')} | ${ledOf(swPair).map(r => `${r.state}: ${r.summary}`).join(' / ')}`)
 
   // relay contacts (COM–NO) carry a voltage like a closed switch: a motor on them needs a flyback diode too
@@ -830,6 +830,23 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   add('contact onto a regulator output is a short; a relay with an open coil pin does not close',
     is(regContact, 'op_short', 'error', 'K1', /V33\(3\.3 V\)/) && is(openCoilRelay, 'op_flyback', 'unknown', 'J2'),
     `${show(regContact, 'op_short')} | ${show(regContact, 'op_cap')} | ${show(openCoilRelay, 'op_flyback', 'J2')}`)
+
+  // two LEDs on one resistor, one behind a switch: a shared resistor, not "no resistor". The most current is
+  // with the switch open (the other LED alone: 31 mA through 100 Ω), the least with both on
+  const swShare = (r: string, swSide: 'cathode' | 'anode') => circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', r], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
+    swSide === 'cathode'
+      ? [['+5V', 'J1.1', 'D1.1', 'D2.1'], ['Y', 'D1.2', 'SW1.1'], ['X', 'SW1.2', 'D2.2', 'R1.1'], ['GND', 'J1.2', 'R1.2']]
+      : [['+5V', 'J1.1', 'R1.1'], ['X', 'R1.2', 'SW1.1', 'D2.1'], ['Y', 'SW1.2', 'D1.1'], ['GND', 'J1.2', 'D1.2', 'D2.2']])
+  const ss330 = op(swShare('330', 'cathode')), ss100 = op(swShare('100', 'cathode')), ssAnode = op(swShare('100', 'anode'))
+  // the switch on the far side of the LED (the power analysis carries +5V through it before the walk gets there)
+  const ssFar = op(circuit([['J1', 'Conn_01x02', 'PWR'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['SW1', 'SW', 'ON']],
+    [['+5V', 'J1.1', 'D1.1', 'SW1.1'], ['M', 'SW1.2', 'D2.1'], ['X', 'D1.2', 'D2.2', 'R1.1'], ['GND', 'J1.2', 'R1.2']]))
+  add('LEDs sharing a resistor, one behind a switch: shared, worst case with the switch open',
+    is(ss330, 'op_led', 'warn', 'D1', /D1·D2가 R1 하나를 나눠 씁니다.*4\.7~9\.39 mA/) && !!pick(ss330, 'op_led', 'D1')?.detail.some(d => /SW1이 열리면/.test(d)) &&
+    is(ss100, 'op_led', 'error', 'D1', /31 mA ≥ 최대 30 mA/) && is(ssAnode, 'op_led', 'error', 'D1', /31 mA ≥ 최대 30 mA/) &&
+    is(ssFar, 'op_led', 'warn', 'D1', /D1·D2가 R1 하나를 나눠 씁니다.*4\.7~9\.39 mA/) &&
+    ![ss330, ss100, ssAnode, ssFar].some(rs => rs.some(r => r.rule === 'op_led' && /직렬 저항이 없어/.test(r.summary))),
+    [ss330, ss100, ssAnode, ssFar].map(rs => rs.filter(r => r.rule === 'op_led').map(r => `${r.state}: ${r.summary}`).join(' / ')).join(' | '))
 
   // a 555 reset button to GND with no pull-up floats when released: a warning; a reset wired to GND, or to the 555's own switched ground, stays an error
   const resetPlain = (extra: (c: NetGraph) => void) => variant(variant(timer, movePin('U1.4', 'RST')), c => {
