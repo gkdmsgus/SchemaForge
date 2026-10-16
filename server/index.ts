@@ -182,7 +182,7 @@ app.get('/sessions', requireAuth as any, async (req: AuthRequest, res: Response)
   if (!supabase) return res.json({ sessions: [] })
   const { data, error } = await supabase
     .from('sessions')
-    .select('id, prompt, guide, graph, filename, created_at')
+    .select('id, prompt, code, guide, graph, filename, created_at')
     .eq('user_id', req.user!.id)
     .order('created_at', { ascending: false })
     .limit(50)

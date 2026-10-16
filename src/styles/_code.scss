@@ -1,0 +1,215 @@
+// ── Code tab: skidl code view and editor (components/CodeEditor.tsx) ────────
+// Flat sf-code-* classes with is-* states, like _flow.scss. The root is .sf-code-pane
+// because .sf-code is already the inline-code type role in _sf-tokens.scss.
+// Text colours keep at least 4.5:1 on the surface they sit on; scripts/check_code_view.ts (g)
+// reads the colours from this file and checks every pair, so keep these blocks flat.
+
+.sf-code-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--sf-bg-2);
+  color: var(--sf-fg);
+  font-family: var(--sf-font-mono);
+}
+
+.sf-code-head {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 5px 12px;
+  background: var(--sf-bg-3);
+  border-bottom: 1px solid var(--sf-line);
+}
+
+.sf-code-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--sf-fg-muted);
+}
+
+.sf-code-meta {
+  font-size: 10px;
+  color: var(--sf-fg-muted);
+}
+
+.sf-code-meta.is-dirty { color: var(--sf-amber-deep); }
+
+.sf-code-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sf-code-btn {
+  padding: 3px 8px;
+  color: var(--sf-fg-muted);
+  background: transparent;
+  border: 1px solid var(--sf-line);
+  border-radius: var(--sf-r-sm);
+  font: 10px var(--sf-font-mono);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sf-code-btn:hover:not(:disabled) { color: var(--sf-fg); border-color: var(--sf-line-strong); }
+.sf-code-btn:focus-visible { outline: 2px solid var(--sf-amber); outline-offset: 1px; }
+.sf-code-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.sf-code-btn.is-primary { color: var(--sf-ink-on-amber); background: var(--sf-amber-deep); border-color: transparent; }
+.sf-code-btn.is-primary:hover:not(:disabled) { color: var(--sf-ink-on-amber); border-color: var(--sf-fg); }
+.sf-code-btn.is-ok { color: var(--sf-cyan-deep); }
+.sf-code-btn.is-bad { color: var(--sf-danger); }
+
+// Only the body scrolls (both ways), so long Part(...) lines never scroll the page.
+.sf-code-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sf-code-rows {
+  display: flex;
+  min-width: max-content;
+  min-height: 100%;
+}
+
+// Line numbers: a column of their own, so selecting and copying code never picks them up.
+.sf-code-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  min-width: 5ch;
+  padding: 8px 0;
+  color: var(--sf-fg-muted);
+  background: var(--sf-bg-3);
+  border-right: 1px solid var(--sf-line-soft);
+  font: 12px/20px var(--sf-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.sf-code-gutter > div { height: 20px; padding: 0 8px 0 10px; }
+.sf-code-gutter > .is-error { color: var(--sf-fg); background: var(--sf-danger-soft); box-shadow: inset 2px 0 var(--sf-danger); font-weight: 600; }
+
+.sf-code-view {
+  margin: 0;
+  padding: 8px 16px 8px 12px;
+  color: var(--sf-fg);
+  font: 12px/20px var(--sf-font-mono);
+  white-space: pre;
+  tab-size: 4;
+}
+
+// <code> and <pre> get `font-family: monospace` from the browser; keep the view's font
+.sf-code-view code { font: inherit; }
+
+.sf-code-pane .tk-kw { color: var(--sf-cyan-deep); font-weight: 600; }
+.sf-code-pane .tk-str { color: var(--sf-amber-deep); }
+.sf-code-pane .tk-com { color: var(--sf-fg-muted); font-style: italic; }
+.sf-code-pane .tk-num { color: var(--sf-violet); }
+.sf-code-pane .tk-fn { color: var(--sf-violet-deep); }
+
+// Edit mode: the gutter follows the textarea's scrollTop. Both use the same integer
+// line height so the rows cannot drift; the gutter's extra bottom padding covers the
+// textarea's horizontal scrollbar.
+.sf-code-edit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.sf-code-edit .sf-code-gutter { position: static; overflow: hidden; padding-bottom: 24px; }
+
+.sf-code-textarea {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 16px 8px 12px;
+  color: var(--sf-fg);
+  background: var(--sf-bg-2);
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  font: 12px/20px var(--sf-font-mono);
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+  caret-color: var(--sf-amber-deep);
+}
+
+.sf-code-textarea:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--sf-amber-line); }
+.sf-code-textarea[readonly] { color: var(--sf-fg-muted); }
+
+// One-line notices above the code (합니다체, like the operating check panel).
+.sf-code-note {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--sf-line-soft);
+  font: 11px/1.5 var(--sf-font-sans);
+  word-break: keep-all;
+}
+
+.sf-code-note.is-warn { color: var(--sf-amber-deep); background: var(--sf-amber-soft); }
+.sf-code-note.is-ok { color: var(--sf-cyan-deep); background: var(--sf-cyan-soft); }
+.sf-code-note.is-info { color: var(--sf-violet-deep); background: var(--sf-violet-soft); }
+.sf-code-note-text { flex: 1; min-width: 0; }
+.sf-code-note ul { margin: 2px 0 0; padding-left: 16px; }
+.sf-code-note .sf-code-btn { flex: none; }
+
+.sf-code-error {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  color: var(--sf-danger);
+  background: var(--sf-bg-2);
+  border-left: 3px solid var(--sf-danger);
+  border-bottom: 1px solid var(--sf-danger-line);
+  font: 11px/1.5 var(--sf-font-mono);
+}
+
+.sf-code-error-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sf-code-error-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sf-code-error summary { margin-top: 2px; color: var(--sf-fg-muted); font-family: var(--sf-font-sans); cursor: pointer; }
+
+.sf-code-error-detail {
+  margin: 4px 0 0;
+  font: inherit;
+  max-height: 120px;
+  overflow: auto;
+  color: var(--sf-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sf-code-empty {
+  padding: 16px 12px;
+  color: var(--sf-fg-muted);
+  font: 12px/1.6 var(--sf-font-sans);
+}
+
+// ── KiCad guide (components/KicadGuide.tsx): one collapsible line in the Netlist tab ──
+.sf-kicad-guide {
+  border-bottom: 1px solid var(--sf-line);
+  color: var(--sf-fg-muted);
+  font: 11px/1.6 var(--sf-font-sans);
+  word-break: keep-all;
+}
+
+.sf-kicad-guide summary { padding: 6px 20px; font: 10px var(--sf-font-mono); letter-spacing: 0.06em; cursor: pointer; }
+.sf-kicad-guide summary:hover { color: var(--sf-fg); }
+.sf-kicad-guide ul { margin: 0; padding: 0 20px 8px 36px; }
+.sf-kicad-guide li + li { margin-top: 2px; }
+.sf-kicad-guide b { color: var(--sf-fg); font-weight: 600; }
+
+// ── Bottom drawer tabs (ResultPanel): keyboard focus must not look like the selected tab ──
+.sf-drawer-tab:focus-visible { outline: 1px dashed var(--sf-fg-muted); outline-offset: 2px; }

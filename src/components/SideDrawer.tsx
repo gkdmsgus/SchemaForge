@@ -70,7 +70,9 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
           id: i,
           name: s.name ?? s.prompt,
           prompt: s.prompt,
-          result: s.graph ? { graph: s.graph as NetGraph, filename: s.filename ?? '' } : undefined,
+          result: s.graph
+            ? { graph: s.graph as NetGraph, filename: s.filename ?? '', code: s.code ?? undefined, guide: s.guide ?? undefined }
+            : undefined,
           time: new Date(s.created_at).getTime(),
           graph: s.graph as NetGraph | null,
           _dbId: s.id,
