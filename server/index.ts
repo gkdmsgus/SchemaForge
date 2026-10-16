@@ -3,7 +3,7 @@ import express, { Request, Response, NextFunction } from 'express'
 import cors from 'cors'
 import { spawn } from 'child_process'
 import {
-  mkdirSync, existsSync, copyFileSync,
+  mkdirSync, existsSync,
   readdirSync, writeFileSync, readFileSync, unlinkSync,
 } from 'fs'
 import { join, basename } from 'path'
@@ -15,6 +15,7 @@ import {
   readBoard, roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
+import { runSkidl as runSkidlIn } from './skidl_run'
 import { tavily } from '@tavily/core'
 import axios from 'axios'
 import { createClient } from '@supabase/supabase-js'
@@ -371,32 +372,8 @@ function stripFences(text: string): string {
   return lines.join('\n').trim()
 }
 
-function runSkidl(code: string, timeout = 90000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const tmpDir = join(tmpdir(), randomUUID())
-    mkdirSync(tmpDir)
-    const codePath = join(tmpDir, 'circuit.py')
-    writeFileSync(codePath, code, 'utf8')
-
-    const proc = spawn('python', [codePath], { cwd: tmpDir })
-    let stderr = ''
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('skidl execution timed out')) }, timeout)
-    proc.on('error', (e: Error) => { clearTimeout(timer); reject(e) })
-
-    proc.on('close', (code: number | null) => {
-      clearTimeout(timer)
-      if (code !== 0) return reject(new Error(stderr))
-      const netFiles = readdirSync(tmpDir).filter(f => f.endsWith('.net'))
-      if (!netFiles.length) return reject(new Error('No netlist file was generated.'))
-      const jobId = randomUUID().replace(/-/g, '')
-      const outputPath = join(OUTPUTS_DIR, `${jobId}.net`)
-      copyFileSync(join(tmpDir, netFiles[0]), outputPath)
-      resolve(outputPath)
-    })
-  })
-}
+/** Run skidl code (secrets stripped from its environment, temp folder removed); the netlist lands in outputs/. */
+const runSkidl = (code: string): Promise<string> => runSkidlIn(code, OUTPUTS_DIR)
 
 function parseNetlist(text: string): NetGraph {
   const components: ComponentEntry[] = []
