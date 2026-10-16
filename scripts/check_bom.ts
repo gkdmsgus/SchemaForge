@@ -22,6 +22,7 @@ import { SPECS } from '../src/lib/partSpecs.ts'
 import type { BoardModel, ComponentEntry } from '../src/types.ts'
 
 let failed = 0
+let skipped = 0
 function check(name: string, ok: boolean, info = '') {
   if (!ok) failed++
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`)
@@ -167,7 +168,7 @@ function parseCsv(text: string): string[][] {
   }
   // saved boards exist only after PCBs were made in the app (server/outputs is git-ignored): a fresh
   // clone skips these two checks, said out loud and not counted as passed
-  if (!boards.length) console.log('skip B8b, B8d: no saved boards in server/outputs (make a PCB in the app first)')
+  if (!boards.length) { skipped += 2; console.log('skip B8b, B8d: no saved boards in server/outputs (make a PCB in the app first)') }
   else {
     check('B8b routed boards fully covered', bad.length === 0,
       `${boards.length} boards, ${lines} lines${bad.length ? ' bad ' + bad.slice(0, 3).join(' | ') : ''}`)
@@ -202,8 +203,11 @@ function parseCsv(text: string): string[][] {
   const hdr = 'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'
   const b = buildBom([comp('J1', 'PWR_IN', 'Conn_01x03'), comp('J2', 'RELAY_OUT', 'Conn_01x03')],
     { parts: [{ ref: 'J1', value: 'PWR_IN', part: 'Conn_01x03', footprint: hdr }, { ref: 'J2', value: 'RELAY_OUT', part: 'Conn_01x03', footprint: hdr }] }, 'smd')
-  check('B14 headers grouped across net labels', b.lines.length === 1 && b.lines[0].qty === 2 && b.lines[0].value === 'PWR_IN, RELAY_OUT',
-    b.lines.map(l => `${l.refs.join('+')}=${l.value}`).join(' | '))
+  // added in another order (chat edits append): the labels still follow the sorted refs
+  const shuffled = buildBom([comp('J2', 'MOTOR', 'Conn_01x02'), comp('J3', 'SENSOR', 'Conn_01x02'), comp('J1', 'PWR_IN', 'Conn_01x02')], null, 'smd')
+  check('B14 headers grouped across net labels, labels by ref', b.lines.length === 1 && b.lines[0].qty === 2 && b.lines[0].value === 'J1 PWR_IN, J2 RELAY_OUT'
+    && shuffled.lines.length === 1 && shuffled.lines[0].value === 'J1 PWR_IN, J2 MOTOR, J3 SENSOR',
+    `${b.lines.map(l => `${l.refs.join('+')}=${l.value}`).join(' | ')} / ${shuffled.lines[0]?.value}`)
 }
 
 // B15. prices: a decimal comma is not a thousands group; a break above one piece stays out of the total
@@ -306,5 +310,5 @@ function parseCsv(text: string): string[][] {
   check('B12c no dead /mouser_cart proxy', !vite.includes('/mouser_cart') && vite.includes('/mouser_search'))
 }
 
-console.log(failed ? `\n${failed} check(s) failed` : '\nall BOM checks passed')
+console.log(failed ? `\n${failed} check(s) failed` : `\nall BOM checks passed${skipped ? ` (${skipped} skipped: no saved boards in server/outputs)` : ''}`)
 process.exit(failed ? 1 : 0)

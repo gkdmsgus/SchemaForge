@@ -76,7 +76,7 @@
   .num { text-align: right; font-family: var(--sf-font-mono); }
   .mono { font-family: var(--sf-font-mono); }
   .ref { min-width: 72px; white-space: normal; font-family: var(--sf-font-mono); }
-  .val { font-family: var(--sf-font-mono); color: var(--sf-amber-deep); }
+  .val { font-family: var(--sf-font-mono); color: var(--sf-amber-deep); white-space: normal; min-width: 72px; }
   .note { min-width: 160px; white-space: normal; color: var(--sf-fg-muted); }
   .dim { color: var(--sf-fg-dim); }
 

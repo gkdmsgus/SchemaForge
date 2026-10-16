@@ -109,6 +109,8 @@ export function buildBom(components: ComponentEntry[], board: BomBoard | null, s
   const stale: string[] = []
   const furniture = new Map<string, { ref: string; value: string; part: string }>()
   const inGraph = new Set<string>()
+  /** connector lines: the net label of each ref (written as "J1 PWR_IN, J2 MOTOR" once refs are sorted) */
+  const labels = new Map<string, Map<string, string>>()
 
   for (const c of components || []) {
     const value = String(c.value ?? '').trim()
@@ -132,11 +134,8 @@ export function buildBom(components: ComponentEntry[], board: BomBoard | null, s
     const conn = /^Conn_01x\d+$/.test(part)
     const key = `${part}|${conn ? '' : normValue(value)}|${footprint ?? (why ? 'UNMAPPED' : isStale ? 'STALE' : '')}`
     const line = groups.get(key)
-    if (line) {
-      line.refs.push(c.ref)
-      if (conn && value && !line.value.split(', ').includes(value)) line.value = line.value ? `${line.value}, ${value}` : value
-      continue
-    }
+    if (conn) labels.set(key, (labels.get(key) ?? new Map()).set(c.ref, value))
+    if (line) { line.refs.push(c.ref); continue }
     const facts = notesFor(part, style)
     if (conn) facts.notes.push('값은 넷 이름')
     groups.set(key, {
@@ -153,7 +152,12 @@ export function buildBom(components: ComponentEntry[], board: BomBoard | null, s
   }
 
   const lines = [...groups.values()]
-  for (const l of lines) { l.refs.sort(naturalRef); l.qty = l.refs.length }
+  for (const l of lines) {
+    l.refs.sort(naturalRef)
+    l.qty = l.refs.length
+    const named = labels.get(l.key)
+    if (named && l.qty > 1) l.value = l.refs.map(r => (named.get(r) ? `${r} ${named.get(r)}` : r)).join(', ')
+  }
   lines.sort((a, b) => naturalRef(a.refs[0], b.refs[0]))
   return {
     lines, style, fromBoard: !!board, stale: stale.sort(naturalRef),
