@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react'
 import { authHeaders } from '../api'
 import type { ErcFinding, NetGraph } from '../types'
-import { indentLines, lineRange, summarizeError, tokenizePython, type CodeEdit } from '../lib/pythonCode'
+import { indentLines, lineRange, summarizeError, toLF, tokenizePython, type CodeEdit } from '../lib/pythonCode'
 
 const API = ''
 /** px; the same integer line height as .sf-code-textarea and .sf-code-gutter in _code.scss */
@@ -50,8 +50,9 @@ interface CodeEditorProps {
 }
 
 export default function CodeEditor({
-  code, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, pcbStale, onRegeneratePcb, canRun,
+  code: rawCode, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, pcbStale, onRegeneratePcb, canRun,
 }: CodeEditorProps) {
+  const code = useMemo(() => toLF(rawCode), [rawCode])
   const lines = useMemo(() => tokenizePython(code), [code])
   const editLines = useMemo(() => (edit ? edit.text.split('\n').length : 0), [edit])
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
@@ -92,16 +93,24 @@ export default function CodeEditor({
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  // focus moves into the editor on 수정 and back to 수정 after Esc, in the same commit as the switch
+  const focusNext = useRef<'editor' | 'editButton' | null>(null)
+  useLayoutEffect(() => {
+    if (focusNext.current === 'editor') taRef.current?.focus()
+    else if (focusNext.current === 'editButton') editBtnRef.current?.focus()
+    focusNext.current = null
+  }, [!!edit])
+
   function startEdit() {
+    focusNext.current = 'editor'
     setEdit({ text: code, error: null })
-    requestAnimationFrame(() => taRef.current?.focus())
   }
 
   function cancel(fromKeyboard = false) {
     if (!edit || edit.running) return
     if (edit.text !== code && !window.confirm('수정한 코드를 버리시겠습니까?')) return
+    if (fromKeyboard) focusNext.current = 'editButton'
     setEdit(null)
-    if (fromKeyboard) requestAnimationFrame(() => editBtnRef.current?.focus())
   }
 
   async function run() {

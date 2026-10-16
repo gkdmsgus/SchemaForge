@@ -108,6 +108,9 @@
   tab-size: 4;
 }
 
+// <code> and <pre> get `font-family: monospace` from the browser; keep the view's font
+.sf-code-view code { font: inherit; }
+
 .sf-code-pane .tk-kw { color: var(--sf-cyan-deep); font-weight: 600; }
 .sf-code-pane .tk-str { color: var(--sf-amber-deep); }
 .sf-code-pane .tk-com { color: var(--sf-fg-muted); font-style: italic; }
@@ -180,6 +183,7 @@
 
 .sf-code-error-detail {
   margin: 4px 0 0;
+  font: inherit;
   max-height: 120px;
   overflow: auto;
   color: var(--sf-fg-muted);
