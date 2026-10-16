@@ -39,7 +39,11 @@ export function tokenizePython(code: string): Tok[][] {
 /** Line in the user's script where Python stopped, from its stderr; null if there is none.
  *  The script is the first `File "..."` in the output (Python prints the outermost frame first);
  *  frames in other files are skipped, which matters because skidl ships its own circuit.py. */
+/** ANSI colour codes (Python 3.13+ colours tracebacks when FORCE_COLOR is set) */
+const ANSI = /\x1b\[[0-9;]*m/g
+
 export function errorLine(stderr: string): number | null {
+  stderr = stderr.replace(ANSI, '')
   const frames = [...stderr.matchAll(/File "([^"]+)", line (\d+)/g)]
   if (frames.length) {
     const script = frames[0][1]
@@ -69,7 +73,7 @@ export interface CodeError { headline: string; detail: string; line: number | nu
 
 /** Short headline plus readable detail: skidl's start-up WARNING lines dropped, temp paths shortened. */
 export function summarizeError(stderr: string): CodeError {
-  const raw = stderr.replace(/\r/g, '').trim()
+  const raw = stderr.replace(ANSI, '').replace(/\r/g, '').trim()
   if (SERVER_MESSAGES[raw]) return { headline: SERVER_MESSAGES[raw], detail: raw, line: null }
   const kept = raw.split('\n').filter(l => !l.startsWith('WARNING: '))
   const detail = kept.join('\n')

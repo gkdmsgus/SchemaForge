@@ -22,7 +22,7 @@ import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
-import { STATE_TONE } from '../lib/boardChecks'
+import { STATE_TONE, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
 
 const API = ''
@@ -79,7 +79,10 @@ interface ResultPanelProps {
   result: GenerateResult
   setResult: Dispatch<SetStateAction<GenerateResult | null>>
   theme?: string
-  onRegenerate: (p: string, typeKey?: string, skipCache?: boolean) => void
+  /** generate this prompt again now (no cache, no questions or plan: those panels are hidden here) */
+  onRegenerate: (p: string) => void
+  /** the server rejected the saved login (401) */
+  onAuthExpired?: () => void
   lastPrompt: string
   versions?: Version[]
   currentVersionId?: string | null
@@ -91,7 +94,7 @@ interface ResultPanelProps {
 }
 
 export default function ResultPanel({
-  result, setResult, theme, onRegenerate, lastPrompt,
+  result, setResult, theme, onRegenerate, onAuthExpired, lastPrompt,
   versions = [], currentVersionId = null, onSelectVersion, onApplyVersion,
   initialChatSession = null, authUser = null, sessionId = null,
 }: ResultPanelProps) {
@@ -128,7 +131,8 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
-  const [netText, setNetText] = useState<{ file: string; text: string | null } | null>(null)
+  /** text null: the server has no such file (404); failed: the request did not get through (retry offered) */
+  const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
   // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph)
@@ -143,9 +147,9 @@ export default function ResultPanel({
     if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
     let off = false
     fetch(`${API}/download/${encodeURIComponent(netFile)}`)
-      .then(r => (r.ok ? r.text() : null))
-      .catch(() => null)
-      .then(text => { if (!off) setNetText({ file: netFile, text }) })
+      .then(async r => (r.ok ? { text: await r.text() } : r.status === 404 ? { text: null } : { text: null, failed: true }))
+      .catch(() => ({ text: null, failed: true }))
+      .then(got => { if (!off) setNetText({ file: netFile, ...got }) })
     return () => { off = true }
   }, [drawerOpen, activeTab, netFile, netText?.file])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
@@ -156,23 +160,24 @@ export default function ResultPanel({
   const boardParts = board?.parts
   const boardFinal = board?.final ?? null
   const bomBoard = useMemo<BomBoard | null>(() => (boardFinal || boardParts?.length
-    ? { parts: boardFinal?.parts ?? boardParts ?? [], unmapped: boardFinal?.unmapped ?? pcbSummary?.unmapped ?? [] }
-    : null), [boardFinal, boardParts, pcbSummary])
+    ? { parts: boardFinal?.parts ?? boardParts ?? [], unmapped: boardFinal?.unmapped ?? [] }
+    : null), [boardFinal, boardParts])
   const bomStyle = boardFinal?.style ?? pcbStyle
   // the netlist check /generate ran: shown on the schematic while the circuit is still that netlist
   const ercNotice = useMemo(() => {
     const erc = result?.erc
     if (!erc || aiEdited || result?.codeEdited) return null
     const errors = (erc.findings ?? []).filter(f => f.severity === 'error')
+    const count = ercErrorCount(errors)
     const rep = erc.repair
     if (!erc.findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
       lines: [erc.reason ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
-    if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${errors.length}개`,
+    if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${count}개`,
       lines: [...errors.map(f => f.message),
         rep && !rep.tried ? '자동 재시도가 꺼져 있어 고치지 않았습니다 (설정).'
           : rep?.tried && !rep.kept ? `자동 수정이 받아들여지지 않아 원래 회로를 그대로 둡니다: ${rep.note}` : 'Code 탭에서 연결을 고치거나 다시 생성하세요.'] }
-    if (rep?.kept) return { tone: 'ok' as const, head: `연결 안 된 핀을 자동으로 고쳤습니다 (ERC 오류 ${rep.before} → ${rep.after})`,
-      lines: ['AI가 고친 코드를 다시 실행해 점검을 통과한 경우에만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
+    if (rep?.kept) return { tone: 'ok' as const, head: `넷리스트 점검(ERC) 오류를 자동으로 고쳤습니다 (오류 ${rep.before} → ${rep.after})`,
+      lines: ['AI가 고친 코드를 다시 실행해 오류가 줄고, 맞게 이어져 있던 연결과 부품 값이 그대로일 때만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
     return null
   }, [result?.erc, result?.codeEdited, aiEdited])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
@@ -528,7 +533,7 @@ export default function ResultPanel({
           </button>
         )}
         <button onClick={handleCopyPrompt} title="프롬프트 복사" style={iconBtn}><IconCopy size={14} /></button>
-        <button onClick={() => onRegenerate(lastPrompt, undefined, true)} title="재생성 (저장된 결과 대신 새로 생성)" style={{...iconBtn, fontSize:16}}>↺</button>
+        <button onClick={() => onRegenerate(lastPrompt)} title="재생성 (저장된 결과 대신 새로 생성)" style={{...iconBtn, fontSize:16}}>↺</button>
         <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding:'5px 10px'}}>PDF</button>
         <button
           onClick={() => window.location.href = `${API}/download/${result.filename}`}
@@ -893,9 +898,12 @@ export default function ResultPanel({
                 {aiEdited && <div style={drawerNote}>AI 편집 내용은 이 넷리스트 파일에 없습니다. PCB를 생성하면 편집한 회로로 넷리스트를 새로 만듭니다.</div>}
                 <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-muted)', overflowX:'auto' }}>
                   {result.netlist || (netText && netText.file === result.filename
-                    ? netText.text ?? '넷리스트 파일을 서버에서 찾지 못했습니다.'
+                    ? netText.text ?? (netText.failed ? '넷리스트를 불러오지 못했습니다.' : '넷리스트 파일을 서버에서 찾지 못했습니다.')
                     : result.filename ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.')}
                 </pre>
+                {netText?.failed && netText.file === result.filename && !result.netlist && (
+                  <button onClick={() => setNetText(null)} style={{ ...ghostBtn, margin: '0 20px 14px' }}>다시 불러오기</button>
+                )}
               </>
             )}
             {activeTab === 'Guide' && result.guide && (
@@ -917,7 +925,7 @@ export default function ResultPanel({
             {activeTab === 'Code' && (
               <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
                 lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited}
-                pcbStale={pcbStale === 'circuit'} onRegeneratePcb={generatePCB} canRun={!!authUser} />
+                pcbStale={pcbStale === 'circuit'} onRegeneratePcb={generatePCB} canRun={!!authUser} onAuthExpired={onAuthExpired} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
               <GerberFilePanel info={gerberInfo} />

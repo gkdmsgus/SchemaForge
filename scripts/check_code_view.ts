@@ -69,6 +69,11 @@ check('d: B headline', sB.headline === "NameError: name 'RED' is not defined", s
 check('d: C headline', sC.headline === "SyntaxError: '(' was never closed", sC.headline)
 check('d: D headline', sD.headline === "KeyError: 'nonexistent_tool'", sD.headline)
 check('d: line carried', sA.line === 19 && sB.line === 14 && sD.line === 23)
+// the same NameError as Python 3.14 prints it when FORCE_COLOR is set (captured from the dev server, 2026-10)
+const tbColour = `Traceback (most recent call last):\r\n  File \x1b[35m"${P}"\x1b[0m, line \x1b[35m14\x1b[0m, in \x1b[35m<module>\x1b[0m\r\n    d1.value = \x1b[1;31mRED\x1b[0m\r\n\x1b[1;35mNameError\x1b[0m: \x1b[35mname 'RED' is not defined\x1b[0m\r\n`
+const sColour = summarizeError(tbColour)
+check('d: coloured traceback -> same headline and line', sColour.headline === "NameError: name 'RED' is not defined" && sColour.line === 14 && !sColour.detail.includes('\x1b'),
+  `${sColour.headline} @ ${sColour.line}`)
 for (const [n, s] of [['A', sA], ['B', sB], ['D', sD]] as const) {
   check(`d: ${n} detail has no WARNING / temp path`, !s.detail.includes('WARNING') && !s.detail.includes('AppData') && !s.detail.includes('0f1e'), s.detail.split('\n')[0])
 }

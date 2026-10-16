@@ -32,13 +32,15 @@ const BTN_SIZES: Record<BtnSize, CSSProperties> = {
   pill: { height: 40, padding: '0 20px', fontSize: 14, borderRadius: 'var(--sf-r-pill)' },
 };
 
+// border as separate width/style/colour: the hover styles change only borderColor, and React warns when
+// a shorthand and its longhand meet in one style object
 const BTN_VARIANTS: Record<BtnVariant, CSSProperties> = {
-  primary:   { background: 'var(--sf-amber)',   color: '#fff8ef',            border: '1px solid var(--sf-amber)' },
-  cyan:      { background: 'var(--sf-cyan)',    color: '#f4f7f2',            border: '1px solid var(--sf-cyan)' },
-  secondary: { background: 'var(--sf-bg-3)',    color: 'var(--sf-fg)',       border: '1px solid var(--sf-line-strong)' },
-  ghost:     { background: 'transparent',       color: 'var(--sf-fg-muted)', border: '1px solid transparent' },
-  outline:   { background: 'transparent',       color: 'var(--sf-fg)',       border: '1px solid var(--sf-line-strong)' },
-  danger:    { background: 'transparent',       color: 'var(--sf-danger)',   border: '1px solid rgba(255,106,91,0.4)' },
+  primary:   { background: 'var(--sf-amber)',   color: '#fff8ef',            borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-amber)' },
+  cyan:      { background: 'var(--sf-cyan)',    color: '#f4f7f2',            borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-cyan)' },
+  secondary: { background: 'var(--sf-bg-3)',    color: 'var(--sf-fg)',       borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-line-strong)' },
+  ghost:     { background: 'transparent',       color: 'var(--sf-fg-muted)', borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent' },
+  outline:   { background: 'transparent',       color: 'var(--sf-fg)',       borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-line-strong)' },
+  danger:    { background: 'transparent',       color: 'var(--sf-danger)',   borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(255,106,91,0.4)' },
 };
 
 const BTN_HOVER: Record<BtnVariant, CSSProperties> = {
