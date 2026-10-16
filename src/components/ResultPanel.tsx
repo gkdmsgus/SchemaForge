@@ -104,8 +104,13 @@ export default function ResultPanel({
   const [favLoading, setFavLoading] = useState(false)
   const [graphHistory, setGraphHistory] = useState<NetGraph[]>([])
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
+  // what the current board was built from, to tell when it no longer matches the circuit
+  const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
+  // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
+  const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
+    : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
@@ -152,6 +157,7 @@ export default function ResultPanel({
       : result?.filename ? { filename: result.filename, style: pcbStyle, ai: useAi } : null
     if (!body) { setPcbStatus('error'); return }
 
+    setPcbSource({ graph: effectiveGraph, style: pcbStyle })
     setPcbStatus('loading')
     // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
     if (window.innerWidth < 1280) { setEditorOpen(false); setSidebarOpen(false) }
@@ -616,13 +622,13 @@ export default function ResultPanel({
                   {s.toUpperCase()}
                 </button>
               ))}
-              {pcbStatus === 'done' && pcbSummary && pcbSummary.unmapped.length > 0 && (
+              {pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.unmapped.length > 0 && (
                 <StatusChip tone="bad" testId="pcb-unmapped"
                   title={pcbSummary.unmapped.map(u => `${u.ref} (${u.part || '?'}): ${u.reason}`).join('\n')}>
                   풋프린트 없음 {pcbSummary.unmapped.length} · {pcbSummary.unmapped.map(u => u.ref).join(', ')}
                 </StatusChip>
               )}
-              {pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
+              {pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (
                 <StatusChip tone="bad" testId="pcb-pinout" title={pcbSummary.warnings.join('\n')}>
                   부품 확인 {pcbSummary.warnings.length}
                 </StatusChip>
@@ -641,9 +647,10 @@ export default function ResultPanel({
                   AI 다듬기 {useAi ? 'ON' : 'OFF'}
                 </button>
               )}
-              {(pcbStatus === null || pcbStatus === 'invalid') && <button onClick={generatePCB} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : 'PCB 생성'}</button>}
+              {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={generatePCB} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
-              {pcbStatus === 'done' && pcbFilename && <>
+              {/* a board built from a previous circuit: no downloads of files that no longer match */}
+              {pcbStatus === 'done' && pcbFilename && !pcbStale && <>
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
                 {gerberStatus === null && <button onClick={generateGerber} style={ghostBtn}>거버</button>}
                 {gerberStatus === 'loading' && <StatusChip tone="accent" busy>거버 생성 중</StatusChip>}
@@ -653,6 +660,17 @@ export default function ResultPanel({
             </div>
           </div>
 
+          {viewMode === 'pcb' && pcbStale && pcbSource && (
+            <div role="status" data-testid="pcb-stale" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+              background: 'var(--sf-bg-2)', borderBottom: '1px solid var(--sf-amber)', color: 'var(--sf-amber-deep)', fontSize: 11, lineHeight: 1.5 }}>
+              <span style={{ flex: 1 }}>
+                {pcbStale === 'circuit'
+                  ? '회로가 바뀌었습니다. 이 기판은 바뀌기 전 회로로 만든 것이라 2D·3D·DRC·거버가 지금 회로와 다를 수 있습니다.'
+                  : `부품 방식이 바뀌었습니다. 이 기판은 ${pcbSource.style.toUpperCase()} 부품으로 만든 것입니다.`}
+              </span>
+              <button onClick={generatePCB} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
+            </div>
+          )}
           {viewMode === 'pcb' && pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
             <div role="alert" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
               borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
@@ -801,7 +819,7 @@ export default function ResultPanel({
                 <KicadGuide />
               </div>
             )}
-            {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && (
+            {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
               <GerberFilePanel info={gerberInfo} />
             )}
           </div>
