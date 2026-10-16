@@ -9,7 +9,7 @@ import type { Camera } from '../lib/board3d'
 import { HUMAN_ROW, STATE_TONE, TONE_COLOR, checkRows, drcCounts, overall, stateWord, summarize, type Tone } from '../lib/boardChecks'
 import { fromBoard, operatingChecks } from '../lib/operatingCheck'
 import { KIND_LABEL, loadReviewed, reviewItems, saveReviewed, type ReviewItem } from '../lib/humanReview'
-import { assemblyRefs, loadPlaced, savePlaced } from '../lib/assembly'
+import { assemblyRefs, loadPlaced, placedKey, savePlaced } from '../lib/assembly'
 import { buildBom, type BomLine } from '../lib/bom'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
@@ -210,7 +210,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [playhead, setPlayhead] = useState(() => (startDone ? Math.max(frames.length - 1, 0) : 0))   // fractional frame index
   const [routeHead, setRouteHead] = useState(() => (startDone ? routes.length : 0))               // fractional routing-event index
   const [fit, setFit] = useState(() => (startDone ? 1 : 0))                                       // 0 = scatter view, 1 = fitted to the board
-  const [aiOpen, setAiOpen] = useState(false)          // the AI rounds stay folded to one line over the board
+  const [aiOpenSet, setAiOpen] = useState<boolean | null>(null)   // the AI rounds stay folded to one line over the board
   const [hoverNet, setHoverNet] = useState<string | null>(null)
   const [show, setShow] = useState<Record<string, boolean>>({ 'F.Cu': true, 'B.Cu': true })
   const [zoom, setZoom] = useState(1)
@@ -227,7 +227,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [zoom3d, setZoom3d] = useState(1)
   const drag3d = useRef<{ x: number; y: number } | null>(null)
   // a press on the board: where it started, whether it became a drag, and the part under it (assembly)
-  const dragRef = useRef<{ x: number; y: number; sx: number; sy: number; moved: boolean; hit: string | null } | null>(null)
+  const dragRef = useRef<{ x: number; y: number; sx: number; sy: number; moved: boolean; hit: string | null; slop: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const live = useRef({ frames: frames.length, routes: routes.length, fitted: startDone })
   live.current.frames = frames.length
@@ -269,11 +269,17 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     return () => cancelAnimationFrame(raf)
   }, [placed, assembly])
 
-  const byRef = useMemo(() => Object.fromEntries(parts.map(p => [p.ref, p])), [parts])
+  // the assembly view draws board.json itself: the AI loop may have moved parts after the playback frames
+  const shownParts: BoardPart[] = assembly && final ? final.parts : parts
+  const byRef = useMemo(() => Object.fromEntries(shownParts.map(p => [p.ref, p])), [shownParts])
 
   // interpolated pose of every part at the playhead
   const poses = useMemo(() => {
     const out: Record<string, [number, number, number]> = {}
+    if (assembly && final) {
+      for (const p of final.parts) out[p.ref] = [p.x, p.y, p.rot]
+      return out
+    }
     if (!frames.length) return out
     const i = Math.min(Math.max(Math.floor(playhead), 0), frames.length - 1)
     const f = Math.min(Math.max(playhead - i, 0), 1)
@@ -283,7 +289,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       out[ref] = [pa[0] + (pb[0] - pa[0]) * f, pa[1] + (pb[1] - pa[1]) * f, f < 0.5 ? pa[2] : pb[2]]
     }
     return out
-  }, [frames, playhead])
+  }, [frames, playhead, assembly, final])
 
   // copper after applying routing events up to the route head (the current one drawn partly)
   const copper = useMemo(() => {
@@ -317,8 +323,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         left -= L
       }
     }
+    // the assembly view shows the finished board's own copper (tracks after any AI change)
+    if (assembly && final) {
+      return { tracks: (final.tracks ?? []).map(t => ({ t, net: t.net })), vias: final.vias ?? [], partial: [], routedCount }
+    }
     return { tracks, vias, partial, routedCount }
-  }, [routes, routeHead])
+  }, [routes, routeHead, assembly, final])
 
   // views: everything the scatter touches vs the finished board
   const first = frames[0]
@@ -405,8 +415,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     ? buildBom(final.parts.map(p => ({ ref: p.ref, value: p.value, name: p.part })), { parts: final.parts, unmapped: final.unmapped },
         final.style === 'tht' ? 'tht' : 'smd').lines
     : []), [final])
-  const [placedRefs, setPlacedRefs] = useState<Set<string>>(() => loadPlaced(pcbFilename, assemblyRefs(final)))
-  useEffect(() => { setPlacedRefs(loadPlaced(pcbFilename, asmRefs)) }, [pcbFilename, asmRefs])
+  const boardKey = useMemo(() => placedKey(pcbFilename, final), [pcbFilename, final])
+  const [placedRefs, setPlacedRefs] = useState<Set<string>>(() => loadPlaced(placedKey(pcbFilename, final), assemblyRefs(final)))
+  useEffect(() => { setPlacedRefs(loadPlaced(boardKey, asmRefs)) }, [boardKey, asmRefs])
+  const aiSkipped = ai.some(r => r.round === 0 && !r.kept)
+  const aiOpen = aiOpenSet ?? aiSkipped
   // does it work: numeric checks on the finished board's part values
   const opResults = useMemo(() => (final ? operatingChecks(fromBoard(final)) : []), [final])
   const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }, opResults),
@@ -465,14 +478,14 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       const next = new Set(prev)
       if (next.has(ref)) next.delete(ref)
       else next.add(ref)
-      savePlaced(pcbFilename, next)
+      savePlaced(boardKey, next)
       return next
     })
   }
   function clearPlaced() {
     if (!placedRefs.size || !window.confirm('배치 체크를 모두 지울까요?')) return
     const next = new Set<string>()
-    savePlaced(pcbFilename, next)
+    savePlaced(boardKey, next)
     setPlacedRefs(next)
   }
 
@@ -514,14 +527,18 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     setZoom(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))
   }
   function onDown(e: React.PointerEvent) {
+    if (e.button !== 0) return                       // right and middle clicks neither pan nor tick
     const hit = (e.target as Element).getAttribute?.('data-assembly-hit') ?? null
-    dragRef.current = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, hit }
+    // a finger wobbles more than a mouse before it lifts: a tap stays a tap within 10 px
+    const slop = e.pointerType === 'mouse' ? 4 : 10
+    dragRef.current = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, hit, slop }
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
   function onMove(e: React.PointerEvent) {
     const d = dragRef.current, svg = svgRef.current
     if (!d || !svg) return
-    if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) d.moved = true
+    if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) <= d.slop) return   // not a drag yet: the board stays put
+    d.moved = true
     const scale = vw / svg.clientWidth
     setPanXY(([px, py]) => [px - (e.clientX - d.x) * scale, py - (e.clientY - d.y) * scale])
     d.x = e.clientX
@@ -717,7 +734,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {assembly && placed && (
         <AssemblyPanel lines={asmLines} total={asmRefs.length} placedRefs={placedRefs} pick={pickRef}
           reviewList={reviewList} reviewedKeys={reviewedKeys} hasFurniture={(final?.parts ?? []).length > asmRefs.length}
-          onToggle={togglePlaced} onClear={clearPlaced} onReview={toggleReviewed} />
+          onToggle={togglePlaced} onPick={setPickRef} onClear={clearPlaced} onReview={toggleReviewed} />
       )}
 
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
@@ -795,12 +812,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: aiOpen ? 320 : 'auto', maxWidth: '46%',
           borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
           fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
-          <button type="button" onClick={() => setAiOpen(o => !o)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
+          <button type="button" onClick={() => setAiOpen(!aiOpen)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
             title={aiOpen ? '접기' : 'AI 다듬기 라운드 보기'}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
               background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit', whiteSpace: 'nowrap' }}>
-            <StatusChip tone="accent">AI 다듬기</StatusChip>
-            <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>
+            <StatusChip tone={aiSkipped ? 'warn' : 'accent'}>{aiSkipped ? 'AI 다듬기 건너뜀' : 'AI 다듬기'}</StatusChip>
+            {!aiSkipped && <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>}
             <span aria-hidden="true" style={{ marginLeft: 'auto', color: UI_DIM }}>{aiOpen ? '▾' : '▸'}</span>
           </button>
           {aiOpen && <div style={{ maxHeight: 200, overflowY: 'auto' }}>
@@ -1035,7 +1052,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
  * Assembly list beside the board: the parts grouped like the BOM, one chip per part (✓ when placed),
  * and for the part last touched its review (polarity, pinout) with its own tick.
  */
-function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, hasFurniture, onToggle, onClear, onReview }: {
+function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, hasFurniture, onToggle, onPick, onClear, onReview }: {
   lines: BomLine[]
   total: number
   placedRefs: Set<string>
@@ -1044,6 +1061,8 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
   reviewedKeys: Set<string>
   hasFurniture: boolean
   onToggle: (ref: string) => void
+  /** show a part's details without ticking it */
+  onPick: (ref: string) => void
   onClear: () => void
   onReview: (it: ReviewItem) => void
 }) {
@@ -1081,22 +1100,34 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
           return (
             <div key={l.key} data-assembly-line={l.refs.join(',')} style={{ padding: '6px 12px', borderBottom: `1px solid rgba(0, 0, 0, 0.05)` }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, ...small }}>
-                <span style={{ color: UI_FG }}>{l.type}</span>
-                <span style={{ fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.value}{l.pkg ? ` · ${l.pkg}` : ''}</span>
+                <span style={{ color: UI_FG, whiteSpace: 'nowrap' }}>{l.type}</span>
                 <span style={{ marginLeft: 'auto', fontFamily: MONO, color: n === l.qty ? TONE_COLOR.ok : UI_DIM }}>{n}/{l.qty}</span>
               </div>
+              <div style={{ ...small, fontFamily: MONO, overflowWrap: 'anywhere' }}>{l.value}{l.pkg ? ` · ${l.pkg}` : ''}</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                 {l.refs.map(ref => {
                   const on = placedRefs.has(ref)
                   return (
-                    <button key={ref} type="button" data-assembly-ref={ref} aria-pressed={on}
+                    <span key={ref} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                    <button type="button" data-assembly-ref={ref} aria-pressed={on}
                       onClick={() => onToggle(ref)}
                       title={`${ref} ${on ? '배치함 (누르면 해제)' : '눌러서 배치 체크'}${toLook.has(ref) ? ' · 극성·핀 배열 확인 필요' : ''}`}
                       style={{ padding: '2px 8px', borderRadius: 12, cursor: 'pointer', fontFamily: MONO, fontSize: 11,
                         border: `1px solid ${on ? TONE_COLOR.ok : pick === ref ? TONE_COLOR.accent : UI_LINE}`,
                         background: on ? TONE_COLOR.ok : '#ffffff', color: on ? '#ffffff' : UI_FG }}>
-                      {on ? '✓ ' : ''}{ref}{toLook.has(ref) ? <span aria-hidden="true" style={{ color: on ? '#ffffff' : TONE_COLOR.warn, fontWeight: 700 }}> !</span> : null}
+                      {on ? '✓ ' : ''}{ref}
                     </button>
+                    {reviewList.some(it => it.ref === ref) && (
+                      <button type="button" data-assembly-info={ref} onClick={() => onPick(ref)}
+                        aria-label={`${ref} 극성·핀 배열 보기${toLook.has(ref) ? ' (확인 필요)' : ' (확인함)'}`}
+                        title="극성·핀 배열 보기 (배치 체크는 바뀌지 않습니다)"
+                        style={{ width: 20, height: 20, padding: 0, borderRadius: 10, cursor: 'pointer', fontFamily: MONO, fontSize: 11, fontWeight: 700,
+                          border: `1px solid ${toLook.has(ref) ? TONE_COLOR.warn : UI_LINE}`, background: '#ffffff',
+                          color: toLook.has(ref) ? TONE_COLOR.warn : TONE_COLOR.ok }}>
+                        {toLook.has(ref) ? '!' : '✓'}
+                      </button>
+                    )}
+                    </span>
                   )
                 })}
               </div>
@@ -1104,7 +1135,7 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
           )
         })}
         {hasFurniture && <div style={{ ...small, padding: '8px 12px 0' }}>테스트 패드와 고정 구멍은 올릴 부품이 아니라 목록에서 뺐습니다.</div>}
-        {toLook.size > 0 && <div style={{ ...small, padding: '4px 12px 0' }}><span style={{ color: TONE_COLOR.warn, fontWeight: 700 }}>!</span> 표시는 극성이나 핀 배열을 실물과 맞춰 볼 부품입니다. 누르면 목록 아래에 내용이 나옵니다.</div>}
+        {reviewList.length > 0 && <div style={{ ...small, padding: '4px 12px 0' }}><span style={{ color: TONE_COLOR.warn, fontWeight: 700 }}>!</span> 단추는 극성이나 핀 배열을 실물과 맞춰 볼 부품입니다. 누르면 배치 체크는 그대로 두고 목록 아래에 확인 내용이 나옵니다.</div>}
       </div>
       {pick && pickLine && (
         <div data-testid="assembly-pick" style={{ padding: '8px 12px', borderTop: `1px solid ${UI_LINE}`, flexShrink: 0, maxHeight: '45%', overflowY: 'auto', background: 'rgba(106, 76, 181, 0.04)' }}>

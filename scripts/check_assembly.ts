@@ -8,7 +8,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import BoardView from '../src/components/BoardView.tsx'
-import { PLACED_STORE, assemblyRefs, loadPlaced, savePlaced } from '../src/lib/assembly.ts'
+import { PLACED_STORE, assemblyRefs, loadPlaced, placedKey, savePlaced } from '../src/lib/assembly.ts'
 import type { AiRound, BoardFrame, BoardModel, BoardPart } from '../src/types.ts'
 
 let failed = 0
@@ -93,6 +93,39 @@ const render = (mode: 'build' | 'assembly') => renderToStaticMarkup(createElemen
   const html = render('build')
   check('A5 build view: AI rounds folded, no assembly', html.includes('data-testid="board-ai-toggle"') && html.includes('aria-expanded="false"')
     && !html.includes('C1을 U1 가까이로') && !html.includes('data-assembly-hit') && !html.includes('assembly-panel'))
+}
+
+// A6. the storage key names the board: the same netlist made again as THT, or with a part moved, starts empty
+{
+  const k = placedKey('a.kicad_pcb', final)
+  const tht = placedKey('a.kicad_pcb', { ...final, style: 'tht' })
+  const moved = placedKey('a.kicad_pcb', { ...final, parts: parts.map(p => (p.ref === 'R2' ? { ...p, x: p.x + 1 } : p)) })
+  const again = placedKey('a.kicad_pcb', { ...final, parts: [...parts].reverse() })
+  check('A6 key per board, not per file name', !!k && k === again && k !== tht && k !== moved && placedKey(undefined, final) === null,
+    `${k} | tht ${tht} | moved ${moved}`)
+}
+
+// A7. the assembly view draws board.json itself: a part the AI loop moved after the playback is where the file has it
+{
+  const movedFinal: BoardModel = { ...final, parts: parts.map(p => (p.ref === 'R2' ? { ...p, x: 16 } : p)) }
+  const html = renderToStaticMarkup(createElement(BoardView, {
+    parts, frames, routes: [], target: null, final: movedFinal, drc: null, ai: [], status: 'done', mode: 'assembly',
+  }))
+  const r2 = /data-assembly-hit="R2" x="([\d.-]+)"/.exec(html)?.[1]
+  check('A7 assembly uses the final positions', r2 != null && Math.abs(Number(r2) - (16 - 1.5 - 0.4)) < 1e-6, `R2 hit x=${r2}`)
+}
+
+// A8. an AI loop that was skipped says so and opens by itself (folded it would read as a round tried and undone)
+{
+  const skipped: AiRound[] = [{ round: 0, reason: 'AI 다듬기를 건너뜁니다: key missing', actions: {}, before: { hpwl: 10, vias: 0, unrouted: 0, drcErrors: 0 } as never, kept: false } as never]
+  const html = renderToStaticMarkup(createElement(BoardView, { parts, frames, routes: [], target: null, final, drc: null, ai: skipped, status: 'done' }))
+  check('A8 skipped AI loop is shown open', html.includes('AI 다듬기 건너뜀') && html.includes('aria-expanded="true"') && html.includes('key missing'))
+}
+
+// A9. a part with a polarity/pinout review has its own button that shows it without ticking the part
+{
+  const html = render('assembly')
+  check('A9 review button beside the chip', html.includes('data-assembly-info="D1"') && !html.includes('data-assembly-info="R2"'))
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall assembly checks passed')

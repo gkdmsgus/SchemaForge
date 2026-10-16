@@ -222,3 +222,8 @@
   .sf-log li { grid-template-columns: 1fr; }
   .sf-flow-count { margin-left: 0; }
 }
+
+// result view tabs: on a laptop-width window the part counts give their room to the toolbar buttons
+@media (max-width: 1500px) {
+  .sf-tab-sub { display: none; }
+}
