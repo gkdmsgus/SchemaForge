@@ -1,11 +1,12 @@
 /**
- * Checks for the Code tab helpers (src/lib/pythonCode.ts).
+ * Checks for the Code tab helpers (src/lib/pythonCode.ts) and the code view colours.
  *
  * Run: npx tsx scripts/check_code_view.ts
  * (a) the highlighter is lossless on every server/test_circuits/*.py, (b) token classes,
  * (c) error lines from recorded stderr (anonymised), (d) error summaries, (e) line ranges and
  * Tab indentation, (f) a live fault injected into led_basic.py and run through the installed
- * python + skidl (a missing python or skidl is a FAIL). Exit code 0 only if every check passes.
+ * python + skidl (a missing python or skidl is a FAIL), (g) WCAG AA contrast of every text
+ * colour in src/styles/_code.scss on its surface. Exit code 0 only if every check passes.
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -139,6 +140,62 @@ function runPython(source: string): { ok: boolean; stderr: string; why: string }
   const syn = runPython(open)
   check('f: SyntaxError line from the installed python', errorLine(syn.stderr) === openAt && /SyntaxError/.test(summarizeError(syn.stderr).headline),
     `${errorLine(syn.stderr)} vs ${openAt}: ${summarizeError(syn.stderr).headline}`)
+}
+
+// ── (g) contrast of the code view colours (WCAG AA: 4.5:1 for normal text) ──
+{
+  const read = (f: string) => { const p = path.join(ROOT, 'src', 'styles', f); return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '' }
+  const tokens = read('_sf-tokens.scss'), scss = read('_code.scss')
+  check('g: styles found', !!tokens && !!scss)
+  /** a --sf-* token as [r, g, b, alpha] */
+  const colorOf = (name: string | null): number[] | null => {
+    const v = name && new RegExp(`--sf-${name}:\\s*([^;]+);`).exec(tokens)?.[1].trim()
+    if (!v) return null
+    const sass = /^#\{\$(sf-[\w-]+)\}$/.exec(v)
+    const hex = sass ? new RegExp(`\\$${sass[1]}:\\s*(#[0-9a-f]{6})`, 'i').exec(tokens)?.[1] : v
+    if (hex && /^#[0-9a-f]{6}$/i.test(hex)) return [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).concat(1)
+    const rgba = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(v)
+    return rgba ? rgba.slice(1).map(Number) : null
+  }
+  /** the var(--sf-x) a property takes inside the first block whose selector matches (flat blocks) */
+  const varIn = (selector: RegExp, prop: string): string | null => {
+    const block = new RegExp(selector.source + '[^{]*\\{([^}]*)\\}').exec(scss)?.[1] ?? ''
+    return new RegExp(`(?:^|[;\\s])${prop}:\\s*var\\(--sf-([\\w-]+)\\)`).exec(block)?.[1] ?? null
+  }
+  const over = (c: number[], base: number[]) => c.slice(0, 3).map((v, i) => v * c[3] + base[i] * (1 - c[3]))
+  const lum = (c: number[]) => {
+    const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+  const codeBg = varIn(/\.sf-code-pane\s/, 'background')
+  const headBg = varIn(/\.sf-code-head/, 'background')
+  const gutterBg = varIn(/\.sf-code-gutter\s/, 'background')
+  // [what, text colour, background, surface a translucent background sits on]
+  const pairs: [string, string | null, string | null, string | null][] = [
+    ['plain code', varIn(/\.sf-code-view/, 'color'), codeBg, null],
+    ...(['kw', 'str', 'com', 'num', 'fn'] as const).map(k => [`.tk-${k}`, varIn(new RegExp(`\\.tk-${k}`), 'color'), codeBg, null] as [string, string | null, string | null, null]),
+    ['line numbers', varIn(/\.sf-code-gutter\s/, 'color'), gutterBg, null],
+    ['error line number', varIn(/\.sf-code-gutter > \.is-error/, 'color'), varIn(/\.sf-code-gutter > \.is-error/, 'background'), gutterBg],
+    ['header title', varIn(/\.sf-code-title/, 'color'), headBg, null],
+    ['header meta', varIn(/\.sf-code-meta\s/, 'color'), headBg, null],
+    ['header changed mark', varIn(/\.sf-code-meta\.is-dirty/, 'color'), headBg, null],
+    ['button', varIn(/\.sf-code-btn\s/, 'color'), headBg, null],
+    ['button ok', varIn(/\.sf-code-btn\.is-ok/, 'color'), headBg, null],
+    ['button failed', varIn(/\.sf-code-btn\.is-bad/, 'color'), headBg, null],
+    ['primary button', varIn(/\.sf-code-btn\.is-primary/, 'color'), varIn(/\.sf-code-btn\.is-primary/, 'background'), null],
+    ...(['warn', 'ok', 'info'] as const).map(k => [`note ${k}`, varIn(new RegExp(`\\.sf-code-note\\.is-${k}`), 'color'), varIn(new RegExp(`\\.sf-code-note\\.is-${k}`), 'background'), codeBg] as [string, string | null, string | null, string | null]),
+    ['error headline', varIn(/\.sf-code-error\s/, 'color'), varIn(/\.sf-code-error\s/, 'background'), codeBg],
+    ['error output', varIn(/\.sf-code-error-detail/, 'color'), varIn(/\.sf-code-error\s/, 'background'), codeBg],
+    ['empty state', varIn(/\.sf-code-empty/, 'color'), codeBg, null],
+    // the guide sits in the drawer, whose background is var(--sf-bg-1) (ResultPanel inline style)
+    ['KiCad guide', varIn(/\.sf-kicad-guide\s/, 'color'), 'bg-1', null],
+  ]
+  for (const [name, fg, bg, base] of pairs) {
+    const f = colorOf(fg), b = colorOf(bg), s = base ? colorOf(base) : [255, 255, 255, 1]
+    const r = f && b && s ? ratio(f, over(b, s)) : 0
+    check(`g: contrast ${name}`, r >= 4.5, f && b && s ? `${fg} on ${bg}${base ? ` over ${base}` : ''} = ${r.toFixed(2)}:1` : `colour not found (${fg} on ${bg})`)
+  }
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nall code view checks passed')
