@@ -21,6 +21,7 @@ interface MouserResult {
   url?: string
   price?: string
   currency?: string
+  priceQty?: number | null
   stockNum?: number | null
   error?: string
 }
@@ -91,6 +92,7 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
         if (!r.mouserPart) { MATCHES.set(l.key, null); continue }
         MATCHES.set(l.key, {
           mouserPart: r.mouserPart, mfgPart: r.mfgPart, manufacturer: r.manufacturer, url: r.url, price: r.price, currency: r.currency,
+          priceQty: typeof r.priceQty === 'number' && r.priceQty > 0 ? r.priceQty : null,
           stockNum: typeof r.stockNum === 'number' && Number.isFinite(r.stockNum) ? r.stockNum : null,
         })
         found++
@@ -184,7 +186,7 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
                     ) : <span className="dim">—</span>}
                   </td>
                   {shop && <td className="mono">{m?.mouserPart ?? (MATCHES.has(l.key) ? <span className="dim">찾지 못함</span> : '')}</td>}
-                  {shop && <td className="num">{m?.price || ''}</td>}
+                  {shop && <td className="num">{m?.price || ''}{m?.price && (m.priceQty ?? 1) > 1 ? <span className="dim"> ({m.priceQty}개부터)</span> : null}</td>}
                   {shop && (
                     <td className="num" style={m?.stockNum != null && m.stockNum < l.qty ? { color: TONE_COLOR.bad } : undefined}>
                       {m?.stockNum != null ? m.stockNum.toLocaleString() : ''}
