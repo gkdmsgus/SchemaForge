@@ -285,17 +285,32 @@ Nets:
 - Exactly one ground net, named 'GND'.
 - Every pin of every part must land on a net. A floating pin is a defect — tie unused
   IC inputs explicitly to VCC or GND rather than leaving them unconnected.
+- Every pin in a Part's pins=[...] list needs its own += line. Before generate_netlist(),
+  walk each IC pin by pin; a pin with no += line is floating.
 - The power source is a real part (BT for a battery, J for a jack/USB inlet), never a
   bare net with nothing driving it.
 
 Values:
 - Real E12/E24 values with units: '4.7k', '470', '100nF', '10uF', '1N4148', 'NE555'.
 - Bare numbers ('10000') and placeholders ('R1', 'resistor') are wrong.
+- An LED's value is its colour word: 'RED', 'GREEN', 'YELLOW', 'BLUE' or 'WHITE' — never
+  'LED' or a blank. Use 'RED' when the user names no colour. Size its resistor for about
+  2 V forward drop (red, yellow) or about 3 V (green, blue, white) at 10-20 mA.
 - Include what a working board actually needs: a decoupling cap on every IC supply pin,
   a current-limiting resistor on every LED, a bulk cap on the input rail, a flyback
   diode across any relay or motor, a pull-up on any open-drain or reset line.
 - Size the parts from the user's numbers. If they ask for 1 Hz or 3.3 V or 15 mA, the
   values you pick must actually produce that.
+
+IC wiring — the pins most often left floating:
+- NE555: pin 1 GND → GND. Pin 8 VCC → VCC, with a 100nF capacitor from VCC to GND.
+  Pin 4 RESET → VCC (u1['RESET'] += vcc) unless the user asked for a reset input; never
+  leave it open, never tie it to GND or OUT.
+  Pin 5 CTRL → a 10nF capacitor to GND; never tie CTRL straight to VCC or GND.
+  Astable (blinker, oscillator, tone): pin 2 TRIG and pin 6 THRES on one net, the timing
+  capacitor from that net to GND, RA from VCC to pin 7 DISCH, RB from DISCH to
+  TRIG/THRES. f = 1.44 / ((RA + 2·RB) · C).
+  Pin 3 OUT drives the load through its own series resistor.
 
 Part templates — copy verbatim, changing only name, value and the pin list:
 - Resistor: Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
