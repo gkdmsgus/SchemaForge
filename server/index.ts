@@ -16,6 +16,10 @@ import {
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
+import {
+  errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
+  type ErcFinding, type ErcRun,
+} from './erc_repair'
 import { tavily } from '@tavily/core'
 import axios from 'axios'
 import { createClient } from '@supabase/supabase-js'
@@ -362,15 +366,37 @@ Before the separator: the skidl Python code and nothing else. No prose, no markd
 fences, no comments outside the code.
 After the separator: the Korean guide.`
 
-/** Remove a wrapping ```...``` markdown fence, if the model emitted one. */
-function stripFences(text: string): string {
-  const t = text.trim()
-  if (!t.startsWith('```')) return t
-  const lines = t.split('\n')
-  lines.shift()
-  if (lines[lines.length - 1]?.trim().startsWith('```')) lines.pop()
-  return lines.join('\n').trim()
+/**
+ * The ERC repair's one model call (the current code and guide as its previous answer). Only its own
+ * axios timeout: a slow answer fails the repair and keeps the netlist we have, it never aborts the
+ * whole generation. `signal` is the request's, so a closed tab still cancels it.
+ */
+async function askErcFix(userMsg: string, code: string, guide: string, feedback: string, signal: AbortSignal): Promise<string> {
+  if (process.env.SF_AI_STUB === '1') return stubErcFix(code)
+  const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userMsg },
+      { role: 'assistant', content: `${code}\n---GUIDE---\n${guide}` },
+      { role: 'user', content: feedback },
+    ],
+    temperature: 0.05,
+    max_tokens: 2500,
+  }, {
+    headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    timeout: 45000,
+    signal,
+  })
+  return String(r.data.choices[0]?.message?.content || '').trim()
 }
+
+/** What /generate reports about the netlist check in its done event (src/types.ts GenerateResult.erc). */
+interface GenerateRepair { tried: boolean; kept: boolean; before: number; after: number; note: string }
+interface GenerateErc { findings: ErcFinding[] | null; reason?: string; repair: GenerateRepair | null }
+
+/** SSE data is one line (see sse()); fold any newline in a message. */
+const flat = (s: string) => s.replace(/\s*\r?\n\s*/g, ' / ').trim()
 
 /** Run skidl code (secrets stripped from its environment, temp folder removed); the netlist lands in outputs/. */
 const runSkidl = (code: string): Promise<string> => runSkidlIn(code, OUTPUTS_DIR)
@@ -692,6 +718,9 @@ changed.`
 app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
+  // The '자동 재시도' setting: one model fix for a code error and one for netlist (ERC) errors.
+  // Older clients send nothing and keep both.
+  const autoFix = req.body?.autoFix !== false
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
   res.setHeader('Cache-Control', 'no-cache, no-transform')
@@ -754,11 +783,7 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
       clearTimeout(genTimeout)
     }
 
-    let [skidlCode, guide] = raw.includes('---GUIDE---')
-      ? raw.split('---GUIDE---', 2).map((s: string) => s.trim())
-      : [raw.trim(), '']
-
-    skidlCode = stripFences(skidlCode)
+    let { code: skidlCode, guide } = splitOutput(raw, '')
 
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', '⚙️ Generating netlist...'))
@@ -767,6 +792,14 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
       outputPath = await runSkidl(skidlCode)
     } catch (firstErr) {
       if (abort.signal.aborted) return res.end()
+      if (!autoFix) {
+        res.write(sse('error', JSON.stringify({
+          message: 'skidl execution error',
+          detail: (firstErr as Error).message,
+          code: skidlCode,
+        })))
+        return res.end()
+      }
       res.write(sse('status', '🔧 Fixing code and retrying...'))
       try {
         const fixMessages = [
@@ -786,13 +819,9 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
             signal: abort.signal as AbortSignal,
           })
         } finally { clearTimeout(retryTimeout) }
-        const fixRaw = (fixAxiosRes.data.choices[0].message.content as string).trim()
-        const [fixCodeRaw, fixGuide] = fixRaw.includes('---GUIDE---')
-          ? fixRaw.split('---GUIDE---', 2).map((s: string) => s.trim())
-          : [fixRaw.trim(), guide]
-        const fixCode = stripFences(fixCodeRaw)
-        skidlCode = fixCode
-        if (fixGuide) guide = fixGuide
+        const fix = splitOutput((fixAxiosRes.data.choices[0].message.content as string).trim(), guide)
+        skidlCode = fix.code
+        guide = fix.guide
         outputPath = await runSkidl(skidlCode)
       } catch (retryErr) {
         res.write(sse('error', JSON.stringify({
@@ -801,6 +830,41 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
           code: skidlCode,
         })))
         return res.end()
+      }
+    }
+
+    // Netlist check (ERC) before any PCB, with at most one model repair. Every status names the
+    // netlist (App.tsx detectStep keeps the wizard on that step) and stays on one line (sse()).
+    if (abort.signal.aborted) return res.end()
+    res.write(sse('status', 'ERC: netlist 점검 중...'))
+    let erc: ErcRun = await runErc(outputPath, process.cwd())
+    let repair: GenerateRepair | null = null
+    if (abort.signal.aborted) return res.end()
+    if (!erc.ok) {
+      res.write(sse('status', `ERC: netlist 점검을 돌리지 못했습니다 (${flat(erc.reason)})`))
+    } else {
+      const errors = errorKeys(fixableErrors(erc.findings)).length
+      const warnings = erc.findings.length - erc.findings.filter(f => f.severity === 'error').length
+      if (!errors) {
+        res.write(sse('status', `ERC: netlist 오류 없음${warnings ? `, 경고 ${warnings}개` : ''}`))
+      } else if (!autoFix) {
+        repair = { tried: false, kept: false, before: errors, after: errors, note: '자동 수정이 꺼져 있습니다' }
+        res.write(sse('status', `ERC: netlist 오류 ${errors}개(${errorSites(erc.findings)}). 자동 수정이 꺼져 있어 그대로 둡니다`))
+      } else {
+        res.write(sse('status', `ERC: netlist 오류 ${errors}개(${errorSites(erc.findings)})를 한 번 고칩니다...`))
+        const code = skidlCode, g = guide
+        const r = await repairErc({ code, guide: g, netPath: outputPath, erc }, {
+          ask: feedback => askErcFix(userMsg, code, g, feedback, abort.signal),
+          run: c => runSkidl(c),
+          erc: p => runErc(p, process.cwd()),
+        })
+        if (r.discard) try { unlinkSync(r.discard) } catch { /* already gone */ }
+        if (abort.signal.aborted) return res.end()
+        if (r.kept) ({ code: skidlCode, guide, netPath: outputPath, erc } = r)
+        repair = { tried: true, kept: r.kept, before: r.before, after: r.after, note: r.note }
+        res.write(sse('status', r.kept
+          ? `ERC: netlist를 고쳤습니다 (오류 ${r.before} → ${r.after})`
+          : `ERC: 원래 netlist를 유지합니다 (${flat(r.note)})`))
       }
     }
 
@@ -823,7 +887,10 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
       }).then(() => { /* fire-and-forget */ }, console.error)
     }
 
-    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, sources: sourceUrls, graph })))
+    const ercDone: GenerateErc = erc.ok
+      ? { findings: erc.findings, repair }
+      : { findings: null, reason: erc.reason, repair }
+    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, sources: sourceUrls, graph, erc: ercDone })))
   } catch (e) {
     if (!clientClosed) {
       const msg = abort.signal.aborted

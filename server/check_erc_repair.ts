@@ -143,6 +143,15 @@ const rules = { reset: section1.includes("u1['RESET'] += vcc") && /RESET → VCC
                 led: ['RED', 'GREEN', 'YELLOW', 'BLUE', 'WHITE'].every(c => section1.includes(`'${c}'`)) && /Use 'RED' when/.test(section1) }
 check('E11 prompt rules', Object.values(rules).every(Boolean), JSON.stringify(rules))
 
+// E15. the /generate ERC block (read as text): every status names the netlist (App.tsx detectStep keeps the
+//      wizard step), none has a line break (sse() writes one data: line), and no timer aborts the request
+const block = src.slice(src.indexOf('// Netlist check (ERC) before any PCB'), src.indexOf('const filename = basename(outputPath)'))
+const statuses = [...block.matchAll(/sse\('status',\s*([`'])([\s\S]*?)\1\)/g)].map(m => m[2])
+  .concat([...block.matchAll(/\?\s*`([^`]*)`\s*:\s*`([^`]*)`/g)].flatMap(m => [m[1], m[2]]))
+check('E15 /generate ERC statuses', block.length > 0 && statuses.length >= 6
+  && statuses.every(s => /netlist/i.test(s) && !s.includes('\\n')) && !/abort\(\)/.test(block) && /erc: ercDone/.test(src),
+  `${statuses.length} statuses: ${statuses.map(s => s.slice(0, 24)).join(' | ')}`)
+
 // E14. the judge on its own: a new error key or more warnings is rejected even when the count drops
 const fp = (ref: string, pin: string): ErcFinding => ({ rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref, pin }], net: null })
 const parts = sameRun(brokenErc).components
