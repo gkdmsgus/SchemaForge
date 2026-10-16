@@ -10,7 +10,7 @@ import argparse, json, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from board import generate, parse_netlist, BOARD_MARGIN  # noqa: E402
+from board import generate, netlist_check, parse_netlist, BOARD_MARGIN  # noqa: E402
 from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
@@ -236,6 +236,11 @@ def check_one(name, style, work, cli):
     # 17. a good circuit produces no netlist findings
     res['17 erc clean'] = (not summary['erc'], str([f['rule'] for f in summary['erc']]))
 
+    # 20. the check /generate runs before any PCB (pcb_generator.py --erc-only) agrees with the board's
+    pre = netlist_check(net_path, style)
+    res['20 pre-PCB ERC = board ERC'] = (pre['erc'] == summary['erc'] and len(pre['components']) == len(components),
+                                         f"pre={[f['rule'] for f in pre['erc']]} parts={len(pre['components'])}")
+
     # 18. the stream carries erc and drc-worthy data before done
     try:
         kinds2 = [e['type'] for e in events]
@@ -252,7 +257,8 @@ def _overlap(a, b):
 
 
 def check_broken_circuit(work, cli):
-    """19. the netlist checks must catch a deliberately broken circuit (and only its faults)."""
+    """19. the netlist checks must catch a deliberately broken circuit (and only its faults).
+    20. the pre-PCB check (--erc-only, run as a subprocess the way the server runs it) finds the same."""
     net_path = build_netlist('broken_floating', work)
     pcb = os.path.join(work, 'broken.kicad_pcb')
     summary = generate(net_path, pcb, 'smd')
@@ -260,7 +266,15 @@ def check_broken_circuit(work, cli):
     refs = {(r['ref'], r['pin']) for f in summary['erc'] for r in f['refs']}
     nets = {f['net'] for f in summary['erc'] if f['net']}
     ok = (rules == {'floating_pin', 'single_pin_net'} and ('R2', '2') in refs and 'TEST' in nets)
-    return ok, f'rules={sorted(rules)} refs={sorted(refs)} nets={sorted(nets)}'
+    p = subprocess.run([sys.executable, os.path.join(SERVER, 'pcb_generator.py'), net_path, '--erc-only'],
+                       capture_output=True)
+    try:
+        pre = json.loads(p.stdout.decode('utf-8').strip().splitlines()[-1])
+        pre_ok = p.returncode == 0 and pre['erc'] == summary['erc']
+        pre_info = f"pre={sorted(f['rule'] for f in pre['erc'])} board={sorted(rules)}"
+    except (ValueError, KeyError, IndexError) as e:
+        pre_ok, pre_info = False, f'no JSON from --erc-only: {e} {p.stderr.decode("utf-8", "replace")[-200:]}'
+    return (ok, f'rules={sorted(rules)} refs={sorted(refs)} nets={sorted(nets)}'), (pre_ok, pre_info)
 
 
 def check_templates():
@@ -300,9 +314,10 @@ def main():
                 print(f'   warn {w}')
     b_dir = os.path.join(work_root, 'broken')
     os.makedirs(b_dir, exist_ok=True)
-    b_ok, b_info = check_broken_circuit(b_dir, cli)
-    all_ok &= b_ok
+    (b_ok, b_info), (pre_ok, pre_info) = check_broken_circuit(b_dir, cli)
+    all_ok &= b_ok and pre_ok
     print(f'== broken circuit caught {"PASS" if b_ok else "FAIL"}  {b_info}')
+    print(f'== broken circuit, pre-PCB ERC = board ERC {"PASS" if pre_ok else "FAIL"}  {pre_info}')
     t_ok, t_info = check_templates()
     all_ok &= t_ok
     print(f'== templates {"PASS" if t_ok else "FAIL"}  {t_info}')

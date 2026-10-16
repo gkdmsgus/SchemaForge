@@ -191,6 +191,13 @@ export interface GenerateResult {
   guide?: string
   sources?: string[]
   netlist?: string
+  /** the netlist check /generate ran before any PCB; findings null when it could not run (reason says why) */
+  erc?: {
+    findings: ErcFinding[] | null
+    reason?: string
+    /** the one model repair of its errors; null when there was nothing to repair or the check did not run */
+    repair: { tried: boolean; kept: boolean; before: number; after: number; note: string } | null
+  }
 }
 
 // ── 버전 히스토리 ─────────────────────────────────────────────────────────────
