@@ -1,0 +1,114 @@
+// ── BOM tab (components/BomTable.tsx) ──
+// Lives in the 280 px result drawer: the table scrolls in its own box so the header stays visible.
+
+.sf-bom {
+  padding: var(--sf-s-4) var(--sf-s-5);
+  color: var(--sf-fg);
+  font-family: var(--sf-font-sans);
+  font-size: 12px;
+
+  &--empty { color: var(--sf-fg-dim); font-size: 13px; }
+
+  &__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sf-s-3);
+    margin-bottom: var(--sf-s-3);
+  }
+
+  &__summary {
+    margin-left: auto;
+    font-family: var(--sf-font-mono);
+    font-size: 11px;
+    color: var(--sf-fg-dim);
+  }
+
+  // drawer 280 px − toolbar and padding (about 52 px) − room for two notes under the table
+  &__scroll {
+    max-height: 176px;
+    overflow: auto;
+    border: 1px solid var(--sf-line);
+    border-radius: var(--sf-r-md);
+    background: var(--sf-bg-2);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 6px 10px;
+    text-align: left;
+    white-space: nowrap;
+    background: var(--sf-bg-3);
+    color: var(--sf-fg-dim);
+    font: 600 10px/1.4 var(--sf-font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--sf-line);
+  }
+
+  td {
+    padding: 6px 10px;
+    vertical-align: top;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--sf-line-soft);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--sf-bg-3); }
+
+  tfoot td {
+    position: sticky;
+    bottom: 0;
+    background: var(--sf-bg-3);
+    color: var(--sf-fg-muted);
+    border-top: 1px solid var(--sf-line);
+    border-bottom: none;
+  }
+
+  .num { text-align: right; font-family: var(--sf-font-mono); }
+  .mono { font-family: var(--sf-font-mono); }
+  .ref { min-width: 72px; white-space: normal; font-family: var(--sf-font-mono); }
+  .val { font-family: var(--sf-font-mono); color: var(--sf-amber-deep); }
+  .note { min-width: 160px; white-space: normal; color: var(--sf-fg-muted); }
+  .dim { color: var(--sf-fg-dim); }
+
+  a {
+    color: var(--sf-cyan);
+    text-decoration: none;
+    &:hover { text-decoration: underline; }
+  }
+
+  a:focus-visible,
+  button:focus-visible {
+    outline: 2px solid var(--sf-amber);
+    outline-offset: 2px;
+    border-radius: var(--sf-r-xs);
+  }
+
+  &__note {
+    margin: var(--sf-s-3) 0 0;
+    line-height: 1.5;
+    color: var(--sf-fg-muted);
+    &:empty { margin: 0; }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
