@@ -130,7 +130,7 @@ const synthetic: ErcFinding[] = [
   { rule: 'output_conflict', severity: 'warning', message: 'w', refs: [{ ref: 'U1', pin: '3' }], net: 'OUT' },
   { rule: 'no_ground', severity: 'error', message: 'GND 넷이 없습니다', refs: [], net: null },
 ]
-check('E10 feedback and rules', fb.includes('U1 pin 4') && fb.includes('U1의 핀 4번이 어느 넷에도 연결되지 않았습니다')
+check('E10 feedback and rules', fb.includes('U1 pin 4') && fb.includes('U1의 핀 4번(RESET)이 어느 넷에도 연결되지 않았습니다')
   && fixableErrors(synthetic).map(f => f.rule).join() === 'no_ground', fb.split('\n')[1])
 
 // E11. SYSTEM_PROMPT SECTION 1 (read as text, like run_checks check_templates) carries the wiring and LED rules

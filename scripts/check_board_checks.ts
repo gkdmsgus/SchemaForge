@@ -10,6 +10,7 @@ import path from 'node:path'
 import {
   ERC_RULES, TONE_COLOR, checkRows, connectionCount, overall, stampText, summarize, type CheckRow,
 } from '../src/lib/boardChecks.ts'
+import { PIN_NAMES } from '../src/lib/humanReview.ts'
 import type { BoardModel, DrcResult } from '../src/types.ts'
 
 let failed = 0
@@ -142,6 +143,16 @@ const sample = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted |
   const worst = Object.entries(TONE_COLOR).map(([k, c]) => [k, Math.min(...surfaces.map(s => ratio(c, s)))] as const)
   check('8 tone contrast >= 4.5', worst.every(([, r]) => r >= 4.5),
     worst.map(([k, r]) => `${k} ${r.toFixed(2)}`).join(', '))
+}
+
+// 9. a floating pin is named by its symbol pin ("4번(RESET)"): erc.py's table is the same as humanReview's
+{
+  const src = fs.readFileSync(path.join('server', 'pcb', 'erc.py'), 'utf-8')
+  const block = /PIN_NAMES = \{([\s\S]*?)\n\}/.exec(src)?.[1] ?? ''
+  const py: Record<string, string[]> = {}
+  for (const m of block.matchAll(/'([^']+)':\s*\[([^\]]*)\]/g)) py[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map(x => x[1])
+  const same = JSON.stringify(Object.entries(py).sort()) === JSON.stringify(Object.entries(PIN_NAMES).sort())
+  check('9 erc.py PIN_NAMES = humanReview PIN_NAMES', Object.keys(py).length > 0 && same, `${Object.keys(py).length} templates in erc.py`)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
