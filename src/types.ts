@@ -198,6 +198,8 @@ export interface GenerateResult {
     /** the one model repair of its errors; null when there was nothing to repair or the check did not run */
     repair: { tried: boolean; kept: boolean; before: number; after: number; note: string } | null
   }
+  /** the code was edited and rerun in the Code tab, so guide and roles may describe the earlier circuit */
+  codeEdited?: boolean
 }
 
 // ── 버전 히스토리 ─────────────────────────────────────────────────────────────

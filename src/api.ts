@@ -76,7 +76,8 @@ export interface DbSession {
   id: string
   name?: string
   prompt: string
-  guide?: string
+  code?: string | null
+  guide?: string | null
   graph?: unknown
   filename?: string
   created_at: string
