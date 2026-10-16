@@ -50,8 +50,21 @@ def sym_ref(part, pad):
 
 
 def check(components, nets, parts=None):
-    """[{rule, severity, message, refs:[{ref,pin}], net}] — parts (board model) gives pin counts."""
+    """[{rule, severity, message, refs:[{ref,pin,sym?,name?}], net}] — parts (board model) gives pin counts.
+
+    refs.pin is the footprint pad (the board view marks it) when the board model is given, and sym/name
+    the symbol pin the code and the netlist use; messages name the symbol pin.
+    """
     findings = []
+    by_ref = {p['ref']: p for p in (parts or [])}
+
+    def node_ref(nd):
+        """a netlist node (symbol pin) as a ref on its board pad, with the symbol pin and its name"""
+        p = by_ref.get(nd['ref'])
+        pad = next((pd for pd, s in (p or {}).get('pad_sym', {}).items() if str(s) == str(nd['pin'])), None)
+        if p is None or pad is None:
+            return {'ref': nd['ref'], 'pin': nd['pin']}
+        return {'ref': nd['ref'], 'pin': pad, **sym_ref(p, pad)}
 
     # 1. pads that carry no net (the pin was never connected in the netlist)
     if parts:
@@ -72,7 +85,7 @@ def check(components, nets, parts=None):
             findings.append({
                 'rule': 'single_pin_net', 'severity': 'error',
                 'message': f"넷 '{n['name']}'에 핀이 {nd['ref']}.{nd['pin']} 하나뿐입니다 (연결이 끊긴 선)",
-                'refs': [{'ref': nd['ref'], 'pin': nd['pin']}], 'net': n['name']})
+                'refs': [node_ref(nd)], 'net': n['name']})
 
     # 3. no ground
     if not any(n['name'].upper() in ('GND', 'AGND', 'DGND', 'PGND') for n in nets):
@@ -89,7 +102,7 @@ def check(components, nets, parts=None):
             findings.append({
                 'rule': 'unpowered_rail', 'severity': 'warning',
                 'message': f"전원 넷 '{n['name']}'에 공급원(전원 출력 핀)이 없습니다",
-                'refs': [{'ref': nd['ref'], 'pin': nd['pin']} for nd in n['nodes'][:4]], 'net': n['name']})
+                'refs': [node_ref(nd) for nd in n['nodes'][:4]], 'net': n['name']})
 
     # 5. two or more driving outputs on one net
     for n in nets:
@@ -99,6 +112,6 @@ def check(components, nets, parts=None):
                 'rule': 'output_conflict', 'severity': 'warning',
                 'message': f"넷 '{n['name']}'에 출력 핀이 {len(outs)}개 (" +
                            ', '.join(f"{o['ref']}.{o['pin']}" for o in outs) + ") 있습니다 — 출력끼리 충돌",
-                'refs': [{'ref': o['ref'], 'pin': o['pin']} for o in outs], 'net': n['name']})
+                'refs': [node_ref(o) for o in outs], 'net': n['name']})
 
     return findings

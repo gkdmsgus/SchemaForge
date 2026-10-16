@@ -189,7 +189,9 @@ function checkRowsBase(
     if (!erc) { rows.push({ id, label, state: 'skipped', count: 0, detail: ['이 기판에는 회로 점검 결과가 없습니다'], findings: [] }); continue }
     const hits = erc.map((f, i) => ({ f, i })).filter(x => x.f.rule === id)
     const state: CheckState = hits.some(x => x.f.severity === 'error') ? 'error' : hits.length ? 'warn' : 'pass'
-    rows.push({ id, label, state, count: hits.length, detail: [], findings: hits.map(x => `erc${x.i}`) })
+    // errors per pin (one floating_pin finding can name several pins of a part), warnings per finding
+    const count = state === 'error' ? ercErrorCount(hits.map(x => x.f)) : hits.length
+    rows.push({ id, label, state, count, detail: [], findings: hits.map(x => `erc${x.i}`) })
   }
 
   // does it work: numeric checks on the part values

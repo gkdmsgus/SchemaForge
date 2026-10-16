@@ -1,8 +1,8 @@
-// Checks E1-E19: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E20: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
-// behind (E12-E13, E18), the /generate and /test_code wiring read as text (E15-E16), and the pin names
-// erc.py shares with the front end (E19). No model, no server, no KiCad; needs python + skidl (a missing
-// python is a FAIL).
+// behind (E12-E13, E18), the /generate and /test_code wiring read as text (E15-E16), the pin names
+// erc.py shares with the front end (E19), and where findings point on the board (E20).
+// No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
 import { execFileSync } from 'child_process'
@@ -200,6 +200,15 @@ const tsNames = table(readFileSync(join('..', 'src', 'lib', 'humanReview.ts'), '
 const sorted = (o: Record<string, string[]>) => JSON.stringify(Object.entries(o).sort())
 check('E19 pin names match the front end', Object.keys(pyNames).length >= 10 && sorted(pyNames) === sorted(tsNames),
   `${Object.keys(pyNames).length} in erc.py, ${Object.keys(tsNames).length} in humanReview.ts`)
+
+// E20. every rule's refs sit on the board pad (the board view marks it) and carry the symbol pin: an LED anode
+//      (symbol 1, pad 2 in the LED footprint) on a typo net; error keys and status sites use the symbol pin
+const typoNet = await run(blink.replace("d1['A'] += led_a", "d1['A'] += Net('LEDA')"))
+const typo = await erc(typoNet)
+const anode = typo.ok ? typo.findings.flatMap(f => f.refs).find(r => r.ref === 'D1') : undefined
+check('E20 refs on the pad, keys by symbol pin', !!anode && anode.pin === '2' && anode.sym === '1' && anode.name === 'A'
+  && typo.ok && errorKeys(typo.findings).includes('single_pin_net D1.1'),
+  `D1 ref=${JSON.stringify(anode)} keys=[${typo.ok ? errorKeys(typo.findings).join(', ') : typo.reason}]`)
 
 // E12. secrets never reach the child: API keys, Supabase settings, *SECRET*, *TOKEN*; everything else does
 const planted = { OPENAI_API_KEY: 'sk-check', SUPABASE_URL: 'https://check.invalid', MOUSER_API_KEY: 'm',

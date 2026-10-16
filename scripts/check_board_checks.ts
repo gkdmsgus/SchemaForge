@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  ERC_RULES, TONE_COLOR, checkRows, connectionCount, overall, stampText, summarize, type CheckRow,
+  ERC_RULES, TONE_COLOR, checkRows, connectionCount, ercErrorCount, overall, stampText, summarize, type CheckRow,
 } from '../src/lib/boardChecks.ts'
 import type { BoardModel, DrcResult } from '../src/types.ts'
 
@@ -116,7 +116,8 @@ const sample = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted |
     const expect = [...(b.erc || []).map((_, i) => `erc${i}`), ...(b.unrouted || []).map((_, i) => `unr${i}`)]
     if (linked.length !== new Set(linked).size || expect.some(id => !linked.includes(id))) bad.push(f)
     for (const [id] of ERC_RULES) {
-      const n = (b.erc || []).filter(e => e.rule === id).length
+      const hits = (b.erc || []).filter(e => e.rule === id)
+      const n = hits.some(e => e.severity === 'error') ? ercErrorCount(hits) : hits.length
       if (byId(rows)[id].count !== n) bad.push(`${f}:${id}`)
     }
   }
