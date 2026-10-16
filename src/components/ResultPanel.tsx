@@ -7,7 +7,7 @@ import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
-import type { CodeEdit } from '../lib/pythonCode'
+import { toLF, type CodeEdit } from '../lib/pythonCode'
 import TraceField from './TraceField.tsx'
 import {
   Button, Input,
@@ -422,7 +422,7 @@ export default function ResultPanel({
   const title = (lastPrompt || 'Generated Circuit').slice(0, 60)
 
   const lastRun = codeRun && codeRun.filename === result.filename ? codeRun : null
-  const codeDirty = !!codeEdit && codeEdit.text !== (result.code ?? '')
+  const codeDirty = !!codeEdit && codeEdit.text !== toLF(result.code ?? '')
 
   const TOPBAR_H = 44
   // the Code tab is taller so the editor fits without its buttons scrolling away

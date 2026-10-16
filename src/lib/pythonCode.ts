@@ -140,6 +140,12 @@ export function indentLines(value: string, selStart: number, selEnd: number, out
   return { start: lineStart, end: blockEnd, text, selStart: map(selStart, multi), selEnd: map(selEnd, false) }
 }
 
+/** A textarea reports its value with '\n' only, so code with '\r\n' (a file read on Windows)
+ *  is compared and edited in this form. */
+export function toLF(code: string): string {
+  return code.replace(/\r\n?/g, '\n')
+}
+
 /** The Code tab's draft, kept by ResultPanel so switching drawer tabs does not lose it. */
 export interface CodeEdit {
   text: string

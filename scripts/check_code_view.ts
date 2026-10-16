@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { errorLine, indentLines, lineRange, summarizeError, tokenizePython, type Tok } from '../src/lib/pythonCode.ts'
+import { errorLine, indentLines, lineRange, summarizeError, toLF, tokenizePython, type Tok } from '../src/lib/pythonCode.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 let failed = 0
@@ -107,6 +107,8 @@ const lineOf = (v: string, pos: number) => v.slice(0, pos).split('\n').length
   check('e: selection ending at a line start leaves that line alone', apply(code, toLineStart) === '    a = 1\n    b = 2\n\nc = 3' && toLineStart.selStart === 0 && toLineStart.selEnd === 10)
   const tabbed = indentLines('\tx', 0, 2, true)!
   check('e: outdent removes one tab', apply('\tx', tabbed) === 'x')
+  // a textarea reports '\n' only; code read on Windows has '\r\n' and must not look edited
+  check('e: toLF matches what a textarea reports', toLF('a\r\nb\rc\n') === 'a\nb\nc\n' && toLF(code) === code)
 }
 
 // ── (f) live: inject a fault into a demo circuit and run it through python + skidl ──
