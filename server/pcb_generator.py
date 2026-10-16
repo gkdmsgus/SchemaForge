@@ -12,6 +12,10 @@ With --stream every stdout line is a JSON event:
   {"type":"init", "frame":[x1,y1,x2,y2], "iterations":N}
   {"type":"frame", "iter":i, "phase":"force|legalize|refine", "hpwl":h, "parts":{ref:[x,y,rot]}}
   {"type":"done", "summary":{...}, "board":{...board.json...}}
+
+       python pcb_generator.py <input.net> --erc-only [--style smd|tht]
+prints one JSON line {"erc": [...], "components": [...]}: the board's netlist checks, run
+before any PCB exists (board.netlist_check). Nothing is written.
 """
 import argparse, json, os, sys
 
@@ -32,12 +36,19 @@ if hasattr(sys.stdout, 'reconfigure'):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('net')
-    ap.add_argument('pcb')
+    ap.add_argument('pcb', nargs='?')
     ap.add_argument('--style', choices=['smd', 'tht'], default='smd')
     ap.add_argument('--placer', choices=['force', 'shelf', 'fixed'], default='force')
     ap.add_argument('--overrides', help='JSON file: {"parts": {ref: [x, y, rot]}, "net_width": {net: mm}}')
     ap.add_argument('--stream', action='store_true')
+    ap.add_argument('--erc-only', action='store_true', help='print the netlist checks as JSON and stop')
     args = ap.parse_args()
+
+    if args.erc_only:
+        print(json.dumps(board.netlist_check(args.net, args.style), ensure_ascii=False))
+        return
+    if not args.pcb:
+        ap.error('the output .kicad_pcb path is required unless --erc-only is given')
 
     overrides = None
     if args.overrides:
