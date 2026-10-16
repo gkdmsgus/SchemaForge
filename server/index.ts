@@ -1229,66 +1229,47 @@ app.get('/download_pcb/:filename', (req: Request, res: Response) => {
 })
 
 // ── POST /mouser_search ────────────────────────────────────────────
+// One request per BOM line (the client groups parts). Without MOUSER_API_KEY nothing is made
+// up: the answer says available:false and the BOM keeps its search links.
 
-interface MockPreset { mfg: string; desc: string; price: number; partFmt: string }
+const MOUSER_MAX_LINES = 60
+// same words as src/lib/bom.ts SEARCH_WORD (the server image does not ship src/)
+const MOUSER_WORD: Record<string, string> = {
+  R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
+  Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
+  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal',
+}
 
-function mockMouserPart(comp: ComponentEntry) {
-  const prefix = comp.ref.replace(/\d+/g, '')
-  const v = comp.value || ''
-  const presets: Record<string, MockPreset> = {
-    R:  { mfg: 'Yageo',             desc: `${v} ±1% 1/4W chip resistor`, price: 0.04, partFmt: 'RC0805FR-07' },
-    C:  { mfg: 'Murata',            desc: `${v} 50V X7R MLCC`,           price: 0.08, partFmt: 'GRM21BR71H' },
-    L:  { mfg: 'TDK',               desc: `${v} shielded inductor`,      price: 0.42, partFmt: 'CLF7045T-' },
-    D:  { mfg: 'Lite-On',           desc: `LED ${v} 5mm`,                price: 0.12, partFmt: 'LTL-1HE' },
-    Q:  { mfg: 'ON Semiconductor',  desc: `Transistor ${v}`,             price: 0.16, partFmt: 'BC547B-' },
-    U:  { mfg: 'Texas Instruments', desc: `IC ${v}`,                     price: 1.20, partFmt: '595-' },
-    SW: { mfg: 'Omron',             desc: `Tactile switch ${v}`,         price: 0.28, partFmt: 'B3F-1000' },
-    K:  { mfg: 'Omron',             desc: `Relay ${v} 5V coil`,          price: 1.85, partFmt: 'G5V-1-DC' },
-    LS: { mfg: 'CUI Devices',       desc: `Buzzer ${v}`,                 price: 1.45, partFmt: 'CMT-' },
-    BT: { mfg: 'Keystone',          desc: `Battery holder ${v}`,         price: 0.95, partFmt: 'BH-' },
-    F:  { mfg: 'Bel Fuse',          desc: `Fuse ${v}`,                   price: 0.55, partFmt: '0451-' },
-  }
-  const preset = presets[prefix] || { mfg: 'Generic', desc: v || prefix, price: 0.5, partFmt: 'GEN-' }
-  const seedNum = Math.abs([...comp.ref].reduce((a, c) => a * 31 + c.charCodeAt(0), 0)) % 9000 + 1000
-  const mouserPart = preset.partFmt + seedNum
-  const stock = (seedNum * 13) % 50000 + 500
-  return {
-    ref: comp.ref,
-    value: comp.value,
-    mouserPart,
-    mfgPart: preset.partFmt.split('-')[0] + seedNum,
-    manufacturer: preset.mfg,
-    description: preset.desc,
-    price: `$${preset.price.toFixed(2)}`,
-    priceNum: preset.price,
-    url: `https://kr.mouser.com/Search/Refine?Keyword=${encodeURIComponent(v || preset.partFmt)}`,
-    imageUrl: '',
-    stock: String(stock),
-    mock: true,
-  }
+/** name = part template, pkg = the board's package as a shop knows it (src/lib/bom.ts searchPkg) */
+interface MouserQuery { ref: string; value: string; name?: string; pkg?: string | null }
+
+/** part type + value + package, as src/lib/bom.ts searchKeyword builds the BOM's search links */
+function mouserKeyword(q: MouserQuery): string {
+  const conn = /^Conn_01x(\d+)$/.exec(String(q.name ?? ''))
+  if (conn) return `pin header 1x${conn[1]} 2.54mm`
+  const value = String(q.value).trim()
+  const word = MOUSER_WORD[String(q.name ?? '')] ?? ''
+  const keepWord = word && !value.toLowerCase().includes(word.toLowerCase())
+  const pkg = typeof q.pkg === 'string' && /^[\w.-]{1,24}$/.test(q.pkg) ? q.pkg : ''
+  return [keepWord ? word : '', value, pkg].filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 80)
 }
 
 app.post('/mouser_search', async (req: Request, res: Response) => {
   const { components } = req.body || {}
-  if (!components?.length) return res.status(400).json({ error: 'No components' })
+  if (!Array.isArray(components) || !components.length) return res.status(400).json({ error: 'No components' })
+  if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `Too many components (max ${MOUSER_MAX_LINES})` })
 
   const apiKey = process.env.MOUSER_API_KEY
-  if (!apiKey) {
-    return res.json({ results: (components as ComponentEntry[]).map(mockMouserPart), cartUrl: null, mockMode: true })
-  }
+  if (!apiKey) return res.json({ available: false, reason: 'MOUSER_API_KEY not set', results: [] })
 
   const results = []
-  for (const comp of components as ComponentEntry[]) {
-    if (!comp.value || comp.value === '-') {
-      results.push({ ref: comp.ref, value: comp.value, mouserPart: null })
+  for (const comp of components as MouserQuery[]) {
+    const ref = String(comp?.ref ?? '')
+    if (!comp?.value || comp.value === '-') {
+      results.push({ ref, value: comp?.value, mouserPart: null })
       continue
     }
-    const prefix = comp.ref.replace(/\d+/g, '')
-    const typeMap: Record<string, string> = {
-      R: 'resistor', C: 'capacitor', L: 'inductor', D: 'diode', Q: 'transistor',
-      U: '', SW: 'switch', LS: 'buzzer', BT: 'battery holder', K: 'relay',
-    }
-    const keyword = `${comp.value} ${typeMap[prefix] || ''} SMD`.trim()
+    const keyword = mouserKeyword({ ...comp, ref })
     try {
       const resp = await axios.post(
         `https://api.mouser.com/api/v1/search/keyword?apiKey=${apiKey}`,
@@ -1298,27 +1279,26 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
       const parts = resp.data?.SearchResults?.Parts || []
       if (parts.length > 0) {
         const p = parts[0]
+        // Unverified against a live response: AvailabilityInStock (digits) and PriceBreaks[].Currency.
+        // Availability is a phrase ("4,521 In Stock"), so the stock number is only taken from AvailabilityInStock.
+        const stock = String(p.AvailabilityInStock ?? '').trim()
         results.push({
-          ref: comp.ref, value: comp.value,
+          ref, value: comp.value, keyword,
           mouserPart: p.MouserPartNumber, mfgPart: p.ManufacturerPartNumber,
           manufacturer: p.Manufacturer, description: p.Description,
-          price: p.PriceBreaks?.[0]?.Price || '',
-          url: p.ProductDetailUrl, imageUrl: p.ImagePath, stock: p.Availability,
+          price: p.PriceBreaks?.[0]?.Price || '', currency: p.PriceBreaks?.[0]?.Currency || '',
+          url: p.ProductDetailUrl, imageUrl: p.ImagePath,
+          stockNum: /^\d+$/.test(stock) ? Number(stock) : null,
         })
       } else {
-        results.push({ ref: comp.ref, value: comp.value, mouserPart: null })
+        results.push({ ref, value: comp.value, keyword, mouserPart: null })
       }
     } catch (e) {
-      results.push({ ref: comp.ref, value: comp.value, mouserPart: null, error: (e as Error).message })
+      results.push({ ref, value: comp.value, keyword, mouserPart: null, error: (e as Error).message })
     }
   }
 
-  const cartParts = results.filter(r => r.mouserPart)
-  const cartUrl = cartParts.length > 0
-    ? `https://kr.mouser.com/Cart/AddToCart?PartsString=${encodeURIComponent(cartParts.map(p => `${p.mouserPart}|1`).join('||'))}`
-    : null
-
-  res.json({ results, cartUrl })
+  res.json({ available: true, results })
 })
 
 // ── POST /generate_gerber (local KiCad CLI only) ───────────────────
