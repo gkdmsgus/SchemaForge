@@ -60,6 +60,7 @@ export default function CodeEditor({
   const editLines = useMemo(() => (edit ? edit.text.split('\n').length : 0), [edit])
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const paneRef = useRef<HTMLDivElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
   const editBtnRef = useRef<HTMLButtonElement>(null)
   // Esc, then Tab, leaves the textarea: Tab indents otherwise, which would trap keyboard users
@@ -106,6 +107,7 @@ export default function CodeEditor({
 
   function startEdit() {
     focusNext.current = 'editor'
+    releaseTab.current = false
     setEdit({ text: code, error: null })
   }
 
@@ -144,8 +146,9 @@ export default function CodeEditor({
       }
       if (!graph.components.length) return fail('넷리스트에 부품이 없습니다.')
       onApplied({ code: sent, filename: data.filename, graph, erc: data.erc, ercError: data.ercError })
-      // keyboard users land on 수정 again instead of the page body
-      focusNext.current = 'editButton'
+      // keyboard users land on 수정 again instead of the page body (not when they moved on elsewhere)
+      const ae = document.activeElement
+      if (!ae || ae === document.body || paneRef.current?.contains(ae)) focusNext.current = 'editButton'
       setEdit(null)
     } catch (e) {
       fail(`실행 요청이 실패했습니다: ${(e as Error).message}`)
@@ -218,7 +221,7 @@ export default function CodeEditor({
 
   if (!edit) {
     return (
-      <div className="sf-code-pane">
+      <div className="sf-code-pane" ref={paneRef}>
         <div className="sf-code-head">
           <span className="sf-code-title">SKIDL 코드</span>
           {code && <span className="sf-code-meta">{lines.length}줄</span>}
@@ -258,7 +261,7 @@ export default function CodeEditor({
 
   const runTitle = !canRun ? '로그인 후 실행할 수 있습니다' : !dirty ? '바뀐 내용이 없습니다' : 'Ctrl+Enter (Mac: ⌘+Enter)'
   return (
-    <div className="sf-code-pane">
+    <div className="sf-code-pane" ref={paneRef}>
       <div className="sf-code-head">
         <span className="sf-code-title">코드 수정</span>
         <span className={'sf-code-meta' + (dirty ? ' is-dirty' : '')}>{running ? '실행 중' : dirty ? '바뀜' : '바뀐 내용 없음'}</span>
@@ -296,6 +299,7 @@ export default function CodeEditor({
         <textarea ref={taRef} className="sf-code-textarea" value={edit.text} readOnly={running}
           onChange={e => { const text = e.target.value; setEdit(prev => prev && { ...prev, text }) }}
           onKeyDown={onKeyDown}
+          onBlur={() => { releaseTab.current = false }}
           onScroll={e => { if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop }}
           wrap="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off"
           aria-label="skidl 코드 편집" aria-describedby="sf-code-keys" />

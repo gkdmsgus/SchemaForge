@@ -47,6 +47,9 @@ function nowTs() {
 
 export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadAuth()?.user ?? null)
+  // the login as of now: callbacks made before a login (the modal's onSuccess, its timers) read this
+  const authRef = useRef(authUser)
+  authRef.current = authUser
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<Progress | null>(null)
@@ -175,7 +178,7 @@ export default function App() {
     if (!p.trim() || loading) return
 
     // 로그인 필요: 모달 열고 로그인 후 자동 재개
-    if (!authUser) {
+    if (!authRef.current) {
       pendingGenerateRef.current = { prompt: p, typeKey, skipCache }
       setAuthModalOpen(true)
       return
@@ -211,12 +214,12 @@ export default function App() {
   }
 
   /**
-   * ↺ and the 수정 요청 box on the result screen: the prompt already went through the questions and the
-   * plan, and their panels are hidden while a result is open, so generate straight away (no cache).
+   * ↺ on the result screen and 재시도 after an error: the prompt already went through the questions and
+   * the plan (their panels are hidden here), so generate straight away, without the cache.
    */
   function regenerate(p: string) {
     if (!p.trim() || loading) return
-    if (!authUser) {
+    if (!authRef.current) {
       pendingGenerateRef.current = { prompt: p, direct: true }
       setAuthModalOpen(true)
       return
@@ -236,8 +239,10 @@ export default function App() {
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
-    // a new circuit starts without the chat edits of the one on screen (a cached or history load seeds them)
+    // a new circuit starts without the chat edits of the one on screen (a cached or history load seeds them),
+    // and is not the session the favourite button points at until it is saved
     setInitialChatSession(null)
+    setCurrentSessionId(null)
     lastPrompt.current = p
     setLoading(true)
     setError(null)
@@ -321,7 +326,7 @@ export default function App() {
             setResult(d)
             setResultKey(k => k + 1)
             saveResultToLocal(d, p)
-            if (authUser) {
+            if (authRef.current) {
               saveSession({ prompt: p, code: d.code, guide: d.guide, graph: d.graph, filename: d.filename })
                 .then(id => setCurrentSessionId(id))
                 .catch(() => {})
@@ -399,6 +404,7 @@ export default function App() {
         }}
         onSuccess={(user, _token) => {
           setAuthUser(user)
+          authRef.current = user
           // 로그인 전에 시도했던 생성 요청이 있으면 이어서 실행
           const pending = pendingGenerateRef.current
           if (pending) {
@@ -503,7 +509,7 @@ export default function App() {
             display: 'flex', alignItems: 'center', gap: 12,
           }}>
             <span style={{ flex: 1 }}>{error}</span>
-            <Button variant="primary" size="md" onClick={() => runGenerate(lastPrompt.current)}>재시도</Button>
+            <Button variant="primary" size="md" onClick={() => regenerate(lastPrompt.current)}>재시도</Button>
           </div>
         </div>
       )}
