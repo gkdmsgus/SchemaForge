@@ -5,8 +5,9 @@ import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
 import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
-import CodeEditor from './CodeEditor'
+import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
+import type { CodeEdit } from '../lib/pythonCode'
 import TraceField from './TraceField.tsx'
 import {
   Button, Input,
@@ -37,6 +38,23 @@ function updateSavedResultChat(prompt: string, messages: ChatMessage[], graph: N
   if (idx < 0) return
   saved[idx] = { ...saved[idx], messages, graph: graph || saved[idx].graph }
   localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+}
+
+/** After a code run: the saved entry keeps the edited code and its circuit (the chat graph is replaced). */
+function updateSavedResult(prompt: string, patch: Pick<GenerateResult, 'code' | 'filename' | 'graph' | 'codeEdited'>) {
+  try {
+    const saved = getSavedResults()
+    const idx = saved.findIndex(s => s.prompt === prompt)
+    if (idx < 0) return
+    saved[idx] = { ...saved[idx], result: { ...withoutErc(saved[idx].result ?? {}), ...patch }, graph: patch.graph ?? saved[idx].graph }
+    localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+  } catch { /* storage full or blocked: the edit stays in memory */ }
+}
+
+/** Drops checks that describe a previous netlist (the generation step may attach `erc`). */
+function withoutErc(r: GenerateResult): GenerateResult {
+  const { erc: _previous, ...rest } = r as GenerateResult & { erc?: unknown }
+  return rest
 }
 
 export function deleteSavedResult(id: number) {
@@ -104,10 +122,15 @@ export default function ResultPanel({
   const [favLoading, setFavLoading] = useState(false)
   const [graphHistory, setGraphHistory] = useState<NetGraph[]>([])
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
+  // Code tab: the draft and the last run outlive drawer tab switches
+  const [codeEdit, setCodeEdit] = useState<CodeEdit | null>(null)
+  const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
+  // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph)
+  const aiEdited = !!localGraph && localGraph !== result?.graph
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
     : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
@@ -208,6 +231,24 @@ export default function ResultPanel({
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
     }
+  }
+
+  /** A successful run in the Code tab replaces the circuit, AI chat edits included (the user confirmed). */
+  function applyCodeResult(run: CodeRun) {
+    const diff = computeDiff(effectiveGraph ?? null, run.graph)
+    const patch = { code: run.code, filename: run.filename, graph: run.graph, codeEdited: true }
+    setResult(p => p && { ...withoutErc(p), ...patch })
+    setLocalGraph(null)
+    setGraphHistory([])
+    setGraphDiff(diff)
+    setTimeout(() => setGraphDiff(null), 3000)
+    updateSavedResult(lastPrompt, patch)
+    const refs = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    setCodeRun({
+      filename: run.filename, parts: run.graph.components.length, nets: run.graph.nets.length,
+      added: refs(diff.added), removed: refs(diff.removed), modified: refs(diff.modified),
+      erc: run.erc, ercError: run.ercError,
+    })
   }
 
   async function generateGerber() {
@@ -367,8 +408,13 @@ export default function ResultPanel({
   ]
   const title = (lastPrompt || 'Generated Circuit').slice(0, 60)
 
+  const lastRun = codeRun && codeRun.filename === result.filename ? codeRun : null
+  const codeDirty = !!codeEdit && codeEdit.text !== (result.code ?? '')
+
   const TOPBAR_H = 44
-  const DRAWER_H = drawerOpen ? 280 : 0
+  // the Code tab is taller so the editor fits without its buttons scrolling away
+  const DRAWER_H = !drawerOpen ? 0
+    : activeTab === 'Code' ? Math.max(280, Math.min(440, Math.round(window.innerHeight * 0.5))) : 280
   const BOTTOMBAR_H = 38
 
   return (
@@ -772,7 +818,8 @@ export default function ResultPanel({
             const isActive = drawerOpen && activeTab === t
             const disabled = (t === 'Guide' && !result.guide) || (t === 'Sources' && !(result.sources?.length))
             return (
-              <button key={t} disabled={disabled} onClick={() => {
+              <button key={t} disabled={disabled} className="sf-drawer-tab" aria-pressed={isActive}
+                title={t === 'Code' && codeDirty ? '실행하지 않은 수정이 있습니다' : undefined} onClick={() => {
                 if (disabled) return
                 if (activeTab === t && drawerOpen) { setDrawerOpen(false) }
                 else { setActiveTab(t); setDrawerOpen(true) }
@@ -783,7 +830,7 @@ export default function ResultPanel({
                 color: disabled ? 'var(--sf-fg-faint)' : (isActive ? 'var(--sf-amber)' : 'var(--sf-fg-dim)'),
                 fontWeight: isActive ? 700 : 400,
                 transition: 'all 0.12s',
-              }}>{t}</button>
+              }}>{t === 'Code' && codeDirty ? 'Code •' : t}</button>
             )
           })}
           <div style={{ flex: 1 }} />
@@ -792,14 +839,17 @@ export default function ResultPanel({
 
         {/* drawer content */}
         {drawerOpen && (
-          <div style={{ height: DRAWER_H, overflowY: 'auto', borderTop: '1px solid var(--sf-line)' }}>
+          <div style={{ height: DRAWER_H, overflowY: activeTab === 'Code' ? 'hidden' : 'auto', borderTop: '1px solid var(--sf-line)' }}>
             {activeTab === 'Netlist' && (
               <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-dim)', overflowX:'auto' }}>
                 {result.netlist || '(no netlist)'}
               </pre>
             )}
             {activeTab === 'Guide' && result.guide && (
-              <div style={{ padding:'14px 20px', color:'var(--sf-fg-dim)', fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{result.guide}</div>
+              <>
+                {result.codeEdited && <div style={drawerNote}>이 안내는 처음 생성한 회로 기준입니다. 코드를 고친 뒤에는 부품 설명이 맞지 않을 수 있습니다.</div>}
+                <div style={{ padding:'14px 20px', color:'var(--sf-fg-dim)', fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{result.guide}</div>
+              </>
             )}
             {activeTab === 'Sources' && (result.sources?.length ?? 0) > 0 && (
               <div style={{ padding:'14px 20px' }}>
@@ -814,10 +864,9 @@ export default function ResultPanel({
               </div>
             )}
             {activeTab === 'Code' && (
-              <div style={{ padding:'0 0 16px' }}>
-                <CodeEditor result={result} setResult={setResult} />
-                <KicadGuide />
-              </div>
+              <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
+                lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited}
+                pcbStale={pcbStale === 'circuit'} onRegeneratePcb={generatePCB} canRun={!!authUser} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
               <GerberFilePanel info={gerberInfo} />
@@ -862,6 +911,12 @@ const ghostBtn = {
   padding: '3px 8px', borderRadius: 4, border: '1px solid var(--sf-line)',
   background: 'transparent', color: 'var(--sf-fg-dim)', cursor: 'pointer',
   fontFamily: 'var(--sf-font-mono)', fontSize: 10, letterSpacing: '0.06em',
+}
+
+/** One-line notice at the top of a drawer tab (text stays at 4.5:1 on the drawer's bg-1). */
+const drawerNote: React.CSSProperties = {
+  margin: '10px 20px 0', padding: '4px 10px', borderLeft: '2px solid var(--sf-amber)',
+  color: 'var(--sf-fg-muted)', fontFamily: 'var(--sf-font-sans)', fontSize: 11, lineHeight: 1.5,
 }
 
 function PanelLabel({ color, label, sub, extra }: { color: string; label: string; sub?: string; extra?: React.ReactNode }) {
