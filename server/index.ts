@@ -906,22 +906,32 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
 })
 
 // ── POST /test_code ────────────────────────────────────────────────
+// Runs the code tab's code exactly as sent (untrimmed, so traceback line numbers match the editor)
+// and reports the netlist check. The code is the user's own: no model repair here.
 
-app.post('/test_code', async (req: Request, res: Response) => {
-  const code = (req.body?.code || '').trim()
-  if (!code) return res.status(400).json({ error: 'No code provided.' })
+app.post('/test_code', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  const code: string = typeof req.body?.code === 'string' ? req.body.code : ''
+  if (!code.trim()) return res.status(400).json({ error: 'No code provided.' })
+  let outputPath: string
   try {
-    const outputPath = await runSkidl(code)
-    const filename = basename(outputPath)
-    let graph: NetGraph = { components: [], nets: [] }
-    try {
-      const netContent = readFileSync(outputPath, 'utf8')
-      graph = parseNetlist(netContent)
-    } catch (_) {}
-    res.json({ filename, graph })
+    outputPath = await runSkidl(code)
   } catch (e) {
-    res.json({ error: (e as Error).message })
+    return res.json({ error: (e as Error).message })
   }
+  const drop = (error: string) => {
+    try { unlinkSync(outputPath) } catch { /* already gone */ }
+    return res.json({ error })
+  }
+  let graph: NetGraph
+  try {
+    graph = parseNetlist(readFileSync(outputPath, 'utf8'))
+  } catch (e) {
+    return drop(`The netlist could not be read: ${(e as Error).message}`)
+  }
+  if (!graph.components.length) return drop('The netlist has no parts.')
+  const filename = basename(outputPath)
+  const erc = await runErc(outputPath, process.cwd())
+  res.json(erc.ok ? { filename, graph, erc: erc.findings } : { filename, graph, erc: null, ercError: erc.reason })
 })
 
 // ── GET /download/:filename ────────────────────────────────────────
