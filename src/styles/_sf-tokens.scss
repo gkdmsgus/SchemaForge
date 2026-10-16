@@ -96,6 +96,8 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   --sf-success:      #{$sf-cyan};
   --sf-warn:         #{$sf-amber};
   --sf-danger:       #{$sf-danger};
+  --sf-danger-soft:  rgba(176, 72, 38, 0.10);
+  --sf-danger-line:  rgba(176, 72, 38, 0.36);
   --sf-info:         #{$sf-fg-muted};
 
   // Shadows (warm-tinted, not black)
