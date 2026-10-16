@@ -229,7 +229,7 @@ export default function App() {
       const res = await fetch(`${API}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ description: p }),
+        body: JSON.stringify({ description: p, autoFix: settings.autoRetry !== false }),
         signal: abort.signal,
       })
       if (!res.ok) {

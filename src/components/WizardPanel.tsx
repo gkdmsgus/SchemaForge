@@ -11,11 +11,11 @@ import FormComposer from './FormComposer.tsx'
 import { Button, Spinner } from './primitives.tsx'
 import type { LogLine } from '../types'
 
-// The server sends three status messages (server/index.ts /generate); App maps them to these phases.
+// The server streams status lines (server/index.ts /generate); App's detectStep maps each one to a phase.
 const STEPS = [
   { key: 'analyzing', label: '요구사항 정리', note: '설명을 회로 사양으로 풀어 씁니다' },
   { key: 'routing',   label: '회로 작성',     note: 'GPT-4o가 부품과 연결을 skidl 코드로 씁니다' },
-  { key: 'placing',   label: '넷리스트 생성', note: '코드를 실행해 .net을 만듭니다. 오류가 나면 코드를 고쳐 다시 실행합니다' },
+  { key: 'placing',   label: '넷리스트 생성', note: '코드를 실행해 .net을 만들고 연결을 점검(ERC)합니다. 코드 오류나 연결 안 된 핀이 있으면 한 번 고쳐 다시 점검합니다' },
 ]
 
 interface WizardPanelProps {

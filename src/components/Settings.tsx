@@ -148,7 +148,7 @@ export default function Settings({ open, onClose, settings, setSettings, onClear
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ flex: 1 }}>
               <div style={{ ...label, marginBottom: 0 }}>자동 재시도</div>
-              <div style={desc}>코드 오류 시 GPT가 자동 수정</div>
+              <div style={desc}>코드 오류·연결 안 된 핀을 GPT가 한 번 고침</div>
             </div>
             <Toggle on={settings.autoRetry} onChange={() => setSettings(s => ({ ...s, autoRetry: !s.autoRetry }))} />
           </div>
