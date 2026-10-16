@@ -127,6 +127,7 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
+  const [netText, setNetText] = useState<{ file: string; text: string | null } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
   // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph)
@@ -134,6 +135,18 @@ export default function ResultPanel({
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
     : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
+
+  // Netlist tab: the .net file itself, fetched when the tab opens and again after a rerun
+  const netFile = result?.filename
+  useEffect(() => {
+    if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
+    let off = false
+    fetch(`${API}/download/${encodeURIComponent(netFile)}`)
+      .then(r => (r.ok ? r.text() : null))
+      .catch(() => null)
+      .then(text => { if (!off) setNetText({ file: netFile, text }) })
+    return () => { off = true }
+  }, [drawerOpen, activeTab, netFile, netText?.file])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
@@ -841,9 +854,15 @@ export default function ResultPanel({
         {drawerOpen && (
           <div style={{ height: DRAWER_H, overflowY: activeTab === 'Code' ? 'hidden' : 'auto', borderTop: '1px solid var(--sf-line)' }}>
             {activeTab === 'Netlist' && (
-              <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-dim)', overflowX:'auto' }}>
-                {result.netlist || '(no netlist)'}
-              </pre>
+              <>
+                <KicadGuide />
+                {aiEdited && <div style={drawerNote}>AI 편집 내용은 이 넷리스트 파일에 없습니다. PCB를 생성하면 편집한 회로로 넷리스트를 새로 만듭니다.</div>}
+                <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-muted)', overflowX:'auto' }}>
+                  {result.netlist || (netText && netText.file === result.filename
+                    ? netText.text ?? '넷리스트 파일을 서버에서 찾지 못했습니다.'
+                    : result.filename ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.')}
+                </pre>
+              </>
             )}
             {activeTab === 'Guide' && result.guide && (
               <>
