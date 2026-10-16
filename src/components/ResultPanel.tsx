@@ -6,6 +6,7 @@ import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
 import { buildBom, compactRefs, type BomBoard } from '../lib/bom'
+import { assemblyRefs } from '../lib/assembly'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import { toLF, type CodeEdit } from '../lib/pythonCode'
@@ -674,14 +675,19 @@ export default function ResultPanel({
           {/* view tabs */}
           <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--sf-bg-1)', borderBottom: '2px solid var(--sf-line-strong)', flexShrink: 0 }}>
             {[
-              { key: 'schematic', label: 'SCHEMATIC', color: 'var(--sf-cyan)', sub: `${components.length} parts` },
-              { key: 'pcb',       label: 'PCB',        color: 'var(--sf-amber-deep)', sub: `${nets.length} nets` },
-            ].map(({ key, label, color, sub }) => {
+              { key: 'schematic', label: 'SCHEMATIC', color: 'var(--sf-cyan)', sub: `${components.length} parts`, off: '' },
+              { key: 'pcb',       label: 'PCB',        color: 'var(--sf-amber-deep)', sub: `${nets.length} nets`, off: '' },
+              // checking off parts placed on the real board: needs a finished PCB
+              { key: 'assembly',  label: '배치하기',    color: 'var(--sf-violet)',
+                sub: boardFinal ? `${assemblyRefs(boardFinal).length} parts` : 'PCB 후',
+                off: boardFinal ? '' : 'PCB를 생성하면 실물 기판에 부품을 올리며 체크할 수 있습니다' },
+            ].map(({ key, label, color, sub, off }) => {
               const active = viewMode === key
               return (
-                <button key={key} onClick={() => setViewMode(key)} style={{
+                <button key={key} onClick={() => { if (!off) setViewMode(key) }} disabled={!!off} title={off || undefined}
+                  data-testid={`view-tab-${key}`} style={{
                   display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '8px 18px', border: 'none', cursor: 'pointer',
+                  padding: '8px 18px', border: 'none', cursor: off ? 'not-allowed' : 'pointer', opacity: off ? 0.55 : 1,
                   background: active ? 'var(--sf-bg)' : 'transparent',
                   borderBottom: active ? `2px solid ${color}` : '2px solid transparent',
                   borderRight: '1px solid var(--sf-line)',
@@ -742,7 +748,7 @@ export default function ResultPanel({
             </div>
           </div>
 
-          {viewMode === 'pcb' && pcbStale && pcbSource && (
+          {viewMode !== 'schematic' && pcbStale && pcbSource && (
             <div role="status" data-testid="pcb-stale" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
               background: 'var(--sf-bg-2)', borderBottom: '1px solid var(--sf-amber)', color: 'var(--sf-amber-deep)', fontSize: 11, lineHeight: 1.5 }}>
               <span style={{ flex: 1 }}>
@@ -753,7 +759,7 @@ export default function ResultPanel({
               <button onClick={generatePCB} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
             </div>
           )}
-          {viewMode === 'pcb' && pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
+          {viewMode !== 'schematic' && pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
             <div role="alert" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
               borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
               <strong>제작 전 부품·핀 배열 확인 필요</strong>
@@ -775,8 +781,17 @@ export default function ResultPanel({
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
               ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} />
+              : viewMode === 'assembly'
+                ? board?.final && board.status === 'done'
+                  ? <BoardView key="assembly" mode="assembly" pcbFilename={pcbFilename ?? undefined}
+                      parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
+                      final={board.final} drc={board.drc} ai={board.ai} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
+                  : <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--sf-fg-dim)', fontSize: 13 }}>
+                      {pcbStatus === 'loading' ? 'PCB를 만드는 중입니다. 끝나면 여기서 부품을 체크할 수 있습니다.' : 'PCB를 생성하면 실물 기판에 부품을 올리며 체크할 수 있습니다.'}
+                    </div>
               : board
-                ? <BoardView pcbFilename={pcbFilename ?? undefined}
+                ? <BoardView key="build" pcbFilename={pcbFilename ?? undefined}
                     parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
                     final={board.final} drc={board.drc} ai={board.ai} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>

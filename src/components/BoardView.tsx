@@ -9,6 +9,8 @@ import type { Camera } from '../lib/board3d'
 import { HUMAN_ROW, STATE_TONE, TONE_COLOR, checkRows, drcCounts, overall, stateWord, summarize, type Tone } from '../lib/boardChecks'
 import { fromBoard, operatingChecks } from '../lib/operatingCheck'
 import { KIND_LABEL, loadReviewed, reviewItems, saveReviewed, type ReviewItem } from '../lib/humanReview'
+import { assemblyRefs, loadPlaced, savePlaced } from '../lib/assembly'
+import { buildBom, type BomLine } from '../lib/bom'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -73,7 +75,12 @@ interface Props {
   pcbFilename?: string          // board on the server, for KiCad's own 3D render
   hpwlShelf?: number
   status: 'streaming' | 'done' | 'error'
+  /** 'assembly': the finished board only, a part list beside it, a click on a part ticks it as placed */
+  mode?: 'build' | 'assembly'
 }
+
+/** width of the assembly list beside the board (it sits next to the drawing, never over it) */
+const ASSEMBLY_W = 300
 
 interface Finding {
   id: string
@@ -194,10 +201,16 @@ function Via({ v }: { v: BoardVia }) {
   )
 }
 
-export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], pcbFilename, hpwlShelf, status }: Props) {
-  const [playhead, setPlayhead] = useState(0)          // fractional frame index
-  const [routeHead, setRouteHead] = useState(0)        // fractional routing-event index
-  const [fit, setFit] = useState(0)                    // 0 = scatter view, 1 = fitted to the board
+export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], pcbFilename, hpwlShelf, status, mode = 'build' }: Props) {
+  const assembly = mode === 'assembly'
+  // a board that was already finished when this view opened (a tab switch, the assembly view) shows finished;
+  // the playback runs while it is being made, and again on ↺ 다시 보기
+  const [startDone] = useState(() => assembly || (status === 'done' && !!final && frames.length > 0))
+  const skipFit = useRef(startDone)
+  const [playhead, setPlayhead] = useState(() => (startDone ? Math.max(frames.length - 1, 0) : 0))   // fractional frame index
+  const [routeHead, setRouteHead] = useState(() => (startDone ? routes.length : 0))               // fractional routing-event index
+  const [fit, setFit] = useState(() => (startDone ? 1 : 0))                                       // 0 = scatter view, 1 = fitted to the board
+  const [aiOpen, setAiOpen] = useState(false)          // the AI rounds stay folded to one line over the board
   const [hoverNet, setHoverNet] = useState<string | null>(null)
   const [show, setShow] = useState<Record<string, boolean>>({ 'F.Cu': true, 'B.Cu': true })
   const [zoom, setZoom] = useState(1)
@@ -213,9 +226,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [real3d, setReal3d] = useState(true)         // KiCad GLB once the finished board exists
   const [zoom3d, setZoom3d] = useState(1)
   const drag3d = useRef<{ x: number; y: number } | null>(null)
-  const dragRef = useRef<{ x: number; y: number } | null>(null)
+  // a press on the board: where it started, whether it became a drag, and the part under it (assembly)
+  const dragRef = useRef<{ x: number; y: number; sx: number; sy: number; moved: boolean; hit: string | null } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
-  const live = useRef({ frames: frames.length, routes: routes.length, fitted: false })
+  const live = useRef({ frames: frames.length, routes: routes.length, fitted: startDone })
   live.current.frames = frames.length
   live.current.routes = routes.length
 
@@ -224,8 +238,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     let raf = 0
     let last = performance.now()
     const tick = (now: number) => {
-      const dt = now - last
-      last = now
+      // a frame's timestamp can be a little before the time the effect started: never run the clock backwards
+      const dt = Math.max(0, now - last)
+      last = Math.max(last, now)
       setPlayhead(ph => Math.min(ph + dt / FRAME_MS, Math.max(live.current.frames - 1, 0)))
       if (live.current.fitted) setRouteHead(rh => Math.min(rh + dt / ROUTE_MS, live.current.routes))
       raf = requestAnimationFrame(tick)
@@ -239,7 +254,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
   // camera: after the last frame plays, glide to the finished board, then start routing
   useEffect(() => {
-    if (!placed) { setFit(0); live.current.fitted = false; return }
+    if (!placed) { setFit(0); live.current.fitted = false; skipFit.current = assembly; return }
+    // opened on a finished board: already fitted, no camera glide (after ↺ 다시 보기 the glide plays)
+    if (skipFit.current) { setFit(1); live.current.fitted = true; return }
     const start = performance.now()
     let raf = 0
     const step = (now: number) => {
@@ -250,7 +267,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [placed])
+  }, [placed, assembly])
 
   const byRef = useMemo(() => Object.fromEntries(parts.map(p => [p.ref, p])), [parts])
 
@@ -258,8 +275,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const poses = useMemo(() => {
     const out: Record<string, [number, number, number]> = {}
     if (!frames.length) return out
-    const i = Math.floor(playhead)
-    const f = playhead - i
+    const i = Math.min(Math.max(Math.floor(playhead), 0), frames.length - 1)
+    const f = Math.min(Math.max(playhead - i, 0), 1)
     const a = frames[i], b = frames[Math.min(i + 1, frames.length - 1)]
     for (const ref of Object.keys(a.parts)) {
       const pa = a.parts[ref], pb = b.parts[ref] || pa
@@ -381,6 +398,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const reviewList = useMemo(() => (final ? reviewItems(final) : []), [final])
   const reviewedKeys = useMemo(() => new Set(reviewList.filter(it => reviewed[it.key]).map(it => it.key)), [reviewList, reviewed])
   const reviewedRefs = useMemo(() => reviewList.filter(it => reviewedKeys.has(it.key)).map(it => it.ref), [reviewList, reviewedKeys])
+  // assembly: the parts to place (not test pads or holes), grouped like the BOM, and which are placed already
+  const asmRefs = useMemo(() => assemblyRefs(final), [final])
+  const asmSet = useMemo(() => new Set(asmRefs), [asmRefs])
+  const asmLines = useMemo(() => (final
+    ? buildBom(final.parts.map(p => ({ ref: p.ref, value: p.value, name: p.part })), { parts: final.parts, unmapped: final.unmapped },
+        final.style === 'tht' ? 'tht' : 'smd').lines
+    : []), [final])
+  const [placedRefs, setPlacedRefs] = useState<Set<string>>(() => loadPlaced(pcbFilename, assemblyRefs(final)))
+  useEffect(() => { setPlacedRefs(loadPlaced(pcbFilename, asmRefs)) }, [pcbFilename, asmRefs])
   // does it work: numeric checks on the finished board's part values
   const opResults = useMemo(() => (final ? operatingChecks(fromBoard(final)) : []), [final])
   const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }, opResults),
@@ -431,6 +457,25 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     }
   }
 
+  /** Assembly: tick or untick a part as placed on the real board (kept per board file in this browser). */
+  function togglePlaced(ref: string) {
+    if (!asmSet.has(ref)) return
+    setPickRef(ref)
+    setPlacedRefs(prev => {
+      const next = new Set(prev)
+      if (next.has(ref)) next.delete(ref)
+      else next.add(ref)
+      savePlaced(pcbFilename, next)
+      return next
+    })
+  }
+  function clearPlaced() {
+    if (!placedRefs.size || !window.confirm('배치 체크를 모두 지울까요?')) return
+    const next = new Set<string>()
+    savePlaced(pcbFilename, next)
+    setPlacedRefs(next)
+  }
+
   function toggleReviewed(it: ReviewItem) {
     // once a person is ticking, the list and this row stay open: the last tick turns the row
     // into "통과", which would otherwise fold it away under the cursor
@@ -469,15 +514,23 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     setZoom(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))
   }
   function onDown(e: React.PointerEvent) {
-    dragRef.current = { x: e.clientX, y: e.clientY }
+    const hit = (e.target as Element).getAttribute?.('data-assembly-hit') ?? null
+    dragRef.current = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, hit }
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
   function onMove(e: React.PointerEvent) {
     const d = dragRef.current, svg = svgRef.current
     if (!d || !svg) return
+    if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) d.moved = true
     const scale = vw / svg.clientWidth
     setPanXY(([px, py]) => [px - (e.clientX - d.x) * scale, py - (e.clientY - d.y) * scale])
-    dragRef.current = { x: e.clientX, y: e.clientY }
+    d.x = e.clientX
+    d.y = e.clientY
+  }
+  function onUp() {
+    const d = dragRef.current
+    dragRef.current = null
+    if (assembly && d && !d.moved && d.hit) togglePlaced(d.hit)
   }
   function replay() { setPlayhead(0); setRouteHead(0); setZoom(1); setPanXY([0, 0]) }
 
@@ -533,11 +586,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* drawing area: 2D and 3D panes with the panels floating over them */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
       <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
-      <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' ? 'none' : 'block' }}>
+      <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' && !assembly ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
         onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove}
-        onPointerUp={() => { dragRef.current = null }}>
+        onPointerUp={onUp} onPointerCancel={() => { dragRef.current = null }}>
         {/* board: target frame while placing, real outline when done */}
         {outline && fit > 0
           ? <rect x={outline[0]} y={outline[1]} width={outline[2] - outline[0]} height={outline[3] - outline[1]}
@@ -589,7 +642,18 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                   height={box[3] - box[1] + 1.2} rx={0.4} fill="none" stroke={TONE_COLOR.accent} strokeWidth={0.2}
                   strokeDasharray="0.8 0.5" style={{ pointerEvents: 'none' }} />
               )}
-              {placed && reviewedRefs.includes(ref) && (
+              {assembly && placed && placedRefs.has(ref) && (
+                <g data-placed={ref} style={{ pointerEvents: 'none' }}>
+                  <rect x={box[0] - 0.3} y={box[1] - 0.3} width={box[2] - box[0] + 0.6} height={box[3] - box[1] + 0.6} rx={0.3}
+                    fill={TONE_COLOR.ok} fillOpacity={0.16} stroke={TONE_COLOR.ok} strokeWidth={0.15} />
+                  <g transform={`translate(${box[2]} ${box[1]})`}>
+                    <circle r={0.95} fill={TONE_COLOR.ok} stroke="#ffffff" strokeWidth={0.14} />
+                    <path d="M -0.45 0 L -0.1 0.36 L 0.48 -0.32" fill="none" stroke="#ffffff" strokeWidth={0.22}
+                      strokeLinecap="round" strokeLinejoin="round" />
+                  </g>
+                </g>
+              )}
+              {placed && !assembly && reviewedRefs.includes(ref) && (
                 <g data-human-ok={ref} transform={`translate(${box[2]} ${box[1]})`} style={{ pointerEvents: 'none' }}>
                   <circle r={0.75} fill={TONE_COLOR.ok} stroke="#ffffff" strokeWidth={0.12} />
                   <path d="M -0.35 0 L -0.08 0.28 L 0.38 -0.25" fill="none" stroke="#ffffff" strokeWidth={0.18}
@@ -634,11 +698,30 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             <title>{net}</title>
           </line>
         )))}
+
+        {/* assembly: one click target per part to place, over everything else */}
+        {assembly && placed && asmRefs.map(ref => {
+          const p = byRef[ref], pose = poses[ref]
+          if (!p || !pose) return null
+          const b = partBox(p, pose[0], pose[1], pose[2])
+          return (
+            <rect key={`hit-${ref}`} data-assembly-hit={ref} x={b[0] - 0.4} y={b[1] - 0.4} width={b[2] - b[0] + 0.8} height={b[3] - b[1] + 0.8}
+              fill="transparent" style={{ cursor: 'pointer' }}>
+              <title>{`${ref} ${p.value} · ${placedRefs.has(ref) ? '배치함 (다시 누르면 해제)' : '눌러서 배치 체크'}`}</title>
+            </rect>
+          )
+        })}
       </svg>
       </div>
 
+      {assembly && placed && (
+        <AssemblyPanel lines={asmLines} total={asmRefs.length} placedRefs={placedRefs} pick={pickRef}
+          reviewList={reviewList} reviewedKeys={reviewedKeys} hasFurniture={(final?.parts ?? []).length > asmRefs.length}
+          onToggle={togglePlaced} onClear={clearPlaced} onReview={toggleReviewed} />
+      )}
+
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
-      {view3d !== '2d' && (
+      {view3d !== '2d' && !assembly && (
         <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: real3d && placed ? 'grab' : (drag3d.current ? 'grabbing' : 'grab'),
           borderLeft: view3d === 'both' ? `1px solid ${UI_LINE}` : 'none', touchAction: 'none' }}
           onPointerDown={real3d && placed ? undefined : on3dDown}
@@ -671,8 +754,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       </div>
 
       {frames.length > 0 && (
-        <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6 }}>
-          {(['2d', 'both', '3d'] as const).map(v => (
+        <div style={{ position: 'absolute', right: assembly ? ASSEMBLY_W + 12 : 12, top: 12, display: 'flex', gap: 6 }}>
+          {!assembly && (['2d', 'both', '3d'] as const).map(v => (
             <button key={v} onClick={() => setView3d(v)} data-testid={`view-${v}`}
               title={v === '2d' ? '평면' : v === 'both' ? '평면 + 3D' : '3D'}
               style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${UI_LINE}`,
@@ -691,7 +774,14 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               {L === 'F.Cu' ? 'F' : 'B'}
             </button>
           ))}
-          {placed && <button onClick={replay} data-testid="board-replay"
+          {assembly && placed && (
+            <button onClick={() => { setZoom(1); setPanXY([0, 0]) }} data-testid="board-fit" title="기판 전체 보기"
+              style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${UI_LINE}`, background: UI_BG,
+                color: UI_FG, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              맞춤
+            </button>
+          )}
+          {placed && !assembly && <button onClick={replay} data-testid="board-replay"
             style={{ padding: '4px 10px', borderRadius: 6,
               border: `1px solid ${UI_LINE}`, background: UI_BG,
               color: UI_FG, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
@@ -701,15 +791,19 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       )}
 
       {/* AI improvement rounds */}
-      {placed && ai.length > 0 && (
-        <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: 320, maxWidth: '48%',
+      {placed && ai.length > 0 && !assembly && (
+        <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: aiOpen ? 320 : 'auto', maxWidth: '46%',
           borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
           fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px' }}>
+          <button type="button" onClick={() => setAiOpen(o => !o)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
+            title={aiOpen ? '접기' : 'AI 다듬기 라운드 보기'}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
+              background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit', whiteSpace: 'nowrap' }}>
             <StatusChip tone="accent">AI 다듬기</StatusChip>
             <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>
-          </div>
-          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            <span aria-hidden="true" style={{ marginLeft: 'auto', color: UI_DIM }}>{aiOpen ? '▾' : '▸'}</span>
+          </button>
+          {aiOpen && <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             {ai.map((r, i) => {
               const d = r.after ? r.after.hpwl - r.before.hpwl : 0
               return (
@@ -736,12 +830,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                 </div>
               )
             })}
-          </div>
+          </div>}
         </div>
       )}
 
       {/* checks: one row per rule, passed rules included; failed rows open to their findings */}
-      {placed && (
+      {placed && !assembly && (
         <div ref={checksRef} data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
           // stops above the 3D hint in the bottom-right corner
           maxHeight: 'calc(100% - 92px)', display: 'flex', flexDirection: 'column',
@@ -901,7 +995,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             <path d={spark} fill="none" stroke={RATSNEST} strokeWidth={1.2} />
           </svg>}
         </>}
-        {placed && saving != null && (
+        {assembly && placed && (
+          <Metric testId="board-assembly" k="배치" v={`${placedRefs.size}/${asmRefs.length}`}
+            tone={placedRefs.size === asmRefs.length && asmRefs.length > 0 ? 'ok' : undefined}
+            title="실물 기판에 부품을 올린 것. 기판에서 부품을 누르거나 오른쪽 목록에서 체크합니다" />
+        )}
+        {placed && saving != null && !assembly && (
           <Metric testId="board-saving" k="배치" tone="ok"
             v={`격자 대비 −${saving}% (${hpwlShelf?.toFixed(0)} → ${hpwlFinal?.toFixed(0)} mm)`}
             title="선 길이 추정(HPWL): 격자에 늘어놓은 배치와 비교" />
@@ -923,10 +1022,121 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         {placed && reviewList.length > 0 && (
           <Metric testId="board-review" k="사람 확인" v={`${reviewedKeys.size}/${reviewList.length}`}
             tone={reviewedKeys.size === reviewList.length ? 'ok' : 'warn'}
-            title="극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 검사 목록의 '사람 확인'에서 체크합니다" />
+            title={assembly ? '극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 부품을 누르면 오른쪽에서 체크합니다'
+              : "극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 검사 목록의 '사람 확인'에서 체크합니다"} />
         )}
         {hoverNet && <Metric k="넷" v={hoverNet} />}
       </div>
     </div>
+  )
+}
+
+/**
+ * Assembly list beside the board: the parts grouped like the BOM, one chip per part (✓ when placed),
+ * and for the part last touched its review (polarity, pinout) with its own tick.
+ */
+function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, hasFurniture, onToggle, onClear, onReview }: {
+  lines: BomLine[]
+  total: number
+  placedRefs: Set<string>
+  pick: string | null
+  reviewList: ReviewItem[]
+  reviewedKeys: Set<string>
+  hasFurniture: boolean
+  onToggle: (ref: string) => void
+  onClear: () => void
+  onReview: (it: ReviewItem) => void
+}) {
+  const done = placedRefs.size
+  const pickLine = pick ? lines.find(l => l.refs.includes(pick)) : undefined
+  const pickReviews = pick ? reviewList.filter(it => it.ref === pick) : []
+  const toLook = new Set(reviewList.filter(it => !reviewedKeys.has(it.key)).map(it => it.ref))
+  const small = { fontSize: 11, color: UI_DIM, lineHeight: 1.45 }
+  return (
+    <aside data-testid="assembly-panel" aria-label="배치하기"
+      style={{ flex: `0 0 ${ASSEMBLY_W}px`, width: ASSEMBLY_W, minWidth: 0, display: 'flex', flexDirection: 'column',
+        borderLeft: `1px solid ${UI_LINE}`, background: '#fbfaf7', color: UI_FG, fontFamily: SANS, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${UI_LINE}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <strong style={{ fontSize: 13 }}>배치하기</strong>
+          <span data-testid="assembly-count" style={{ fontFamily: MONO, fontSize: 11, color: done === total && total ? TONE_COLOR.ok : UI_DIM }}>
+            {done}/{total}
+          </span>
+          <button type="button" onClick={onClear} disabled={!done}
+            style={{ marginLeft: 'auto', padding: '2px 8px', borderRadius: 4, border: `1px solid ${UI_LINE}`, background: 'transparent',
+              color: UI_DIM, fontFamily: MONO, fontSize: 10, cursor: done ? 'pointer' : 'default', opacity: done ? 1 : 0.5 }}>
+            모두 해제
+          </button>
+        </div>
+        <div role="progressbar" aria-label="배치한 부품" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}
+          style={{ marginTop: 6, height: 5, borderRadius: 3, background: 'rgba(0, 0, 0, 0.08)', overflow: 'hidden' }}>
+          <div style={{ width: `${total ? (done / total) * 100 : 0}%`, height: '100%', background: TONE_COLOR.ok, transition: 'width 0.2s' }} />
+        </div>
+        <div style={{ ...small, marginTop: 6 }}>기판에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 끌어서 이동, 휠로 확대합니다.</div>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 10px' }}>
+        {lines.map(l => {
+          const n = l.refs.filter(r => placedRefs.has(r)).length
+          return (
+            <div key={l.key} data-assembly-line={l.refs.join(',')} style={{ padding: '6px 12px', borderBottom: `1px solid rgba(0, 0, 0, 0.05)` }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, ...small }}>
+                <span style={{ color: UI_FG }}>{l.type}</span>
+                <span style={{ fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.value}{l.pkg ? ` · ${l.pkg}` : ''}</span>
+                <span style={{ marginLeft: 'auto', fontFamily: MONO, color: n === l.qty ? TONE_COLOR.ok : UI_DIM }}>{n}/{l.qty}</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                {l.refs.map(ref => {
+                  const on = placedRefs.has(ref)
+                  return (
+                    <button key={ref} type="button" data-assembly-ref={ref} aria-pressed={on}
+                      onClick={() => onToggle(ref)}
+                      title={`${ref} ${on ? '배치함 (누르면 해제)' : '눌러서 배치 체크'}${toLook.has(ref) ? ' · 극성·핀 배열 확인 필요' : ''}`}
+                      style={{ padding: '2px 8px', borderRadius: 12, cursor: 'pointer', fontFamily: MONO, fontSize: 11,
+                        border: `1px solid ${on ? TONE_COLOR.ok : pick === ref ? TONE_COLOR.accent : UI_LINE}`,
+                        background: on ? TONE_COLOR.ok : '#ffffff', color: on ? '#ffffff' : UI_FG }}>
+                      {on ? '✓ ' : ''}{ref}{toLook.has(ref) ? <span aria-hidden="true" style={{ color: on ? '#ffffff' : TONE_COLOR.warn, fontWeight: 700 }}> !</span> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
+        {hasFurniture && <div style={{ ...small, padding: '8px 12px 0' }}>테스트 패드와 고정 구멍은 올릴 부품이 아니라 목록에서 뺐습니다.</div>}
+        {toLook.size > 0 && <div style={{ ...small, padding: '4px 12px 0' }}><span style={{ color: TONE_COLOR.warn, fontWeight: 700 }}>!</span> 표시는 극성이나 핀 배열을 실물과 맞춰 볼 부품입니다. 누르면 목록 아래에 내용이 나옵니다.</div>}
+      </div>
+      {pick && pickLine && (
+        <div data-testid="assembly-pick" style={{ padding: '8px 12px', borderTop: `1px solid ${UI_LINE}`, flexShrink: 0, maxHeight: '45%', overflowY: 'auto', background: 'rgba(106, 76, 181, 0.04)' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <strong style={{ fontFamily: MONO, fontSize: 12 }}>{pick}</strong>
+            <span style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {pickLine.value} · {pickLine.type}{pickLine.pkg ? ` · ${pickLine.pkg}` : ''}
+            </span>
+          </div>
+          <button type="button" onClick={() => onToggle(pick)} aria-pressed={placedRefs.has(pick)}
+            style={{ marginTop: 6, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: SANS, fontSize: 11.5,
+              border: `1px solid ${TONE_COLOR.ok}`, background: placedRefs.has(pick) ? TONE_COLOR.ok : 'transparent',
+              color: placedRefs.has(pick) ? '#ffffff' : TONE_COLOR.ok }}>
+            {placedRefs.has(pick) ? '✓ 배치함' : '배치 체크'}
+          </button>
+          {pickReviews.map(it => (
+            <div key={it.key} data-assembly-review={it.ref} style={{ marginTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer' }}>
+                <input type="checkbox" checked={reviewedKeys.has(it.key)} onChange={() => onReview(it)}
+                  style={{ margin: 0, width: 14, height: 14, accentColor: TONE_COLOR.ok, cursor: 'pointer' }} />
+                {KIND_LABEL[it.kind]} 확인함
+              </label>
+              {it.warning && <div style={{ marginTop: 4, fontSize: 11, color: TONE_COLOR.bad, lineHeight: 1.45 }}>{it.warning}</div>}
+              <div style={{ marginTop: 4, fontSize: 11.5, lineHeight: 1.45 }}>{it.what}</div>
+              <div style={{ ...small, marginTop: 2, fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
+                {it.pins.map(pn => `패드 ${pn.pad} = ${pn.name}${pn.net ? ` (${pn.net})` : ''}`).join(' · ')}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+    </aside>
   )
 }
