@@ -191,6 +191,8 @@ export interface GenerateResult {
   guide?: string
   sources?: string[]
   netlist?: string
+  /** the code was edited and rerun in the Code tab, so guide and roles may describe the earlier circuit */
+  codeEdited?: boolean
 }
 
 // ── 버전 히스토리 ─────────────────────────────────────────────────────────────
