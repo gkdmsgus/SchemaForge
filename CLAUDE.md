@@ -12,7 +12,7 @@
 ## 명령
 ```bash
 npm run dev            # 화면 3000 + API (vite 프록시는 8080을 본다 → server/.env 에 PORT=8080. 코드 기본값은 8002)
-npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → Code 탭·BOM → 기판 8개 × 19항목 (몇 분 걸림, KiCad 필요)
+npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → Code 탭·BOM·배치하기 → 기판 8개 × 19항목 (몇 분 걸림, KiCad 필요)
 npm run test:types     # 타입만 (빠름)
 npm run lint
 ```

@@ -78,7 +78,7 @@ flowchart LR
 | 검사 | KiCad DRC와 회로 점검(전원 누락, 연결 안 된 핀)을 돌린다 | `kicad-cli`, `server/pcb/erc.py` |
 | 다듬기 | 선택 사항. 모델이 배치·선 굵기 수정을 제안하고, **검사 수치가 좋아질 때만** 반영한다 | `server/ai_layout.ts` |
 
-화면에서는 배치와 배선 과정을 그대로 재생하고, 완성된 기판은 2D(KiCad 색)와 3D(KiCad가 내보낸 GLB 모델)로 나란히 본다.
+화면에서는 배치와 배선 과정을 그대로 재생하고, 완성된 기판은 2D(KiCad 색)와 3D(KiCad가 내보낸 GLB 모델)로 나란히 본다. **배치하기** 탭에서는 실물 기판에 부품을 올리면서 기판 그림의 부품을 눌러 체크한다(같은 부품끼리 묶은 목록과 진행률, 극성·핀 배열을 확인할 부품은 누르면 확인 내용이 나온다). 체크는 기판 파일별로 이 브라우저에 남는다.
 
 ### AI 다듬기가 동작하는 방식
 
@@ -196,6 +196,11 @@ npx tsx scripts/check_bom.ts
 BOM 25항목. 같은 템플릿·값·풋프린트 묶기(핀 헤더는 넷 이름이 달라도 한 줄), 기판 풋프린트와의 대조(회로가 바뀐 부품은 비움), 테스트 패드·고정 구멍 분리, CSV 이스케이프, 가격 형식(소수점 쉼표는 읽지 않음), 지어낸 Mouser 부품 번호·가격이 없는지. 앱에서 만든 기판(`server/outputs`)이 없으면 그 기판들로 하는 2항목은 건너뛴다고 표시하고 통과로 세지 않는다.
 
 ```bash
+npx tsx scripts/check_assembly.ts
+```
+배치하기 6항목. 올릴 부품 목록(테스트 패드·고정 구멍 제외), 저장이 막히거나 깨져도 동작하는지, 기판 파일별 저장, 배치하기 화면에 부품마다 누를 자리가 있고 목록이 기판을 가리지 않는지, PCB 화면의 AI 다듬기 기록이 접혀 있는지.
+
+```bash
 npx tsc --noEmit             # 화면 타입 검사
 cd server && npm run typecheck
 npm run lint
@@ -212,7 +217,7 @@ src/                  화면 (React + TypeScript)
     PlanPanel         설계 계획 확인 화면
     ResultPanel       결과 화면 틀 (좌우 패널·아래 탭)
     CircuitCanvas     회로도
-    BoardView         기판 2D + 배치·배선 재생, 검사 목록
+    BoardView         기판 2D + 배치·배선 재생, 검사 목록, 배치하기(부품 체크)
     KiCad3DViewer     KiCad GLB 모델 3D 보기 (three.js)
     OperatingPanel    회로도 단계의 동작 검사 결과
   lib/
