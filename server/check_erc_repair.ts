@@ -152,6 +152,13 @@ check('E15 /generate ERC statuses', block.length > 0 && statuses.length >= 6
   && statuses.every(s => /netlist/i.test(s) && !s.includes('\\n')) && !/abort\(\)/.test(block) && /erc: ercDone/.test(src),
   `${statuses.length} statuses: ${statuses.map(s => s.slice(0, 24)).join(' | ')}`)
 
+// E16. /test_code (read as text): login required, the code runs untrimmed, the ERC is report-only (no model)
+const testCode = src.slice(src.indexOf("app.post('/test_code'"), src.indexOf('// ── GET /download/:filename'))
+check('E16 /test_code contract', /^app\.post\('\/test_code', requireAuth/.test(testCode) && !/code\b[^\n=]*=[^\n]*\.trim\(\)/.test(testCode)
+  && /runSkidl\(code\)/.test(testCode) && /runErc\(/.test(testCode) && !/askErcFix|repairErc/.test(testCode)
+  && testCode.includes("'The netlist has no parts.'") && testCode.includes('ercError'),
+  testCode.split('\n').slice(0, 3).map(l => l.trim()).join(' / '))
+
 // E14. the judge on its own: a new error key or more warnings is rejected even when the count drops
 const fp = (ref: string, pin: string): ErcFinding => ({ rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref, pin }], net: null })
 const parts = sameRun(brokenErc).components
