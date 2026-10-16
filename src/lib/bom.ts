@@ -39,6 +39,17 @@ export interface Bom {
   stale: string[]
 }
 
+/** A real Mouser search result for one line (server /mouser_search with a key). */
+export interface BomMatch {
+  mouserPart: string
+  mfgPart?: string
+  manufacturer?: string
+  url?: string
+  price?: string
+  currency?: string
+  stockNum?: number | null
+}
+
 export const naturalRef = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })
 const prefixOf = (ref: string) => ref.replace(/\d+/g, '')
 
@@ -164,4 +175,98 @@ export function furnitureSummary(furniture: Bom['furniture']): string {
       : part === 'MountingHole' ? (values.size === 1 && [...values][0] ? `${[...values][0]} 구멍` : '고정 구멍') : part
     return `${compactRefs(refs)} (${label})`
   }).join(' · ')
+}
+
+// ── search ──────────────────────────────────────────────────────────────────
+
+export const SEARCH_WORD: Record<string, string> = {
+  R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
+  Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
+  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal',
+}
+
+/** The package as a shop search knows it (0805, SOIC-8, 5mm), or ''; the battery is off-board, its header is not searched. */
+export function searchPkg(line: Pick<BomLine, 'part' | 'pkg'>): string {
+  return line.part !== 'Battery' && line.pkg && /^(\d{4}|\d+mm|(SOIC|SOT|DIP|TO|SOD|DO)-\d+|HC49-[A-Z]+)$/.test(line.pkg) ? line.pkg : ''
+}
+
+/**
+ * Search words for a line: part type + value + package ("LED RED 0805", "resistor 470 0805", "NE555 SOIC-8").
+ * server/index.ts mouserKeyword builds the same words for the Mouser API.
+ */
+export function searchKeyword(line: Pick<BomLine, 'part' | 'value' | 'pkg'>): string {
+  const conn = /^Conn_01x(\d+)$/.exec(line.part)
+  // a connector's value is a net label, not a part value
+  if (conn) return `pin header 1x${conn[1]} 2.54mm`
+  const value = line.value && line.value !== '-' ? line.value : ''
+  const word = SEARCH_WORD[line.part] ?? ''
+  const keepWord = word && !value.toLowerCase().includes(word.toLowerCase())
+  return [keepWord ? word : '', value, searchPkg(line)].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Mouser search page for a keyword (URL format from the previous BOM code, not re-checked). */
+export const mouserSearchUrl = (keyword: string) => `https://kr.mouser.com/Search/Refine?Keyword=${encodeURIComponent(keyword)}`
+
+/** Only https links on mouser.com from the API are used as links. */
+export function safeMouserUrl(u: unknown): string | null {
+  if (typeof u !== 'string') return null
+  try {
+    const url = new URL(u)
+    return url.protocol === 'https:' && /(^|\.)mouser\.com$/i.test(url.hostname) ? url.href : null
+  } catch { return null }
+}
+
+/** "$0.10" -> { amount: 0.1, currency: "$" }; unclear formats (decimal comma) give null. */
+export function parsePrice(price: string | undefined, currency?: string): { amount: number; currency: string } | null {
+  if (!price) return null
+  const m = /^\s*([^\d\s.,]*)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*([^\d\s.,]*)\s*$/.exec(price)
+  if (!m) return null
+  const amount = Number(m[2].replace(/,/g, '') + (m[3] ?? ''))
+  const cur = (currency || m[1] || m[4] || '').trim()
+  return Number.isFinite(amount) && cur ? { amount, currency: cur } : null
+}
+
+/** Sum of unit price × qty, only when every priced line has the same currency. */
+export function priceTotal(lines: BomLine[], matches: Map<string, BomMatch>): { total: number; currency: string; priced: number } | null {
+  let total = 0, priced = 0
+  let currency: string | null = null
+  for (const l of lines) {
+    const m = matches.get(l.key)
+    if (!m?.price) continue
+    const p = parsePrice(m.price, m.currency)
+    if (!p || (currency !== null && p.currency !== currency)) return null
+    currency = p.currency
+    total += p.amount * l.qty
+    priced++
+  }
+  return currency !== null && priced > 0 ? { total, currency, priced } : null
+}
+
+// ── export ──────────────────────────────────────────────────────────────────
+
+export const BOM_COLUMNS = ['Item', 'Qty', 'Designator', 'Value', 'Footprint', 'Type', 'Pinout basis', 'Notes',
+  'Manufacturer', 'Manufacturer PN', 'Mouser PN'] as const
+
+/** A spreadsheet must not run a value as a formula. */
+const guard = (s: string) => (/^[=@\t\r]/.test(s) ? `'${s}` : s)
+
+function rows(bom: Bom, matches?: Map<string, BomMatch>): string[][] {
+  return bom.lines.map((l, i) => {
+    const m = matches?.get(l.key)
+    const fp = l.unmapped ? 'UNMAPPED' : l.footprint ?? (l.stale ? 'PCB outdated' : 'PCB not generated')
+    return [String(i + 1), String(l.qty), l.refs.join(', '), l.value, fp, l.type, l.pinout ?? '', l.notes.join('; '),
+      m?.manufacturer ?? '', m?.mfgPart ?? '', m?.mouserPart ?? '']
+  })
+}
+
+/** CSV for fab houses and spreadsheets: every field quoted, CRLF, UTF-8 BOM. Board-only parts are left out. */
+export function bomCsv(bom: Bom, matches?: Map<string, BomMatch>): string {
+  const field = (s: string) => `"${guard(s).replace(/"/g, '""')}"`
+  return '\uFEFF' + [[...BOM_COLUMNS], ...rows(bom, matches)].map(r => r.map(field).join(',')).join('\r\n') + '\r\n'
+}
+
+/** Tab-separated text for pasting into a spreadsheet. */
+export function bomTsv(bom: Bom, matches?: Map<string, BomMatch>): string {
+  const field = (s: string) => guard(s.replace(/[\t\r\n]+/g, ' '))
+  return [[...BOM_COLUMNS], ...rows(bom, matches)].map(r => r.map(field).join('\t')).join('\n') + '\n'
 }
