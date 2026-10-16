@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import {
-  BOM_COLUMNS, FURNITURE, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
+  BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
   type BomBoard, type BomMatch,
 } from '../src/lib/bom.ts'
 import { ASSUMED } from '../src/lib/humanReview.ts'
@@ -209,6 +209,18 @@ function parseCsv(text: string): string[][] {
   const unclear = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '0,10 €' }]]))
   check('B10c price total', !!same && Math.abs(same.total - 2000.2) < 1e-9 && same.currency === '$' && same.priced === 2 && mixed === null && unclear === null,
     same ? `${same.total} ${same.currency}` : 'no total')
+}
+
+// B12. the server never invents shop data and searches with the BOM's own words
+{
+  const server = fs.readFileSync(path.join('server', 'index.ts'), 'utf-8')
+  const route = server.slice(server.indexOf('// ── POST /mouser_search'), server.indexOf('// ── POST /generate_gerber'))
+  const words = Object.fromEntries([...(/const MOUSER_WORD[^{]*\{([\s\S]*?)\n\}/.exec(route)?.[1] ?? '').matchAll(/(\w+): '([^']+)'/g)].map(m => [m[1], m[2]]))
+  check('B12 server: no invented Mouser data', !/mock/i.test(route) && /available: false/.test(route) && /available: true/.test(route) &&
+    /MOUSER_MAX_LINES/.test(route) && !/\bSMD\b/.test(route) && !/cartUrl/.test(route))
+  check('B12b server search words = src/lib/bom.ts', JSON.stringify(words) === JSON.stringify(SEARCH_WORD), `${Object.keys(words).length} words`)
+  const vite = fs.readFileSync('vite.config.ts', 'utf-8')
+  check('B12c no dead /mouser_cart proxy', !vite.includes('/mouser_cart') && vite.includes('/mouser_search'))
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall BOM checks passed')
