@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, t
 import { authHeaders } from '../api'
 import type { ErcFinding, NetGraph } from '../types'
 import { indentLines, lineRange, summarizeError, toLF, tokenizePython, type CodeEdit } from '../lib/pythonCode'
+import { ercErrorCount } from '../lib/boardChecks'
 
 const API = ''
 /** px; the same integer line height as .sf-code-textarea and .sf-code-gutter in _code.scss */
@@ -47,10 +48,12 @@ interface CodeEditorProps {
   onRegeneratePcb: () => void
   /** /test_code needs a login */
   canRun: boolean
+  /** the server rejected the saved login (expired, or a dev server that restarted) */
+  onAuthExpired?: () => void
 }
 
 export default function CodeEditor({
-  code: rawCode, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, pcbStale, onRegeneratePcb, canRun,
+  code: rawCode, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, pcbStale, onRegeneratePcb, canRun, onAuthExpired,
 }: CodeEditorProps) {
   const code = useMemo(() => toLF(rawCode), [rawCode])
   const lines = useMemo(() => tokenizePython(code), [code])
@@ -126,7 +129,12 @@ export default function CodeEditor({
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ code: sent }),
       })
-      if (res.status === 401) return fail('로그인 후 실행할 수 있습니다.')
+      if (res.status === 401) {
+        // the draft stays; the app logs out and opens the login so the run can be repeated
+        fail('로그인이 만료되었습니다. 다시 로그인한 뒤 실행하세요.')
+        onAuthExpired?.()
+        return
+      }
       const data = (await res.json().catch(() => null)) as TestCodeResponse | null
       if (data?.error) return setEdit({ text: sent, error: summarizeError(data.error) })
       const graph = data?.graph
@@ -136,6 +144,8 @@ export default function CodeEditor({
       }
       if (!graph.components.length) return fail('넷리스트에 부품이 없습니다.')
       onApplied({ code: sent, filename: data.filename, graph, erc: data.erc, ercError: data.ercError })
+      // keyboard users land on 수정 again instead of the page body
+      focusNext.current = 'editButton'
       setEdit(null)
     } catch (e) {
       fail(`실행 요청이 실패했습니다: ${(e as Error).message}`)
@@ -167,7 +177,8 @@ export default function CodeEditor({
       }
       return
     }
-    releaseTab.current = false
+    // Shift (for Shift+Tab) and other modifiers keep the Esc release, so focus can leave either way
+    if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) releaseTab.current = false
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       run()
@@ -301,7 +312,8 @@ function RunNotes({ run, onDismiss }: { run: CodeRunNote; onDismiss: () => void 
     run.modified.length ? `변경 ${run.modified.join(', ')}` : '',
   ].filter(Boolean)
   const erc = run.erc
-  const errors = erc?.filter(f => f.severity === 'error').length ?? 0
+  const errors = erc ? ercErrorCount(erc) : 0
+  const warnings = erc ? erc.filter(f => f.severity !== 'error').length : 0
   return (
     <>
       <div className="sf-code-note is-ok" role="status">
@@ -314,7 +326,7 @@ function RunNotes({ run, onDismiss }: { run: CodeRunNote; onDismiss: () => void 
       {erc && erc.length > 0 && (
         <div className="sf-code-note is-warn" role="status">
           <span className="sf-code-note-text">
-            회로 연결 점검 · 오류 {errors} · 경고 {erc.length - errors} (PCB 생성은 막지 않습니다)
+            회로 연결 점검 · 오류 {errors} · 경고 {warnings}
             <ul>{erc.slice(0, 3).map((f, i) => <li key={i}>{f.message}</li>)}</ul>
             {erc.length > 3 && `외 ${erc.length - 3}건`}
           </span>

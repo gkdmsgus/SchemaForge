@@ -65,7 +65,7 @@ export default function App() {
   const [initialChatSession, setInitialChatSession] = useState<ChatSession | null>(null)
   const [resultKey, setResultKey] = useState(0)
   const [pendingCached, setPendingCached] = useState<PendingCached | null>(null)
-  const pendingGenerateRef = useRef<{ prompt: string; typeKey?: string; skipCache?: boolean } | null>(null)
+  const pendingGenerateRef = useRef<{ prompt: string; typeKey?: string; skipCache?: boolean; direct?: boolean } | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -210,6 +210,28 @@ export default function App() {
     return executeGenerate(p)
   }
 
+  /**
+   * ↺ and the 수정 요청 box on the result screen: the prompt already went through the questions and the
+   * plan, and their panels are hidden while a result is open, so generate straight away (no cache).
+   */
+  function regenerate(p: string) {
+    if (!p.trim() || loading) return
+    if (!authUser) {
+      pendingGenerateRef.current = { prompt: p, direct: true }
+      setAuthModalOpen(true)
+      return
+    }
+    executeGenerate(p)
+  }
+
+  /** the server no longer knows the saved login (expired, or a dev server that restarted): log in again */
+  function authExpired() {
+    localStorage.removeItem('sf_token')
+    localStorage.removeItem('sf_user')
+    setAuthUser(null)
+    setAuthModalOpen(true)
+  }
+
   async function executeGenerate(p: string) {
     setClarify(null)
     setPlan(null)
@@ -300,7 +322,7 @@ export default function App() {
             setResultKey(k => k + 1)
             saveResultToLocal(d, p)
             if (authUser) {
-              saveSession({ prompt: p, graph: d.graph, filename: d.filename })
+              saveSession({ prompt: p, code: d.code, guide: d.guide, graph: d.graph, filename: d.filename })
                 .then(id => setCurrentSessionId(id))
                 .catch(() => {})
             }
@@ -381,7 +403,7 @@ export default function App() {
           const pending = pendingGenerateRef.current
           if (pending) {
             pendingGenerateRef.current = null
-            setTimeout(() => runGenerate(pending.prompt, pending.typeKey, pending.skipCache), 100)
+            setTimeout(() => (pending.direct ? executeGenerate(pending.prompt) : runGenerate(pending.prompt, pending.typeKey, pending.skipCache)), 100)
           }
         }}
       />
@@ -491,7 +513,8 @@ export default function App() {
           key={resultKey}
           result={result}
           setResult={setResult}
-          onRegenerate={runGenerate}
+          onRegenerate={regenerate}
+          onAuthExpired={authExpired}
           lastPrompt={lastPrompt.current}
           versions={versions}
           currentVersionId={currentVersionId}

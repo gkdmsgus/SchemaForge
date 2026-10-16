@@ -28,6 +28,20 @@ export interface CheckItem { ref: string; state: CheckState; summary: string; de
 /** Groups in display order. */
 export const GROUP = { board: '기판 검사', circuit: '회로 연결', operating: '동작 검사', parts: '부품 확인' } as const
 
+/**
+ * ERC errors counted per pin (a floating_pin finding can name several pins of one part), or per net
+ * when a finding names no pin: the same count as the server's status line and repair note (errorKeys).
+ */
+export function ercErrorCount(findings: { rule: string; severity: string; refs: { ref: string; pin: string }[]; net: string | null }[]): number {
+  const keys = new Set<string>()
+  for (const f of findings) {
+    if (f.severity !== 'error') continue
+    if (f.refs.length) for (const r of f.refs) keys.add(`${f.rule} ${r.ref}.${r.pin}`)
+    else keys.add(`${f.rule} ${f.net ?? ''}`)
+  }
+  return keys.size
+}
+
 /** Netlist checks run by server/pcb/erc.py on every board, in its order. */
 export const ERC_RULES: [string, string][] = [
   ['floating_pin', '연결 안 된 핀'],
