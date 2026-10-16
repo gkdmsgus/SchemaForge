@@ -74,7 +74,8 @@ export function errorKeys(findings: ErcFinding[]): string[] {
   const keys = new Set<string>()
   for (const f of findings) {
     if (f.severity !== 'error') continue
-    if (f.refs.length) for (const r of f.refs) keys.add(`${f.rule} ${r.ref}.${r.pin}`)
+    // the symbol pin (the code's Pin(num=...)) when known, so notes and status lines match the messages
+    if (f.refs.length) for (const r of f.refs) keys.add(`${f.rule} ${r.ref}.${r.sym ?? r.pin}`)
     else keys.add(f.net ? `${f.rule} ${f.net}` : f.rule)
   }
   return [...keys]
@@ -93,18 +94,19 @@ const keyLabel = (k: string) => k.replace(/^(\w+)/, r => RULE_LABEL[r] ?? r)
  * same net (net names may change, so a net is known by who is on it). Pins named in `skip` are left out.
  */
 function connections(r: ErcOk, parts: Set<string>, skip: Set<string>): Map<string, string> {
-  const out = new Map<string, string>()
+  const groups = new Map<string, string[]>()
   for (const n of r.nets) {
     const pins = n.nodes.map(nd => `${nd.ref}.${nd.pin}`).filter(k => parts.has(k.split('.')[0]) && !skip.has(k)).sort()
-    for (const k of pins) out.set(k, pins.join(' '))
+    // a pin number can sit on two nets (a template with a repeated pin): keep every group it is in
+    for (const k of pins) groups.set(k, [...(groups.get(k) ?? []), pins.join(' ')])
   }
-  return out
+  return new Map([...groups].map(([k, gs]) => [k, gs.sort().join(' | ')]))
 }
 
 /** Where the errors are, for a status line: "U1.4, R2.1" (at most four). */
 export function errorSites(findings: ErcFinding[]): string {
   const sites = [...new Set(fixableErrors(findings).flatMap(f =>
-    f.refs.length ? f.refs.map(r => `${r.ref}.${r.pin}`) : [f.net || f.rule]))]
+    f.refs.length ? f.refs.map(r => `${r.ref}.${r.sym ?? r.pin}`) : [f.net || f.rule]))]
   return sites.length > 4 ? `${sites.slice(0, 4).join(', ')} 외 ${sites.length - 4}곳` : sites.join(', ')
 }
 
@@ -137,7 +139,7 @@ export function judgeRepair(before: ErcOk, after: ErcOk): { keep: true } | { kee
   const was = connections(before, parts, sites), is = connections(after, parts, sites)
   // the pin that moved changes its company most (a pin on a net it joined changes by one neighbour)
   const diff = (x: string, y: string | undefined) => {
-    const X = new Set(x.split(' ')), Y = new Set((y ?? '').split(' ').filter(Boolean))
+    const X = new Set(x.split(/ \| | /)), Y = new Set((y ?? '').split(/ \| | /).filter(Boolean))
     return [...X].filter(p => !Y.has(p)).length + [...Y].filter(p => !X.has(p)).length
   }
   const moved = [...was].filter(([k, g]) => is.get(k) !== g)
