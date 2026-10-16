@@ -36,12 +36,12 @@ export function tokenizePython(code: string): Tok[][] {
   return lines
 }
 
-/** Line in the user's script where Python stopped, from its stderr; null if there is none.
- *  The script is the first `File "..."` in the output (Python prints the outermost frame first);
- *  frames in other files are skipped, which matters because skidl ships its own circuit.py. */
 /** ANSI colour codes (Python 3.13+ colours tracebacks when FORCE_COLOR is set) */
 const ANSI = /\x1b\[[0-9;]*m/g
 
+/** Line in the user's script where Python stopped, from its stderr; null if there is none.
+ *  The script is the first `File "..."` in the output (Python prints the outermost frame first);
+ *  frames in other files are skipped, which matters because skidl ships its own circuit.py. */
 export function errorLine(stderr: string): number | null {
   stderr = stderr.replace(ANSI, '')
   const frames = [...stderr.matchAll(/File "([^"]+)", line (\d+)/g)]

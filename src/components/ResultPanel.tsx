@@ -112,7 +112,6 @@ export default function ResultPanel({
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
   const [activeTab, setActiveTab] = useState('Netlist')
-  const [iterateText, setIterateText] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
   const [editorOpen, setEditorOpen] = usePanelState('sf_panel_left')
@@ -316,12 +315,6 @@ export default function ResultPanel({
   function handleCopyPrompt() {
     navigator.clipboard.writeText(lastPrompt || '')
     alert('프롬프트 복사 완료')
-  }
-
-  function handleIterate() {
-    if (!iterateText.trim()) return
-    onRegenerate(`${lastPrompt}\n[수정 요청]: ${iterateText.trim()}`)
-    setIterateText('')
   }
 
   async function sendChat() {
