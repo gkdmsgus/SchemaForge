@@ -202,7 +202,9 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
                 <td colSpan={10}>
                   {total
                     ? <>합계 <strong className="mono">{money(total.total, total.currency)}</strong> · 1개 단가 기준 · 가격 확인 {total.priced}/{bom.lines.length}종</>
-                    : <>통화나 가격 형식이 줄마다 달라 합계를 내지 않습니다.</>}
+                    : bom.lines.some(l => { const m = matches.get(l.key); return !!m?.price && (m.priceQty ?? 1) <= 1 })
+                      ? <>통화나 가격 형식이 줄마다 다르거나 읽을 수 없는 형식이라 합계를 내지 않습니다.</>
+                      : <>1개 단가가 있는 줄이 없어(릴 단위 가격만 있음) 합계를 내지 않습니다.</>}
                 </td>
               </tr>
             </tfoot>
