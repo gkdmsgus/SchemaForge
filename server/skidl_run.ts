@@ -14,7 +14,10 @@ export const SECRET_ENV = /_KEY$|^SUPABASE_|SECRET|TOKEN|PASSWORD/i
  * APPDATA, USERPROFILE, PATH and SYSTEMROOT, and Python reads more than that.
  */
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !SECRET_ENV.test(k)))
+  const kept = Object.fromEntries(Object.entries(env).filter(([k]) => !SECRET_ENV.test(k) && k !== 'FORCE_COLOR'))
+  // plain tracebacks: Python 3.13+ colours them when FORCE_COLOR is set (npm and tsx set it), and the
+  // Code tab reads the line number out of them
+  return { ...kept, PYTHON_COLORS: '0', NO_COLOR: '1' }
 }
 
 /**

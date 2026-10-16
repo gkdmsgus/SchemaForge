@@ -875,17 +875,8 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
       graph = parseNetlist(netContent)
     } catch (_) {}
 
-    // Auto-save session to DB if user is logged in
-    if (req.user?.id && supabase) {
-      supabase.from('sessions').insert({
-        user_id: req.user.id,
-        prompt: description,
-        code: skidlCode,
-        guide,
-        graph,
-        filename,
-      }).then(() => { /* fire-and-forget */ }, console.error)
-    }
+    // The session row is saved by the client after 'done' (POST /sessions, with code and guide), which
+    // also keeps its id for the chat; saving here too made two rows per generation.
 
     const ercDone: GenerateErc = erc.ok
       ? { findings: erc.findings, repair }
@@ -1345,6 +1336,12 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
         { SearchByKeywordRequest: { keyword, records: 1, startingRecord: 0, searchOptions: '1', searchWithYourSignUpLanguage: '' } },
         { headers: { 'Content-Type': 'application/json' }, timeout: 10000 }
       )
+      const apiErrors = (resp.data?.Errors || []) as { Message?: string }[]
+      if (apiErrors.length) {
+        // not "no such part": the line stays retryable on the client
+        results.push({ ref, value: comp.value, keyword, mouserPart: null, error: apiErrors[0]?.Message || 'Mouser API error' })
+        continue
+      }
       const parts = resp.data?.SearchResults?.Parts || []
       if (parts.length > 0) {
         const p = parts[0]
@@ -1356,6 +1353,8 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
           mouserPart: p.MouserPartNumber, mfgPart: p.ManufacturerPartNumber,
           manufacturer: p.Manufacturer, description: p.Description,
           price: p.PriceBreaks?.[0]?.Price || '', currency: p.PriceBreaks?.[0]?.Currency || '',
+          // the first price break may start above one piece (reels): the client does not call it a unit price
+          priceQty: Number(p.PriceBreaks?.[0]?.Quantity) || null,
           url: p.ProductDetailUrl, imageUrl: p.ImagePath,
           stockNum: /^\d+$/.test(stock) ? Number(stock) : null,
         })
