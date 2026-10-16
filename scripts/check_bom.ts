@@ -11,7 +11,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import {
-  FURNITURE, buildBom, furnitureSummary, normValue, pkgLabel, type BomBoard,
+  BOM_COLUMNS, FURNITURE, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
+  type BomBoard, type BomMatch,
 } from '../src/lib/bom.ts'
 import { ASSUMED } from '../src/lib/humanReview.ts'
 import { SPECS } from '../src/lib/partSpecs.ts'
@@ -24,6 +25,25 @@ function check(name: string, ok: boolean, info = '') {
 }
 const comp = (ref: string, value: string, name: string): ComponentEntry => ({ ref, value, name })
 const fp = (part: string, footprint: string) => ({ part, footprint })
+
+/** RFC 4180 reader: quoted fields, doubled quotes, CRLF rows. */
+function parseCsv(text: string): string[][] {
+  const out: string[][] = []
+  let row: string[] = [], cell = '', quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++ }
+      else if (ch === '"') quoted = false
+      else cell += ch
+    } else if (ch === '"') quoted = true
+    else if (ch === ',') { row.push(cell); cell = '' }
+    else if (ch === '\r' && text[i + 1] === '\n') { row.push(cell); out.push(row); row = []; cell = ''; i++ }
+    else cell += ch
+  }
+  if (cell || row.length) { row.push(cell); out.push(row) }
+  return out
+}
 
 // B1. same template and value: one line, qty 3, refs in order
 {
@@ -59,6 +79,44 @@ const fp = (part: string, footprint: string) => ({ part, footprint })
   const r3 = bom.lines.find(l => l.refs.includes('R3')), r4 = bom.lines.find(l => l.refs.includes('R4'))
   check('B4 stale footprint', r3?.footprint === null && !!r3.stale && r4?.pkg === '0805' && bom.stale.join(',') === 'R3,R9',
     `R3 ${r3?.footprint} R4 ${r4?.pkg} stale ${bom.stale}`)
+}
+
+// B5. unmapped parts are flagged and never blank in the CSV (also the board's placeholder footprint)
+{
+  const board: BomBoard = {
+    parts: [{ ref: 'U1', value: 'LM358', ...fp('OpAmp', 'SchemaForge:UNMAPPED_OpAmp') }, { ref: 'U2', value: 'X1', ...fp('Foo', 'SchemaForge:UNMAPPED_Foo') }],
+    unmapped: [{ ref: 'U1', part: 'OpAmp', reason: 'template is a 5-pin single op-amp' }],
+  }
+  const bom = buildBom([comp('U1', 'LM358', 'OpAmp'), comp('U2', 'X1', 'Foo')], board, 'smd')
+  const rows = parseCsv(bomCsv(bom).slice(1))
+  const col = BOM_COLUMNS.indexOf('Footprint')
+  check('B5 unmapped flagged', bom.lines.every(l => !!l.unmapped && l.footprint === null) && rows.slice(1).every(r => r[col] === 'UNMAPPED'),
+    bom.lines.map(l => `${l.refs}: ${l.unmapped}`).join(' | '))
+}
+
+// B6. CSV: quotes and commas survive, formulas neutralised, CRLF, exact header, BOM as the first character
+{
+  const bom = buildBom([comp('J1', '2.2" panel, 5V', 'Conn_01x02'), comp('R1', '=HYPERLINK("x")', 'R'), comp('R2', '@SUM(1)', 'R'), comp('R3', '+5V', 'R')], null, 'smd')
+  const csv = bomCsv(bom)
+  const rows = parseCsv(csv.slice(1))
+  const vals = rows.slice(1).map(r => r[BOM_COLUMNS.indexOf('Value')])
+  check('B6 CSV escaping',
+    csv.charCodeAt(0) === 0xfeff && !/[^\r]\n/.test(csv) && csv.endsWith('\r\n') &&
+    JSON.stringify(rows[0]) === JSON.stringify([...BOM_COLUMNS]) && rows.every(r => r.length === BOM_COLUMNS.length) &&
+    vals.includes('2.2" panel, 5V') && vals.includes(`'=HYPERLINK("x")`) && vals.includes(`'@SUM(1)`) && vals.includes('+5V'),
+    vals.join(' | '))
+  const tsv = bomTsv(bom).replace(/\n$/, '').split('\n')
+  check('B6b TSV columns', tsv.every(l => l.split('\t').length === BOM_COLUMNS.length) && tsv.some(l => l.includes(`'=HYPERLINK`)), `${tsv.length} rows`)
+}
+
+// B7. Mouser columns only from real matches
+{
+  const bom = buildBom([comp('R1', '1k', 'R'), comp('C1', '10nF', 'C')], null, 'smd')
+  const cols = ['Manufacturer', 'Manufacturer PN', 'Mouser PN'].map(c => BOM_COLUMNS.indexOf(c as typeof BOM_COLUMNS[number]))
+  const empty = parseCsv(bomCsv(bom).slice(1)).slice(1).every(r => cols.every(c => r[c] === ''))
+  const matches = new Map<string, BomMatch>([[bom.lines[0].key, { mouserPart: '603-RC0805FR-071KL', mfgPart: 'RC0805FR-071KL', manufacturer: 'YAGEO' }]])
+  const filled = parseCsv(bomCsv(bom, matches).slice(1)).slice(1)
+  check('B7 no shop data without a match', empty && filled[0][cols[2]] === '603-RC0805FR-071KL' && cols.every(c => filled[1][c] === ''))
 }
 
 // B8. real boards: every part in exactly one line, test pads and holes listed apart
@@ -131,6 +189,26 @@ const fp = (part: string, footprint: string) => ({ part, footprint })
     r(smd) === `정격 ${SPECS.res.smd.p_max.v} W 기준` && r(tht) === `정격 ${SPECS.res.tht.p_max.v} W 기준` &&
     smd.lines.find(l => l.part === 'Battery')?.notes.some(n => n.includes('2핀 헤더')) === true,
     bad.length ? `bad ${bad}` : `${q(smd)} / ${q(tht)}, ${r(smd)} / ${r(tht)}`)
+}
+
+// B10. search words, links and prices from the shop
+{
+  const kw = [
+    searchKeyword({ part: 'LED', value: 'RED', pkg: '0805' }), searchKeyword({ part: 'R', value: '470', pkg: '0805' }),
+    searchKeyword({ part: 'NE555', value: 'NE555', pkg: 'SOIC-8' }), searchKeyword({ part: 'Battery', value: '9V', pkg: 'PinHeader_1x02' }),
+    searchKeyword({ part: 'Conn_01x03', value: 'SERVO', pkg: 'PinHeader_1x03' }), searchKeyword({ part: 'R', value: '470', pkg: 'Axial DIN0207' }),
+  ]
+  check('B10 search keywords', JSON.stringify(kw) === JSON.stringify(['LED RED 0805', 'resistor 470 0805', 'NE555 SOIC-8', 'battery 9V',
+    'pin header 1x03 2.54mm', 'resistor 470']), kw.join(' | '))
+  check('B10b product links', safeMouserUrl('https://www.mouser.com/ProductDetail/x') !== null && safeMouserUrl('javascript:alert(1)') === null &&
+    safeMouserUrl('http://www.mouser.com/x') === null && safeMouserUrl('https://mouser.com.evil.example/x') === null)
+  const bom = buildBom([comp('R1', '1k', 'R'), comp('R2', '1k', 'R'), comp('C1', '10nF', 'C')], null, 'smd')
+  const [a, b] = bom.lines.map(l => l.key)   // C1 line, then R1+R2
+  const same = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '$0.10' }], [b, { mouserPart: 'y', price: '$1,000.05' }]]))
+  const mixed = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '$0.10' }], [b, { mouserPart: 'y', price: '₩139' }]]))
+  const unclear = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '0,10 €' }]]))
+  check('B10c price total', !!same && Math.abs(same.total - 2000.2) < 1e-9 && same.currency === '$' && same.priced === 2 && mixed === null && unclear === null,
+    same ? `${same.total} ${same.currency}` : 'no total')
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall BOM checks passed')
