@@ -342,6 +342,8 @@ def build_board(components, nets, style='smd'):
 
         parts.append({'ref': ref, 'value': value, 'part': part, 'footprint': fp_id,
                       'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': pad_net, 'pad_pin': pad_pin,
+                      # symbol pin of every pad, connected or not (erc names a floating pin with it)
+                      'pad_sym': {pad: int(pin) for pin, pad in pin_map.items()},
                       'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
                       'pads': local_pads(fp, pad_net), 'silk': local_silk(fp),
                       'x': 0.0, 'y': 0.0, 'rot': 0})

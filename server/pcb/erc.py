@@ -12,6 +12,28 @@ POWER_NAME = re.compile(r'^(VCC|VDD|VEE|VSS|VIN|VOUT|VBAT|AVCC|\+?\d+V\d*|\+\d+V
 SOURCE_TYPES = {'POWER-OUT', 'OUTPUT', 'BIDIRECTIONAL', 'TRISTATE'}
 # power that arrives through a connector or battery has passive pins, but it is a source
 SOURCE_PREFIXES = ('J', 'BT')
+# symbol pin names per template, so a message can say which pin ("4번(RESET)"); the same table as
+# PIN_NAMES in src/lib/humanReview.ts (scripts/check_board_checks.ts compares the two)
+PIN_NAMES = {
+    'CP': ['+', '-'],
+    'LED': ['A', 'K'],
+    'D': ['A', 'K'],
+    'Q_NPN': ['B', 'C', 'E'],
+    'Q_NMOS': ['G', 'D', 'S'],
+    'REG': ['GND', 'OUT', 'IN'],
+    'NE555': ['GND', 'TRIG', 'OUT', 'RESET', 'CTRL', 'THRES', 'DISCH', 'VCC'],
+    'Relay': ['COIL1', 'COIL2', 'COM', 'NO', 'NC'],
+    'Buzzer': ['+', '-'],
+    'Battery': ['+', '-'],
+}
+
+
+def pin_label(part, pad):
+    """'4번(RESET)' for a footprint pad whose symbol pin has a name, else '4번'."""
+    sym = (part.get('pad_sym') or part.get('pad_pin') or {}).get(pad)
+    names = PIN_NAMES.get(part.get('part', ''))
+    name = names[sym - 1] if names and sym and 0 < sym <= len(names) else None
+    return f"{pad}번({name})" if name else f"{pad}번"
 
 
 def check(components, nets, parts=None):
@@ -26,7 +48,7 @@ def check(components, nets, parts=None):
             if loose:
                 findings.append({
                     'rule': 'floating_pin', 'severity': 'error',
-                    'message': f"{p['ref']}의 핀 {', '.join(loose)}번이 어느 넷에도 연결되지 않았습니다",
+                    'message': f"{p['ref']}의 핀 {', '.join(pin_label(p, n) for n in loose)}이 어느 넷에도 연결되지 않았습니다",
                     'refs': [{'ref': p['ref'], 'pin': n} for n in loose], 'net': None})
 
     # 2. nets with a single pin
