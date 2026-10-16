@@ -1,5 +1,6 @@
 // Assembly checklist: which parts a person has already placed (soldered) on the real board.
-// Kept per board file in this browser; a regenerated PCB is a new file and starts empty.
+// Kept per board in this browser: the file name plus the style and every part's footprint and position,
+// because a PCB made again from the same netlist (SMD -> THT, AI on) keeps the file name.
 import { FURNITURE, naturalRef } from './bom'
 import type { BoardModel } from '../types'
 
@@ -9,6 +10,16 @@ const MAX_BOARDS = 50
 /** The parts there is something to place: everything but test pads and mounting holes, R2 before R10. */
 export function assemblyRefs(final: Pick<BoardModel, 'parts'> | null | undefined): string[] {
   return (final?.parts ?? []).filter(p => !FURNITURE.has(p.part)).map(p => p.ref).sort(naturalRef)
+}
+
+/** The storage key of a board: file name, style and a hash of every part's footprint and pose. */
+export function placedKey(file: string | null | undefined, final: Pick<BoardModel, 'parts' | 'style'> | null | undefined): string | null {
+  if (!file || !final) return null
+  const layout = [...final.parts].sort((a, b) => naturalRef(a.ref, b.ref))
+    .map(p => `${p.ref}:${p.footprint}:${p.x.toFixed(2)}:${p.y.toFixed(2)}:${p.rot}`).join('|')
+  let h = 5381
+  for (let i = 0; i < layout.length; i++) h = ((h * 33) ^ layout.charCodeAt(i)) >>> 0
+  return `${file}|${final.style ?? 'smd'}|${h.toString(36)}`
 }
 
 type Store = Record<string, { at: number; refs: string[] }>

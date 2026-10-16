@@ -686,8 +686,8 @@ export default function ResultPanel({
               return (
                 <button key={key} onClick={() => { if (!off) setViewMode(key) }} disabled={!!off} title={off || undefined}
                   data-testid={`view-tab-${key}`} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '8px 18px', border: 'none', cursor: off ? 'not-allowed' : 'pointer', opacity: off ? 0.55 : 1,
+                  display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, whiteSpace: 'nowrap',
+                  padding: '8px 14px', border: 'none', cursor: off ? 'not-allowed' : 'pointer', opacity: off ? 0.55 : 1,
                   background: active ? 'var(--sf-bg)' : 'transparent',
                   borderBottom: active ? `2px solid ${color}` : '2px solid transparent',
                   borderRight: '1px solid var(--sf-line)',
@@ -695,12 +695,14 @@ export default function ResultPanel({
                 }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, opacity: active ? 1 : 0.3 }} />
                   <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, letterSpacing: '0.12em', fontWeight: active ? 700 : 500, color: active ? color : 'var(--sf-fg-faint)' }}>{label}</span>
-                  <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 9, color: 'var(--sf-fg-faint)', opacity: active ? 0.8 : 0.5 }}>{sub}</span>
+                  <span className="sf-tab-sub" style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 9, color: 'var(--sf-fg-faint)', opacity: active ? 0.8 : 0.5 }}>{sub}</span>
                 </button>
               )
             })}
             {/* PCB gen buttons in tab bar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', marginLeft: 'auto' }}>
+            {/* the tabs keep their width; on a narrow window these buttons scroll sideways instead */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', marginLeft: 'auto',
+              minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin' }}>
               {pcbStatus !== 'loading' && (['smd', 'tht'] as const).map(s => (
                 <button key={s}
                   title={s === 'smd' ? '표면실장 부품 (커넥터·릴레이는 구멍 끼움)' : '전부 구멍 끼움 부품 (손납땜 쉬움)'}
