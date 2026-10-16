@@ -214,6 +214,8 @@ export default function App() {
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
+    // a new circuit starts without the chat edits of the one on screen (a cached or history load seeds them)
+    setInitialChatSession(null)
     lastPrompt.current = p
     setLoading(true)
     setError(null)

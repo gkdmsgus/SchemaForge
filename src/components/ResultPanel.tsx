@@ -5,6 +5,7 @@ import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
 import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
+import { buildBom, compactRefs, type BomBoard } from '../lib/bom'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import { toLF, type CodeEdit } from '../lib/pythonCode'
@@ -78,7 +79,7 @@ interface ResultPanelProps {
   result: GenerateResult
   setResult: Dispatch<SetStateAction<GenerateResult | null>>
   theme?: string
-  onRegenerate: (p: string, typeKey?: string) => void
+  onRegenerate: (p: string, typeKey?: string, skipCache?: boolean) => void
   lastPrompt: string
   versions?: Version[]
   currentVersionId?: string | null
@@ -151,6 +152,30 @@ export default function ResultPanel({
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
   const opHead = operatingHeadline(opResults)
+  // parts list: the board's footprints once a PCB exists (deps on parts/final, not every streamed frame)
+  const boardParts = board?.parts
+  const boardFinal = board?.final ?? null
+  const bomBoard = useMemo<BomBoard | null>(() => (boardFinal || boardParts?.length
+    ? { parts: boardFinal?.parts ?? boardParts ?? [], unmapped: boardFinal?.unmapped ?? pcbSummary?.unmapped ?? [] }
+    : null), [boardFinal, boardParts, pcbSummary])
+  const bomStyle = boardFinal?.style ?? pcbStyle
+  // the netlist check /generate ran: shown on the schematic while the circuit is still that netlist
+  const ercNotice = useMemo(() => {
+    const erc = result?.erc
+    if (!erc || aiEdited || result?.codeEdited) return null
+    const errors = (erc.findings ?? []).filter(f => f.severity === 'error')
+    const rep = erc.repair
+    if (!erc.findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
+      lines: [erc.reason ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
+    if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${errors.length}개`,
+      lines: [...errors.map(f => f.message),
+        rep && !rep.tried ? '자동 재시도가 꺼져 있어 고치지 않았습니다 (설정).'
+          : rep?.tried && !rep.kept ? `자동 수정이 받아들여지지 않아 원래 회로를 그대로 둡니다: ${rep.note}` : 'Code 탭에서 연결을 고치거나 다시 생성하세요.'] }
+    if (rep?.kept) return { tone: 'ok' as const, head: `연결 안 된 핀을 자동으로 고쳤습니다 (ERC 오류 ${rep.before} → ${rep.after})`,
+      lines: ['AI가 고친 코드를 다시 실행해 점검을 통과한 경우에만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
+    return null
+  }, [result?.erc, result?.codeEdited, aiEdited])
+  const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
   const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
@@ -503,7 +528,7 @@ export default function ResultPanel({
           </button>
         )}
         <button onClick={handleCopyPrompt} title="프롬프트 복사" style={iconBtn}><IconCopy size={14} /></button>
-        <button onClick={() => onRegenerate(lastPrompt)} title="재생성" style={{...iconBtn, fontSize:16}}>↺</button>
+        <button onClick={() => onRegenerate(lastPrompt, undefined, true)} title="재생성 (저장된 결과 대신 새로 생성)" style={{...iconBtn, fontSize:16}}>↺</button>
         <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding:'5px 10px'}}>PDF</button>
         <button
           onClick={() => window.location.href = `${API}/download/${result.filename}`}
@@ -739,6 +764,15 @@ export default function ResultPanel({
             </div>
           )}
 
+          {viewMode === 'schematic' && ercNotice && (
+            <div role={ercNotice.tone === 'bad' ? 'alert' : 'status'} data-testid="erc-notice" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
+              borderBottom: `1px solid ${ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber)' : 'var(--sf-line)'}`,
+              color: ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber-deep)' : 'var(--sf-fg-muted)', fontSize: 11, lineHeight: 1.5 }}>
+              <strong>{ercNotice.head}</strong>
+              {ercNotice.lines.map((line, i) => <div key={i}>{line}</div>)}
+            </div>
+          )}
+
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
@@ -807,11 +841,11 @@ export default function ResultPanel({
               <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-fg-faint)', letterSpacing: '0.12em', fontWeight: 700 }}>BOM</span>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px' }}>
-              {(effectiveGraph?.components || []).map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderBottom: '1px solid var(--sf-bg-1)' }}>
-                  <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-amber)', width: 32, flexShrink: 0 }}>{c.ref}</span>
-                  <span style={{ fontSize: 10, color: 'var(--sf-fg-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name || c.ref}</span>
-                  <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 9, color: 'var(--sf-fg-faint)' }}>{c.value}</span>
+              {sideBom.lines.map(l => (
+                <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderBottom: '1px solid var(--sf-bg-1)' }}>
+                  <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-amber)', minWidth: 32, flexShrink: 0 }}>{compactRefs(l.refs)}</span>
+                  <span style={{ fontSize: 10, color: 'var(--sf-fg-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.type}</span>
+                  <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 9, color: 'var(--sf-fg-faint)' }}>{l.value}{l.qty > 1 ? ` ×${l.qty}` : ''}</span>
                 </div>
               ))}
             </div>
@@ -878,9 +912,7 @@ export default function ResultPanel({
               </div>
             )}
             {activeTab === 'BOM' && (
-              <div style={{ padding:'0 0 16px' }}>
-                <BomTable components={result.graph?.components ?? []} guide={result.guide} />
-              </div>
+              <BomTable components={effectiveGraph?.components ?? []} board={bomBoard} style={bomStyle} fileBase={result.filename?.replace(/\.net$/, '')} />
             )}
             {activeTab === 'Code' && (
               <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
