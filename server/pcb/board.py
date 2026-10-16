@@ -723,6 +723,27 @@ def _pour_layer(shapes, box, net, layer):
              'x2': round(r[2] + POUR_GLUE, 4), 'y2': round(r[3] + POUR_GLUE, 4)} for r in rects]
 
 
+def _erc_findings(components, nets, parts):
+    """The netlist checks, on the board model the generator builds (pads tell which pins float)."""
+    import erc as erc_mod
+    return erc_mod.check(components, nets, [p for p in parts if p['part'] != 'MountingHole'])
+
+
+def netlist_check(net_path, style='smd'):
+    """The same netlist checks generate() runs, before any placement or file is written.
+
+    Returns {'erc': findings, 'components': [{ref, value, part}]}; components is the netlist's own
+    list, taken before the test points are added. Placement does not change a finding, so the
+    shelf layout build_board makes is enough.
+    """
+    with open(net_path, encoding='utf-8') as f:
+        components, nets = parse_netlist(f.read())
+    original = [dict(c) for c in components]
+    add_test_points(components, nets)
+    parts, _, _ = build_board(components, nets, style)
+    return {'erc': _erc_findings(components, nets, parts), 'components': original}
+
+
 def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True, overrides=None):
     """Build, place, route, write.
 
@@ -756,8 +777,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
             on_event({'type': 'frame', 'iter': 0, 'phase': 'refine', 'hpwl': round(hpwl(parts), 2),
                       'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
 
-    import erc as erc_mod
-    findings = erc_mod.check(components, nets, [p for p in parts if p['part'] != 'MountingHole'])
+    findings = _erc_findings(components, nets, parts)
     if on_event:
         on_event({'type': 'erc', 'findings': findings})
 
