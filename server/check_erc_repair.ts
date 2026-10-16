@@ -1,6 +1,8 @@
-// Checks E1-E14: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
-// judged (E1-E11, E14), and what the skidl runner passes to model- or user-written code and leaves
-// behind (E12-E13). No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
+// Checks E1-E19: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
+// behind (E12-E13, E18), the /generate and /test_code wiring read as text (E15-E16), and the pin names
+// erc.py shares with the front end (E19). No model, no server, no KiCad; needs python + skidl (a missing
+// python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
 import { execFileSync } from 'child_process'
@@ -52,7 +54,7 @@ const fixedNet = await run(blink)
 const brokenNet = await run(broken)
 const fixedErc = await erc(fixedNet)
 const brokenErc = await erc(brokenNet)
-const sameRun = (r: ErcRun): ErcOk => (r.ok ? r : { ok: true, findings: [], components: [] })
+const sameRun = (r: ErcRun): ErcOk => (r.ok ? r : { ok: true, findings: [], components: [], nets: [] })
 
 // E1. the pre-PCB check sees the open RESET (one fixable error, U1 pin 4) and the parts; the good circuit is clean;
 //     the full board generator reports exactly the same findings for the broken netlist
@@ -61,6 +63,7 @@ execFileSync('python', [join(cwd, 'pcb_generator.py'), brokenNet, join(work, 'br
 const boardErc = JSON.parse(readFileSync(join(work, 'broken.board.json'), 'utf8')).erc
 check('E1 ERC before PCB', broken !== blink && brokenErc.ok && fix1.length === 1 && fix1[0].rule === 'floating_pin'
   && fix1[0].refs.length === 1 && fix1[0].refs[0].ref === 'U1' && fix1[0].refs[0].pin === '4'
+  && fix1[0].refs[0].sym === '4' && fix1[0].refs[0].name === 'RESET' && brokenErc.nets.length > 0
   && brokenErc.components.length === 9 && fixedErc.ok && fixedErc.findings.length === 0
   && JSON.stringify(boardErc) === JSON.stringify(brokenErc.findings),
   `fixture edited=${broken !== blink} broken=[${errorKeys(sameRun(brokenErc).findings)}] parts=${sameRun(brokenErc).components.length}` +
@@ -130,7 +133,7 @@ const synthetic: ErcFinding[] = [
   { rule: 'output_conflict', severity: 'warning', message: 'w', refs: [{ ref: 'U1', pin: '3' }], net: 'OUT' },
   { rule: 'no_ground', severity: 'error', message: 'GND 넷이 없습니다', refs: [], net: null },
 ]
-check('E10 feedback and rules', fb.includes('U1 pin 4') && fb.includes('U1의 핀 4번(RESET)이 어느 넷에도 연결되지 않았습니다')
+check('E10 feedback and rules', fb.includes('U1 pin 4 (RESET)') && fb.includes('U1의 RESET 핀(4번)이 어느 넷에도 연결되지 않았습니다')
   && fixableErrors(synthetic).map(f => f.rule).join() === 'no_ground', fb.split('\n')[1])
 
 // E11. SYSTEM_PROMPT SECTION 1 (read as text, like run_checks check_templates) carries the wiring and LED rules
@@ -162,12 +165,41 @@ check('E16 /test_code contract', /^app\.post\('\/test_code', requireAuth/.test(t
 // E14. the judge on its own: a new error key or more warnings is rejected even when the count drops
 const fp = (ref: string, pin: string): ErcFinding => ({ rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref, pin }], net: null })
 const parts = sameRun(brokenErc).components
-const base: ErcOk = { ok: true, findings: [fp('U1', '4'), fp('U1', '5')], components: parts }
-const swapped = judgeRepair(base, { ok: true, findings: [fp('R1', '1')], components: parts })
-const noisier = judgeRepair(base, { ok: true, findings: [fp('U1', '4'), synthetic[0]], components: parts })
-const better = judgeRepair(base, { ok: true, findings: [fp('U1', '4')], components: [...parts, { ref: 'C9', value: '10nF', part: 'C' }] })
+const base: ErcOk = { ok: true, findings: [fp('U1', '4'), fp('U1', '5')], components: parts, nets: [] }
+const swapped = judgeRepair(base, { ok: true, findings: [fp('R1', '1')], components: parts, nets: [] })
+const noisier = judgeRepair(base, { ok: true, findings: [fp('U1', '4'), synthetic[0]], components: parts, nets: [] })
+const better = judgeRepair(base, { ok: true, findings: [fp('U1', '4')], components: [...parts, { ref: 'C9', value: '10nF', part: 'C' }], nets: [] })
 check('E14 judge', !swapped.keep && !noisier.keep && better.keep,
   `swap: ${swapped.keep ? 'kept' : swapped.why} | warn: ${noisier.keep ? 'kept' : noisier.why} | new part allowed: ${better.keep}`)
+
+// E17. a fix may wire the broken pin, not move pins that were already right: RESET fixed but the LED turned
+//      around, or TRIG moved to GND, is rejected; the error count alone would have kept both
+const fixedRest = (edit: (c: string) => string) => attempt(async () => edit(blink))
+const ledFlip = await fixedRest(c => c.replace("d1['A'] += led_a", "d1['A'] += gnd").replace("d1['K'] += gnd", "d1['K'] += led_a"))
+const trigGnd = await fixedRest(c => c.replace("u1['TRIG'] += thres", "u1['TRIG'] += gnd"))
+check('E17 rewiring correct pins rejected', kept0(ledFlip) && /맞게 이어져 있던 핀/.test(ledFlip.note) && /D1\./.test(ledFlip.note)
+  && kept0(trigGnd) && /U1\.2/.test(trigGnd.note) && ledFlip.after === 0 && trigGnd.after === 0,
+  `led: ${ledFlip.note} | trig: ${trigGnd.note}`)
+
+// E18. Python's tracebacks reach the Code tab without colour codes, even when the parent sets FORCE_COLOR
+process.env.FORCE_COLOR = '1'
+let colourErr = ''
+try { await runSkidl(blink.replace("d1.value = 'RED'", 'd1.value = RED'), out) } catch (e) { colourErr = errText(e) }
+delete process.env.FORCE_COLOR
+const envC = childEnv({ FORCE_COLOR: '1', PATH: 'x' })
+check('E18 plain tracebacks', /NameError/.test(colourErr) && !colourErr.includes('\x1b[') && envC.PYTHON_COLORS === '0' && !('FORCE_COLOR' in envC),
+  `NameError=${/NameError/.test(colourErr)} ansi=${colourErr.includes('\x1b[')} PYTHON_COLORS=${envC.PYTHON_COLORS}`)
+
+// E19. erc.py names pins with the same table as the front end (src/lib/humanReview.ts PIN_NAMES)
+const table = (text: string, start: RegExp) => {
+  const body = (start.exec(text)?.[1] ?? '')
+  return Object.fromEntries([...body.matchAll(/'?([A-Za-z_0-9]+)'?:\s*\[([^\]]*)\]/g)].map(m => [m[1], [...m[2].matchAll(/'([^']*)'/g)].map(x => x[1])]))
+}
+const pyNames = table(readFileSync(join('pcb', 'erc.py'), 'utf8'), /PIN_NAMES = \{([\s\S]*?)\n\}/)
+const tsNames = table(readFileSync(join('..', 'src', 'lib', 'humanReview.ts'), 'utf8'), /PIN_NAMES[^=]*= \{([\s\S]*?)\n\}/)
+const sorted = (o: Record<string, string[]>) => JSON.stringify(Object.entries(o).sort())
+check('E19 pin names match the front end', Object.keys(pyNames).length >= 10 && sorted(pyNames) === sorted(tsNames),
+  `${Object.keys(pyNames).length} in erc.py, ${Object.keys(tsNames).length} in humanReview.ts`)
 
 // E12. secrets never reach the child: API keys, Supabase settings, *SECRET*, *TOKEN*; everything else does
 const planted = { OPENAI_API_KEY: 'sk-check', SUPABASE_URL: 'https://check.invalid', MOUSER_API_KEY: 'm',

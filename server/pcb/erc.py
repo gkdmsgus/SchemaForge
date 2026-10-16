@@ -12,8 +12,8 @@ POWER_NAME = re.compile(r'^(VCC|VDD|VEE|VSS|VIN|VOUT|VBAT|AVCC|\+?\d+V\d*|\+\d+V
 SOURCE_TYPES = {'POWER-OUT', 'OUTPUT', 'BIDIRECTIONAL', 'TRISTATE'}
 # power that arrives through a connector or battery has passive pins, but it is a source
 SOURCE_PREFIXES = ('J', 'BT')
-# symbol pin names per template, so a message can say which pin ("4번(RESET)"); the same table as
-# PIN_NAMES in src/lib/humanReview.ts (scripts/check_board_checks.ts compares the two)
+# symbol pin names per template, so a message can say which pin ("RESET 핀(4번)"); the same table as
+# PIN_NAMES in src/lib/humanReview.ts (server/check_erc_repair.ts E19 compares the two)
 PIN_NAMES = {
     'CP': ['+', '-'],
     'LED': ['A', 'K'],
@@ -28,12 +28,25 @@ PIN_NAMES = {
 }
 
 
-def pin_label(part, pad):
-    """'4번(RESET)' for a footprint pad whose symbol pin has a name, else '4번'."""
+def pin_of(part, pad):
+    """(symbol pin number, pin name or None) of a footprint pad."""
     sym = (part.get('pad_sym') or part.get('pad_pin') or {}).get(pad)
     names = PIN_NAMES.get(part.get('part', ''))
     name = names[sym - 1] if names and sym and 0 < sym <= len(names) else None
-    return f"{pad}번({name})" if name else f"{pad}번"
+    return sym, name
+
+
+def pin_label(part, pad):
+    """'RESET 핀(4번)' by the symbol pin the code and schematic use; the board pad is added when it differs."""
+    sym, name = pin_of(part, pad)
+    num = sym if sym is not None else pad
+    board = f", 기판 패드 {pad}" if sym is not None and str(sym) != str(pad) else ''
+    return f"{name} 핀({num}번{board})" if name else f"{num}번 핀" + (f"(기판 패드 {pad})" if board else '')
+
+
+def sym_ref(part, pad):
+    sym, name = pin_of(part, pad)
+    return {**({'sym': str(sym)} if sym is not None else {}), **({'name': name} if name else {})}
 
 
 def check(components, nets, parts=None):
@@ -48,8 +61,9 @@ def check(components, nets, parts=None):
             if loose:
                 findings.append({
                     'rule': 'floating_pin', 'severity': 'error',
-                    'message': f"{p['ref']}의 핀 {', '.join(pin_label(p, n) for n in loose)}이 어느 넷에도 연결되지 않았습니다",
-                    'refs': [{'ref': p['ref'], 'pin': n} for n in loose], 'net': None})
+                    'message': f"{p['ref']}의 {', '.join(pin_label(p, n) for n in loose)}이 어느 넷에도 연결되지 않았습니다",
+                    # pin is the footprint pad (the board view marks it); sym/name are the symbol pin
+                    'refs': [{'ref': p['ref'], 'pin': n, **sym_ref(p, n)} for n in loose], 'net': None})
 
     # 2. nets with a single pin
     for n in nets:
