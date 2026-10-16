@@ -14,7 +14,7 @@ With --stream every stdout line is a JSON event:
   {"type":"done", "summary":{...}, "board":{...board.json...}}
 
        python pcb_generator.py <input.net> --erc-only [--style smd|tht]
-prints one JSON line {"erc": [...], "components": [...]}: the board's netlist checks, run
+prints one JSON line {"erc": [...], "components": [...], "nets": [...]}: the board's netlist checks, run
 before any PCB exists (board.netlist_check). Nothing is written.
 """
 import argparse, json, os, sys

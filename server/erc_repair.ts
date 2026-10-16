@@ -9,12 +9,15 @@ export interface ErcFinding {
   rule: string
   severity: 'error' | 'warning'
   message: string
-  refs: { ref: string; pin: string }[]
+  /** pin: the footprint pad (floating_pin) or the netlist pin; sym/name: the symbol pin, when known */
+  refs: { ref: string; pin: string; sym?: string; name?: string }[]
   net: string | null
 }
 /** A netlist part as pcb_generator.py --erc-only reports it (without the generator's test points). */
 export interface NetPart { ref: string; value: string; part: string }
-export type ErcOk = { ok: true; findings: ErcFinding[]; components: NetPart[] }
+/** A netlist net (symbol pin numbers), as --erc-only reports it. */
+export interface NetNet { name: string; nodes: { ref: string; pin: string }[] }
+export type ErcOk = { ok: true; findings: ErcFinding[]; components: NetPart[]; nets: NetNet[] }
 /** A check that did not run is ok:false, never an empty list of findings. */
 export type ErcRun = ErcOk | { ok: false; reason: string }
 
@@ -56,9 +59,9 @@ export function runErc(netPath: string, cwd: string, timeoutMs = 30000, style: '
       try {
         // decode once at the end: a Korean message can straddle two stdout chunks
         const last = Buffer.concat(out).toString('utf8').trim().split('\n').pop() || ''
-        const j = JSON.parse(last) as { erc?: unknown; components?: unknown }
-        if (!Array.isArray(j.erc) || !Array.isArray(j.components)) throw new Error('erc/components 없음')
-        finish({ ok: true, findings: j.erc as ErcFinding[], components: j.components as NetPart[] })
+        const j = JSON.parse(last) as { erc?: unknown; components?: unknown; nets?: unknown }
+        if (!Array.isArray(j.erc) || !Array.isArray(j.components) || !Array.isArray(j.nets)) throw new Error('erc/components/nets 없음')
+        finish({ ok: true, findings: j.erc as ErcFinding[], components: j.components as NetPart[], nets: j.nets as NetNet[] })
       } catch (e) {
         finish({ ok: false, reason: `ERC 결과를 읽지 못했습니다 (${oneLine(e)})` })
       }
@@ -77,6 +80,27 @@ export function errorKeys(findings: ErcFinding[]): string[] {
   return [...keys]
 }
 
+/** Korean names of the rules, for notes the user reads */
+export const RULE_LABEL: Record<string, string> = {
+  floating_pin: '연결 안 된 핀', single_pin_net: '한 핀짜리 넷', no_ground: 'GND 없음',
+  unpowered_rail: '공급원 없는 전원 넷', output_conflict: '출력 충돌',
+}
+/** "floating_pin U1.4" → "연결 안 된 핀 U1.4" */
+const keyLabel = (k: string) => k.replace(/^(\w+)/, r => RULE_LABEL[r] ?? r)
+
+/**
+ * The pins of the original parts that sit on a net, each mapped to the other original pins on the
+ * same net (net names may change, so a net is known by who is on it). Pins named in `skip` are left out.
+ */
+function connections(r: ErcOk, parts: Set<string>, skip: Set<string>): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const n of r.nets) {
+    const pins = n.nodes.map(nd => `${nd.ref}.${nd.pin}`).filter(k => parts.has(k.split('.')[0]) && !skip.has(k)).sort()
+    for (const k of pins) out.set(k, pins.join(' '))
+  }
+  return out
+}
+
 /** Where the errors are, for a status line: "U1.4, R2.1" (at most four). */
 export function errorSites(findings: ErcFinding[]): string {
   const sites = [...new Set(fixableErrors(findings).flatMap(f =>
@@ -86,15 +110,17 @@ export function errorSites(findings: ErcFinding[]): string {
 
 /**
  * Keep a repair only when (1) it adds no error key, (2) the error keys strictly drop, (3) warnings
- * do not rise and (4) every original part is still there with the same part name and value.
- * New parts are allowed. Every failed condition is named in `why`.
+ * do not rise, (4) every original part is still there with the same part name and value, and
+ * (5) every original pin that was not part of an error is still connected to the same original
+ * pins (a fix may wire the broken pins and add parts, not move pins that were already right).
+ * Every failed condition is named in `why`.
  */
 export function judgeRepair(before: ErcOk, after: ErcOk): { keep: true } | { keep: false; why: string } {
   const why: string[] = []
   const b = new Set(errorKeys(before.findings))
   const a = errorKeys(after.findings)
   const added = a.filter(k => !b.has(k))
-  if (added.length) why.push(`새 ERC 오류 ${added.join(', ')}`)
+  if (added.length) why.push(`새 오류 ${added.map(keyLabel).join(', ')}`)
   if (a.length >= b.size) why.push(`ERC 오류가 줄지 않았습니다 (${b.size} → ${a.length})`)
   const warnings = (r: ErcOk) => r.findings.filter(f => f.severity !== 'error').length
   if (warnings(after) > warnings(before)) why.push(`ERC 경고가 늘었습니다 (${warnings(before)} → ${warnings(after)})`)
@@ -105,6 +131,18 @@ export function judgeRepair(before: ErcOk, after: ErcOk): { keep: true } | { kee
     return n.part !== c.part || n.value !== c.value ? [`${c.ref} ${c.part} ${c.value} → ${n.part} ${n.value}`] : []
   })
   if (changed.length) why.push(`원래 부품이 바뀌었습니다: ${changed.join(', ')}`)
+  // the pins the errors were about may change; a floating pin is named by its symbol pin (sym)
+  const sites = new Set(before.findings.filter(f => f.severity === 'error').flatMap(f => f.refs.map(r => `${r.ref}.${r.sym ?? r.pin}`)))
+  const parts = new Set(before.components.map(c => c.ref))
+  const was = connections(before, parts, sites), is = connections(after, parts, sites)
+  // the pin that moved changes its company most (a pin on a net it joined changes by one neighbour)
+  const diff = (x: string, y: string | undefined) => {
+    const X = new Set(x.split(' ')), Y = new Set((y ?? '').split(' ').filter(Boolean))
+    return [...X].filter(p => !Y.has(p)).length + [...Y].filter(p => !X.has(p)).length
+  }
+  const moved = [...was].filter(([k, g]) => is.get(k) !== g)
+    .sort((p, q) => diff(q[1], is.get(q[0])) - diff(p[1], is.get(p[0])) || p[0].localeCompare(q[0])).map(([k]) => k)
+  if (moved.length) why.push(`맞게 이어져 있던 핀의 연결이 바뀌었습니다: ${moved.slice(0, 6).join(', ')}${moved.length > 6 ? ` 외 ${moved.length - 6}개` : ''}`)
   return why.length ? { keep: false, why: why.join(' / ') } : { keep: true }
 }
 
@@ -112,7 +150,8 @@ export function judgeRepair(before: ErcOk, after: ErcOk): { keep: true } | { kee
 export function ercFeedback(errors: ErcFinding[]): string {
   const lines = errors.map(f => {
     const pins = new Map<string, string[]>()
-    for (const r of f.refs) pins.set(r.ref, [...(pins.get(r.ref) || []), r.pin])
+    // the model's code numbers pins by symbol (Pin(num=...)), not by footprint pad
+    for (const r of f.refs) pins.set(r.ref, [...(pins.get(r.ref) || []), `${r.sym ?? r.pin}${r.name ? ` (${r.name})` : ''}`])
     const where = [...pins].map(([ref, ps]) => `${ref} pin ${ps.join(', ')}`).join('; ')
     return `- ${f.rule}${where ? ` ${where}` : ''}${f.net ? ` (net '${f.net}')` : ''}: ${f.message}`
   })
@@ -174,12 +213,12 @@ export async function repairErc(cur: RepairInput, deps: RepairDeps): Promise<Rep
   }
   let erc: ErcRun
   try { erc = await deps.erc(netPath) } catch (e) { erc = { ok: false, reason: oneLine(e) } }
-  if (!erc.ok) return original(`고친 netlist를 점검하지 못했습니다: ${erc.reason}`, netPath)
+  if (!erc.ok) return original(`고친 넷리스트를 점검하지 못했습니다: ${erc.reason}`, netPath)
   const after = errorKeys(erc.findings).length
   const verdict = judgeRepair(cur.erc, erc)
   if (!verdict.keep) return original(verdict.why, netPath, after)
   return { code: next.code, guide: next.guide, netPath, erc, kept: true,
-           note: `ERC 오류 ${before} → ${after}`, before, after, discard: cur.netPath }
+           note: `오류 ${before} → ${after}`, before, after, discard: cur.netPath }
 }
 
 /** Deterministic stand-in for the model (SF_AI_STUB=1): ties NE555 RESET to VCC. */

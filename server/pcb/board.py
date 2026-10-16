@@ -734,16 +734,18 @@ def _erc_findings(components, nets, parts):
 def netlist_check(net_path, style='smd'):
     """The same netlist checks generate() runs, before any placement or file is written.
 
-    Returns {'erc': findings, 'components': [{ref, value, part}]}; components is the netlist's own
-    list, taken before the test points are added. Placement does not change a finding, so the
-    shelf layout build_board makes is enough.
+    Returns {'erc': findings, 'components': [{ref, value, part}], 'nets': [{name, nodes: [{ref, pin}]}]};
+    components and nets are the netlist's own, taken before the test points are added (the repair
+    judge compares connections with them). Placement does not change a finding, so the shelf layout
+    build_board makes is enough.
     """
     with open(net_path, encoding='utf-8') as f:
         components, nets = parse_netlist(f.read())
     original = [dict(c) for c in components]
+    own_nets = [{'name': n['name'], 'nodes': [{'ref': nd['ref'], 'pin': nd['pin']} for nd in n['nodes']]} for n in nets]
     add_test_points(components, nets)
     parts, _, _ = build_board(components, nets, style)
-    return {'erc': _erc_findings(components, nets, parts), 'components': original}
+    return {'erc': _erc_findings(components, nets, parts), 'components': original, 'nets': own_nets}
 
 
 def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, route=True, overrides=None):
