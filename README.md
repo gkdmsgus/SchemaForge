@@ -29,7 +29,7 @@
 | 검사 | KiCad DRC + 회로 점검(전원 누락, 연결 안 된 핀). 결과를 숫자로 표시 |
 | 2D · 3D 보기 | KiCad 색 2D와 KiCad가 내보낸 3D 모델을 나란히 |
 | AI 기판 다듬기 (선택) | AI가 배치·선 굵기 수정을 제안하고, 검사 점수가 좋아질 때만 반영 |
-| 내보내기 · 부품 | `.net`, `.kicad_pcb`, 거버 내려받기, 부품 목록(BOM)과 Mouser 부품 검색 |
+| 내보내기 · 부품 | `.net`, `.kicad_pcb`, 거버 내려받기, 부품 목록(BOM: 같은 부품을 묶은 수량·패키지, CSV)과 Mouser 부품 검색 |
 
 ### 화면
 | 홈 — 설명 입력 | 결과 — 기판 2D · 3D |
@@ -71,7 +71,7 @@ flowchart LR
 
 | 단계 | 하는 일 | 쓰는 것 |
 |---|---|---|
-| 회로 | 설명에서 부품과 연결을 정하고 skidl 코드를 실행해 넷리스트를 만든다 | GPT-4o, skidl |
+| 회로 | 설명에서 부품과 연결을 정하고 skidl 코드를 실행해 넷리스트를 만든다. 넷리스트 점검(연결 안 된 핀 등)에서 오류가 나오면 모델이 한 번 고치고, 고친 코드가 실행되며 오류가 줄 때만 받아들인다 | GPT-4o, skidl, `server/erc_repair.ts` |
 | 배치 | 부품마다 KiCad 풋프린트를 붙이고, 연결된 부품이 가까워지도록 자리를 잡는다 | 힘 기반 배치 (`server/pcb/placer.py`) |
 | 배선 | 두 층에 트랙을 긋고, 막히면 비아로 층을 바꾼다. 전원 넷은 굵게 긋는다 | A* 경로 탐색 (`server/pcb/router.py`) |
 | 마감 | GND 동박(pour), 고정 구멍 4개, 전원 넷 테스트 포인트를 넣는다 | `server/pcb/board.py` |
@@ -137,7 +137,7 @@ cd server && npm install && cd ..
 OPENAI_API_KEY=...
 SUPABASE_URL=...            # 로그인·세션 저장 (없으면 메모리에만 저장)
 SUPABASE_SERVICE_KEY=...
-MOUSER_API_KEY=...          # 부품 검색 (선택)
+MOUSER_API_KEY=...          # 부품 가격·재고 조회 (선택. 없으면 BOM에 줄마다 검색 링크만 보인다)
 KICAD_CLI_PATH=...          # kicad-cli가 PATH에 없을 때
 ```
 
@@ -162,12 +162,17 @@ npm run dev      # 화면(vite 3000) + API(8080) 동시 실행
 ```bash
 python server/pcb/run_checks.py
 ```
-테스트 회로 4개를 SMD·THT 두 방식으로, 즉 기판 8개를 만들어 각각 18항목을 확인한다 (풋프린트 매핑, 패드 좌표가 KiCad와 같은지, 극성, 코트야드 겹침, DRC, 거버, 배선 완료, 회로 점검 등). 여기에 더해 일부러 망가뜨린 회로(`broken_floating.py`)를 잡아내는지, 풋프린트 표가 맞는지도 확인한다.
+테스트 회로 4개를 SMD·THT 두 방식으로, 즉 기판 8개를 만들어 각각 18항목을 확인한다 (풋프린트 매핑, 패드 좌표가 KiCad와 같은지, 극성, 코트야드 겹침, DRC, 거버, 배선 완료, 회로 점검, PCB 전 넷리스트 점검이 기판 점검과 같은지 등). 여기에 더해 일부러 망가뜨린 회로(`broken_floating.py`)를 잡아내는지, 풋프린트 표가 맞는지도 확인한다.
 
 ```bash
 cd server && npx tsx check_ai_layout.ts
 ```
 AI 다듬기의 판정 규칙 13항목 (사전 검사, 점수 순서, 릴레이 접점·모터 경로의 부하 전류 넷 판정 등). 모델을 호출하지 않는다.
+
+```bash
+cd server && npx tsx check_erc_repair.ts
+```
+넷리스트 점검(ERC) 자동 수정 16항목. 고친 코드가 실행되고 오류가 줄어들 때만 받아들이는지(부품을 지우거나 값을 바꾸면 거절), 점검이 돌지 못하면 통과로 세지 않는지, 생성 프롬프트에 LED 색·555 핀 규칙이 있는지, skidl 실행 환경에 키가 들어가지 않고 임시 폴더가 지워지는지, 코드 실행(`/test_code`)에 로그인이 필요한지. 모델을 호출하지 않는다 (python과 skidl 필요).
 
 ```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
@@ -179,6 +184,16 @@ python server/pcb/check_ai_loop.py --port 8098
 npx tsx scripts/check_operating.ts
 ```
 동작 검사 184항목. 한 군데만 다른 되는/안 되는 회로 쌍, 손으로 계산한 값과의 일치, 부품표의 출처, 회로도와 기판의 판정 일치, 데모 회로 파일(skidl 실행), 검토에서 나온 오판 사례 140건(회로마다 하나씩), 부품을 거꾸로 나열해도 같은 답이 나오는지를 확인한다.
+
+```bash
+npx tsx scripts/check_code_view.ts
+```
+Code 탭 86항목. 코드 강조가 원문을 바꾸지 않는지, 오류 출력에서 사용자 코드의 줄 번호를 찾는지(skidl 내부 줄은 건너뜀), 들여쓰기, 실제 python에 오류를 넣었을 때의 줄 번호, 글자색 대비.
+
+```bash
+npx tsx scripts/check_bom.ts
+```
+BOM 21항목. 같은 템플릿·값·풋프린트 묶기, 기판 풋프린트와의 대조(회로가 바뀐 부품은 비움), 테스트 패드·고정 구멍 분리, CSV 이스케이프, 지어낸 Mouser 부품 번호·가격이 없는지.
 
 ```bash
 npx tsc --noEmit             # 화면 타입 검사
