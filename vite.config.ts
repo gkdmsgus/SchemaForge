@@ -25,7 +25,6 @@ export default defineConfig({
       '/generate_pcb': 'http://localhost:8080',
       '/generate_gerber': 'http://localhost:8080',
       '/mouser_search': 'http://localhost:8080',
-      '/mouser_cart': 'http://localhost:8080',
       '/test_code': 'http://localhost:8080',
       '/test': 'http://localhost:8080',
       '/chat_edit': {

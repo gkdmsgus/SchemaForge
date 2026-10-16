@@ -12,10 +12,11 @@
 //   _history     - 이력 패널
 //   _favorites   - 즐겨찾기
 //   _progress    - 진행 바, 스켈레톤
-//   _result      - 결과, BOM, 코드, KiCad 가이드
+//   _result      - 결과 화면 공통
+//   _code        - Code 탭 (줄 번호·편집), KiCad 안내
+//   _bom         - BOM 탭
 //   _settings    - 설정 패널
 //   _pixels      - 픽셀 장식, 애니메이션
-//   _light-theme - 라이트 테마 오버라이드
 //   _responsive  - 반응형 미디어쿼리
 
 @import 'sf-tokens';   // 새 디자인 시스템 토큰 (--sf-*) — 기존 토큰과 공존
@@ -31,6 +32,7 @@
 @import 'progress';
 @import 'result';
 @import 'code';
+@import 'bom';
 @import 'settings';
 @import 'pixels';
 @import 'responsive';
