@@ -10,6 +10,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import BomTable from '../src/components/BomTable.tsx'
 import {
   BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
   type BomBoard, type BomMatch,
@@ -209,6 +212,37 @@ function parseCsv(text: string): string[][] {
   const unclear = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '0,10 €' }]]))
   check('B10c price total', !!same && Math.abs(same.total - 2000.2) < 1e-9 && same.currency === '$' && same.priced === 2 && mixed === null && unclear === null,
     same ? `${same.total} ${same.currency}` : 'no total')
+}
+
+// B11. the BOM tab keeps to the rules (lint does not cover .tsx)
+{
+  const ui = fs.readFileSync(path.join('src', 'components', 'BomTable.tsx'), 'utf-8')
+  const body = ui.slice(ui.indexOf('export default function BomTable'))
+  const lastHook = Math.max(...[...body.matchAll(/\buse(State|Memo|Effect|Ref|Callback)\(/g)].map(m => m.index ?? 0))
+  const firstReturn = body.search(/\n\s+(if \(.*\) )?return\b/)
+  check('B11 BomTable hooks before any return', lastHook > 0 && firstReturn > lastHook)
+  const banned = [/\balert\(/, /window\.open\(/, /#[0-9a-fA-F]{3,8}\b/, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u, /rel="noopener"/].filter(re => re.test(ui))
+  check('B11b BomTable: no alert, popups, hex colours, emoji or bare noopener', banned.length === 0, banned.map(String).join(' '))
+}
+
+// B11c. the BOM tab renders: empty state, before the PCB, on a finished board, stale and unmapped parts
+{
+  const render = (components: ComponentEntry[], board: BomBoard | null) =>
+    renderToStaticMarkup(createElement(BomTable, { components, board, style: 'smd', fileBase: 'x' }))
+  const rows = (html: string) => (html.match(/data-testid="bom-line"/g) ?? []).length
+  const empty = render([], null)
+  const before = render([comp('R3', '470', 'R'), comp('R4', '470', 'R'), comp('R5', '470', 'R'), comp('D1', 'RED', 'LED')], null)
+  const parts = [['R3', '470', 'R', 'Resistor_SMD:R_0805_2012Metric'], ['R4', '470', 'R', 'Resistor_SMD:R_0805_2012Metric'],
+    ['U1', 'LM358', 'OpAmp', 'SchemaForge:UNMAPPED_OpAmp'], ['TP1', 'GND', 'TestPoint', 'TestPoint:TestPoint_Pad_D1.5mm'],
+    ...['H1', 'H2', 'H3', 'H4'].map(r => [r, 'M3', 'MountingHole', 'MountingHole:MountingHole_3.2mm_M3'])]
+    .map(([ref, value, part, footprint]) => ({ ref, value, part, footprint }))
+  const after = render([comp('R3', '1k', 'R'), comp('R4', '470', 'R'), comp('U1', 'LM358', 'OpAmp')], { parts })
+  check('B11c BomTable renders', empty.includes('부품이 없습니다') && rows(empty) === 0 &&
+    rows(before) === 2 && before.includes('data-refs="R3,R4,R5"') && before.includes('패키지는 PCB를 만들면 채워집니다') &&
+    (before.match(/rel="noopener noreferrer"/g) ?? []).length === 2 && before.includes('LED%20RED') && !before.includes('단가') &&
+    rows(after) === 3 && after.includes('title="Resistor_SMD:R_0805_2012Metric">0805') && after.includes('풋프린트 없음') &&
+    after.includes('회로가 PCB를 만든 뒤 바뀌었습니다 (R3)') && after.includes('구매 불필요 · 기판에 포함: TP1 (테스트 패드) · H1–H4 (M3 구멍)'),
+    `rows ${rows(empty)}/${rows(before)}/${rows(after)}`)
 }
 
 // B12. the server never invents shop data and searches with the BOM's own words
