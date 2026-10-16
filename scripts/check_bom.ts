@@ -14,7 +14,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import BomTable from '../src/components/BomTable.tsx'
 import {
-  BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
+  BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, parsePrice, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
   type BomBoard, type BomMatch,
 } from '../src/lib/bom.ts'
 import { ASSUMED } from '../src/lib/humanReview.ts'
@@ -165,8 +165,57 @@ function parseCsv(text: string): string[][] {
     if (bom.stale.length) bad.push(`${f}: stale ${bom.stale}`)
     if (bom.lines.some(l => !l.unmapped && (!l.footprint || !l.pkg))) bad.push(`${f}: line without footprint`)
   }
-  check('B8b routed boards fully covered', boards.length > 0 && bad.length === 0,
-    `${boards.length} boards, ${lines} lines${dir ? '' : ' (no server/outputs found)'}${bad.length ? ' bad ' + bad.slice(0, 3).join(' | ') : ''}`)
+  // saved boards exist only after PCBs were made in the app (server/outputs is git-ignored): a fresh
+  // clone skips these two checks, said out loud and not counted as passed
+  if (!boards.length) console.log('skip B8b, B8d: no saved boards in server/outputs (make a PCB in the app first)')
+  else {
+    check('B8b routed boards fully covered', bad.length === 0,
+      `${boards.length} boards, ${lines} lines${bad.length ? ' bad ' + bad.slice(0, 3).join(' | ') : ''}`)
+
+    // B8d. the circuit read from the board's own .net (not from the board) matches the board: nothing stale
+    const netComps = (text: string): ComponentEntry[] => [...text.matchAll(/\(comp\s*\(ref\s+"([^"]+)"\)\s*\(value\s+"([^"]*)"\)[\s\S]*?\(part\s+"([^"]+)"\)/g)]
+      .map(m => comp(m[1], m[2], m[3]))
+    const pairs = boards.map(x => ({ ...x, net: path.join(dir!, x.f.replace(/\.board\.json$/, '.net')) })).filter(x => fs.existsSync(x.net))
+    const off: string[] = []
+    for (const { f, b, net } of pairs) {
+      const bom = buildBom(netComps(fs.readFileSync(net, 'utf-8')), { parts: b.parts, unmapped: b.unmapped }, b.style === 'tht' ? 'tht' : 'smd')
+      if (bom.stale.length) off.push(`${f}: stale ${bom.stale.join(',')}`)
+    }
+    check('B8d circuit from the .net matches its board', pairs.length > 0 && off.length === 0, `${pairs.length} pairs${off.length ? ' · ' + off.slice(0, 3).join(' | ') : ''}`)
+  }
+}
+
+// B13. a part changed after the PCB is stale, not "no footprint" from the old board; an empty value
+//      (written into the netlist as the ref) still matches its board part
+{
+  const board: BomBoard = { parts: [{ ref: 'U1', value: 'LM358', part: 'OpAmp', footprint: 'SchemaForge:UNMAPPED_OpAmp' },
+    { ref: 'J3', value: 'J3', part: 'Conn_01x02', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical' }],
+    unmapped: [{ ref: 'U1', part: 'OpAmp', reason: 'template is a 5-pin single op-amp' }] }
+  const b = buildBom([comp('U1', 'NE555', 'NE555'), comp('J3', '', 'Conn_01x02')], board, 'smd')
+  const u1 = b.lines.find(l => l.refs.includes('U1'))!, j3 = b.lines.find(l => l.refs.includes('J3'))!
+  check('B13 changed part is stale; empty value matches', !u1.unmapped && !!u1.stale && b.stale.join() === 'U1' && j3.pkg === 'PinHeader_1x02' && !j3.stale,
+    `U1 unmapped=${u1.unmapped ?? '-'} stale=${u1.stale}; J3 pkg=${j3.pkg} stale=${j3.stale ?? false}`)
+}
+
+// B14. the same pin header with different net labels is one line
+{
+  const hdr = 'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'
+  const b = buildBom([comp('J1', 'PWR_IN', 'Conn_01x03'), comp('J2', 'RELAY_OUT', 'Conn_01x03')],
+    { parts: [{ ref: 'J1', value: 'PWR_IN', part: 'Conn_01x03', footprint: hdr }, { ref: 'J2', value: 'RELAY_OUT', part: 'Conn_01x03', footprint: hdr }] }, 'smd')
+  check('B14 headers grouped across net labels', b.lines.length === 1 && b.lines[0].qty === 2 && b.lines[0].value === 'PWR_IN, RELAY_OUT',
+    b.lines.map(l => `${l.refs.join('+')}=${l.value}`).join(' | '))
+}
+
+// B15. prices: a decimal comma is not a thousands group; a break above one piece stays out of the total
+{
+  const p = (s: string, c?: string) => parsePrice(s, c)?.amount ?? null
+  const okFormats = p('$0.10') === 0.1 && p('$1,250.00') === 1250 && p('₩1,390') === 1390 && p('1,250', 'USD') === 1250
+  const unclear = p('0,123 €') === null && p('0,123', 'EUR') === null && p('1,250 €') === null
+  const line = (key: string) => ({ key, refs: [key], qty: 2, value: '', part: 'R', type: '', footprint: null, pkg: null, pinout: null, notes: [] })
+  const m = new Map<string, BomMatch>([['a', { mouserPart: 'x', price: '$0.10' }], ['b', { mouserPart: 'y', price: '$5.00', priceQty: 5000 }]])
+  const t = priceTotal([line('a'), line('b')], m)
+  check('B15 price formats and break quantity', okFormats && unclear && !!t && Math.abs(t.total - 0.2) < 1e-9 && t.priced === 1,
+    `formats=${okFormats} unclear=${unclear} total=${t ? `${t.total} ${t.currency} (${t.priced})` : 'none'}`)
 }
 
 // B8c. every footprint the PCB can use gets a short package label

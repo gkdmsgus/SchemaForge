@@ -47,6 +47,8 @@ export interface BomMatch {
   url?: string
   price?: string
   currency?: string
+  /** pieces the first price break starts at (reels start above one) */
+  priceQty?: number | null
   stockNum?: number | null
 }
 
@@ -114,20 +116,32 @@ export function buildBom(components: ComponentEntry[], board: BomBoard | null, s
     if (FURNITURE.has(part)) { furniture.set(c.ref, { ref: c.ref, value, part }); continue }
     inGraph.add(c.ref)
     const bp = boardParts.get(c.ref)
-    // board.py places an unmapped part with a placeholder footprint "SchemaForge:UNMAPPED_<part>"
-    const why = unmapped.get(c.ref) ?? (bp && /:UNMAPPED_/.test(bp.footprint) ? 'no footprint mapping' : undefined)
+    // the board part is this part: same template and value (an empty value reaches the netlist as the ref)
+    const bpValue = String(bp?.value ?? '').trim()
+    const sameAsBoard = !!bp && (bpValue === value || (!value && bpValue === c.ref)) && bp.part === (c.name || bp.part)
+    // board.py places an unmapped part with a placeholder footprint "SchemaForge:UNMAPPED_<part>";
+    // its reason only applies while the board part is still this part
+    const why = sameAsBoard ? unmapped.get(c.ref) ?? (/:UNMAPPED_/.test(bp!.footprint) ? 'no footprint mapping' : undefined) : undefined
     let footprint: string | null = null
     let isStale = false
     if (board && !why) {
-      if (bp && String(bp.value ?? '').trim() === value && bp.part === (c.name || bp.part) && bp.footprint) footprint = bp.footprint
+      if (sameAsBoard && bp!.footprint) footprint = bp!.footprint
       else { isStale = true; stale.push(c.ref) }
     }
-    const key = `${part}|${normValue(value)}|${footprint ?? (why ? 'UNMAPPED' : isStale ? 'STALE' : '')}`
+    // a connector's value is a net label, not a part value: same header, one line
+    const conn = /^Conn_01x\d+$/.test(part)
+    const key = `${part}|${conn ? '' : normValue(value)}|${footprint ?? (why ? 'UNMAPPED' : isStale ? 'STALE' : '')}`
     const line = groups.get(key)
-    if (line) { line.refs.push(c.ref); continue }
+    if (line) {
+      line.refs.push(c.ref)
+      if (conn && value && !line.value.split(', ').includes(value)) line.value = line.value ? `${line.value}, ${value}` : value
+      continue
+    }
+    const facts = notesFor(part, style)
+    if (conn) facts.notes.push('값은 넷 이름')
     groups.set(key, {
       key, refs: [c.ref], qty: 0, value, part, type: typeLabel(part, c.ref), footprint, pkg: pkgLabel(footprint),
-      ...notesFor(part, style),
+      ...facts,
       ...(why ? { unmapped: why } : {}), ...(isStale ? { stale: true } : {}),
     })
   }
@@ -216,13 +230,18 @@ export function safeMouserUrl(u: unknown): string | null {
   } catch { return null }
 }
 
-/** "$0.10" -> { amount: 0.1, currency: "$" }; unclear formats (decimal comma) give null. */
+/** currencies written with a decimal point, where "1,250" is a thousands group */
+const DOT_DECIMAL = /^(USD|US\$|\$|KRW|₩|JPY|¥|CNY|GBP|£|INR|₹|CAD|AUD|TWD|HKD|SGD)$/i
+
+/** "$0.10" -> { amount: 0.1, currency: "$" }; unclear formats (a decimal comma such as "0,123 €") give null. */
 export function parsePrice(price: string | undefined, currency?: string): { amount: number; currency: string } | null {
   if (!price) return null
   const m = /^\s*([^\d\s.,]*)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*([^\d\s.,]*)\s*$/.exec(price)
   if (!m) return null
-  const amount = Number(m[2].replace(/,/g, '') + (m[3] ?? ''))
   const cur = (currency || m[1] || m[4] || '').trim()
+  // "0,123" is never a thousands group, and "1,250" is one only in a currency written with a decimal point
+  if (m[2].includes(',') && (/^0,/.test(m[2]) || (!m[3] && !DOT_DECIMAL.test(cur)))) return null
+  const amount = Number(m[2].replace(/,/g, '') + (m[3] ?? ''))
   return Number.isFinite(amount) && cur ? { amount, currency: cur } : null
 }
 
@@ -232,7 +251,8 @@ export function priceTotal(lines: BomLine[], matches: Map<string, BomMatch>): { 
   let currency: string | null = null
   for (const l of lines) {
     const m = matches.get(l.key)
-    if (!m?.price) continue
+    // a price break that starts above one piece is not a unit price: left out of the total
+    if (!m?.price || (m.priceQty ?? 1) > 1) continue
     const p = parsePrice(m.price, m.currency)
     if (!p || (currency !== null && p.currency !== currency)) return null
     currency = p.currency
