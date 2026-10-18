@@ -5,9 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  // server/index.ts is the API entry point; index.js is an unused pre-TypeScript copy.
   // .claude holds local tool settings and session worktrees (whole copies of the repository).
-  globalIgnores(['dist', 'server/index.js', '.claude']),
+  globalIgnores(['dist', '.claude']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
