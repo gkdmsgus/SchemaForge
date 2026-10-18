@@ -14,7 +14,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import BomTable from '../src/components/BomTable.tsx'
 import {
-  BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, normValue, parsePrice, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
+  BOM_COLUMNS, FURNITURE, SEARCH_WORD, bomCsv, bomTsv, buildBom, furnitureSummary, mouserSearchUrl, normValue, parsePrice, pkgLabel, priceTotal, safeMouserUrl, searchKeyword,
   type BomBoard, type BomMatch,
 } from '../src/lib/bom.ts'
 import { ASSUMED } from '../src/lib/humanReview.ts'
@@ -257,7 +257,11 @@ function parseCsv(text: string): string[][] {
   check('B10 search keywords', JSON.stringify(kw) === JSON.stringify(['LED RED 0805', 'resistor 470 0805', 'NE555 SOIC-8', 'battery 9V',
     'pin header 1x03 2.54mm', 'resistor 470']), kw.join(' | '))
   check('B10b product links', safeMouserUrl('https://www.mouser.com/ProductDetail/x') !== null && safeMouserUrl('javascript:alert(1)') === null &&
-    safeMouserUrl('http://www.mouser.com/x') === null && safeMouserUrl('https://mouser.com.evil.example/x') === null)
+    safeMouserUrl('http://www.mouser.com/x') === null && safeMouserUrl('https://mouser.com.evil.example/x') === null &&
+    safeMouserUrl('https://www.mouser.kr/ProductDetail/x') !== null && safeMouserUrl('https://mouser.kr.evil.example/x') === null)
+  // kr.mouser.com redirected to www.mouser.kr: link there directly, the keyword encoded
+  const link = mouserSearchUrl('resistor 470 0805')
+  check('B10d search link goes to www.mouser.kr', new URL(link).hostname === 'www.mouser.kr' && link.endsWith('?Keyword=resistor%20470%200805'), link)
   const bom = buildBom([comp('R1', '1k', 'R'), comp('R2', '1k', 'R'), comp('C1', '10nF', 'C')], null, 'smd')
   const [a, b] = bom.lines.map(l => l.key)   // C1 line, then R1+R2
   const same = priceTotal(bom.lines, new Map([[a, { mouserPart: 'x', price: '$0.10' }], [b, { mouserPart: 'y', price: '$1,000.05' }]]))

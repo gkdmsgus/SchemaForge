@@ -222,15 +222,18 @@ export function searchKeyword(line: Pick<BomLine, 'part' | 'value' | 'pkg'>): st
   return [keepWord ? word : '', value, searchPkg(line)].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
 }
 
-/** Mouser search page for a keyword (URL format from the previous BOM code, not re-checked). */
-export const mouserSearchUrl = (keyword: string) => `https://kr.mouser.com/Search/Refine?Keyword=${encodeURIComponent(keyword)}`
+/**
+ * Mouser Korea search page for a keyword. kr.mouser.com redirected here (seen 2026-10-18); the
+ * /Search/Refine?Keyword= path is from the previous BOM code and not re-checked (the site blocks automated browsers).
+ */
+export const mouserSearchUrl = (keyword: string) => `https://www.mouser.kr/Search/Refine?Keyword=${encodeURIComponent(keyword)}`
 
-/** Only https links on mouser.com from the API are used as links. */
+/** Only https links on mouser.com or mouser.kr (the search links' site) from the API are used as links. */
 export function safeMouserUrl(u: unknown): string | null {
   if (typeof u !== 'string') return null
   try {
     const url = new URL(u)
-    return url.protocol === 'https:' && /(^|\.)mouser\.com$/i.test(url.hostname) ? url.href : null
+    return url.protocol === 'https:' && /(^|\.)mouser\.(com|kr)$/i.test(url.hostname) ? url.href : null
   } catch { return null }
 }
 
