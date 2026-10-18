@@ -8,8 +8,8 @@ import { Stamp, StatusChip } from './StatusUi'
 import type { Camera } from '../lib/board3d'
 import { HUMAN_ROW, STATE_TONE, TONE_COLOR, checkRows, drcCounts, overall, stateWord, summarize, type Tone } from '../lib/boardChecks'
 import { fromBoard, operatingChecks } from '../lib/operatingCheck'
-import { KIND_LABEL, loadReviewed, reviewItems, saveReviewed, type ReviewItem } from '../lib/humanReview'
-import { assemblyRefs, loadPlaced, placedKey, savePlaced } from '../lib/assembly'
+import { KIND_LABEL, MARK_COLOR, boardMarks, confirmReviews, loadReviewed, reviewItems, saveReviewed, type BoardMark, type ReviewItem } from '../lib/humanReview'
+import { assemblyRefs, clickAction, loadAssemblyView, loadPlaced, placedKey, saveAssemblyView, savePlaced } from '../lib/assembly'
 import { buildBom, type BomLine } from '../lib/bom'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
@@ -225,6 +225,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
   const [real3d, setReal3d] = useState(true)         // KiCad GLB once the finished board exists
   const [zoom3d, setZoom3d] = useState(1)
+  // 배치하기: the real 3D model unless this browser chose 2D, or there is no board file, or the model would not load
+  const [asmView, setAsmView] = useState<'3d' | '2d'>(() => loadAssemblyView())
+  const [glbFailed, setGlbFailed] = useState(false)
+  const [modelled3d, setModelled3d] = useState<string[] | null>(null)   // parts with a 3D model, once it is in
+  const [topView, setTopView] = useState(false)
+  const [camReset, setCamReset] = useState(0)
+  const [focusRefs, setFocusRefs] = useState<string[] | null>(null)    // list line under the mouse: lit on the board
+  const [nudge, setNudge] = useState(0)          // a click on a part with a direction shows its marks first: flash the box
+  const asm3d = assembly && !!pcbFilename && asmView === '3d' && !glbFailed
   const drag3d = useRef<{ x: number; y: number } | null>(null)
   // a press on the board: where it started, whether it became a drag, and the part under it (assembly)
   const dragRef = useRef<{ x: number; y: number; sx: number; sy: number; moved: boolean; hit: string | null; slop: number } | null>(null)
@@ -418,6 +427,22 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const boardKey = useMemo(() => placedKey(pcbFilename, final), [pcbFilename, final])
   const [placedRefs, setPlacedRefs] = useState<Set<string>>(() => loadPlaced(placedKey(pcbFilename, final), assemblyRefs(final)))
   useEffect(() => { setPlacedRefs(loadPlaced(boardKey, asmRefs)) }, [boardKey, asmRefs])
+  // parts whose direction nobody confirmed yet
+  const pendingRefs = useMemo(() => new Set(reviewList.filter(it => !reviewedKeys.has(it.key)).map(it => it.ref)), [reviewList, reviewedKeys])
+  // where the picked part's + / − / 1 goes: a label at each of its pads (board mm). The 2D drawing follows the
+  // pose it draws (the playback, before any AI change, in the PCB view); the 3D model is the board file itself,
+  // so its marks come from the file: a part the AI loop turned round gets its + and − on the right pads
+  const marks2d = useMemo((): BoardMark[] => {
+    const p = pickRef ? byRef[pickRef] : undefined, pose = pickRef ? poses[pickRef] : undefined
+    return p && pose ? boardMarks(p, pose, reviewList) : []
+  }, [pickRef, byRef, poses, reviewList])
+  const marks3d = useMemo((): BoardMark[] => {
+    const p = pickRef ? final?.parts.find(q => q.ref === pickRef) : undefined
+    return p ? boardMarks(p, [p.x, p.y, p.rot], reviewList) : []
+  }, [pickRef, final, reviewList])
+  const [marksIn3d, setMarksIn3d] = useState(true)       // false: the model did not match the board file, no marks in 3D
+  // part origins for the 3D viewer to check its model against before it draws the marks
+  const layout3d = useMemo(() => (final?.parts ?? []).map(p => ({ ref: p.ref, x: p.x, y: p.y })), [final])
   const aiSkipped = ai.some(r => r.round === 0 && !r.kept)
   const aiOpen = aiOpenSet ?? aiSkipped
   // does it work: numeric checks on the finished board's part values
@@ -470,10 +495,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     }
   }
 
-  /** Assembly: tick or untick a part as placed on the real board (kept per board file in this browser). */
+  /**
+   * Assembly: tick or untick a part as placed on the real board (kept per board in this browser).
+   * A part with a direction nobody confirmed is not ticked by the first click: it shows where its
+   * + / − / 1 goes, and "맞췄어요" then ticks it and confirms the direction at once.
+   */
   function togglePlaced(ref: string) {
     if (!asmSet.has(ref)) return
     setPickRef(ref)
+    if (clickAction(ref, placedRefs, pendingRefs) === 'show') { setNudge(n => n + 1); return }
     setPlacedRefs(prev => {
       const next = new Set(prev)
       if (next.has(ref)) next.delete(ref)
@@ -481,6 +511,35 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       savePlaced(boardKey, next)
       return next
     })
+  }
+  /** "맞췄어요": the part's direction confirmed and the part ticked as placed. */
+  function confirmPlaced(ref: string) {
+    if (!asmSet.has(ref)) return
+    const now = Date.now()
+    setReviewed(prev => saveReviewed(confirmReviews(ref, reviewList, prev, now)))
+    setPlacedRefs(prev => {
+      if (prev.has(ref)) return prev
+      const next = new Set(prev)
+      next.add(ref)
+      savePlaced(boardKey, next)
+      return next
+    })
+  }
+  function chooseAsmView(v: '3d' | '2d') {
+    setAsmView(v)
+    saveAssemblyView(v)
+  }
+  /** The tooltip over a part in 3D: what it is and what a click does. */
+  function hoverLabel(ref: string): string | null {
+    const p = byRef[ref]
+    if (!p) return null
+    if (assembly) {
+      if (!asmSet.has(ref)) return null
+      const next = placedRefs.has(ref) ? '배치함 · 다시 누르면 해제'
+        : pendingRefs.has(ref) ? '방향이 있는 부품 · 누르면 맞출 자리를 보여 줍니다' : '누르면 배치 체크'
+      return `${ref} ${p.value}\n${next}`
+    }
+    return `${ref} ${p.value}${reviewList.some(it => it.ref === ref) ? '\n누르면 방향 확인' : ''}`
   }
   function clearPlaced() {
     if (!placedRefs.size || !window.confirm('배치 체크를 모두 지울까요?')) return
@@ -603,7 +662,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* drawing area: 2D and 3D panes with the panels floating over them */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
       <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
-      <div style={{ flex: 1, minWidth: 0, display: view3d === '3d' && !assembly ? 'none' : 'block' }}>
+      <div style={{ flex: 1, minWidth: 0, display: (view3d === '3d' && !assembly) || (asm3d && placed) ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
         onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove}
@@ -658,6 +717,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                 <rect data-human-pick={ref} x={box[0] - 0.6} y={box[1] - 0.6} width={box[2] - box[0] + 1.2}
                   height={box[3] - box[1] + 1.2} rx={0.4} fill="none" stroke={TONE_COLOR.accent} strokeWidth={0.2}
                   strokeDasharray="0.8 0.5" style={{ pointerEvents: 'none' }} />
+              )}
+              {assembly && placed && focusRefs?.includes(ref) && (
+                <rect data-focus-2d={ref} x={box[0] - 0.5} y={box[1] - 0.5} width={box[2] - box[0] + 1} height={box[3] - box[1] + 1} rx={0.4}
+                  fill="#e3a32e" fillOpacity={0.22} stroke="#e3a32e" strokeWidth={0.18} style={{ pointerEvents: 'none' }} />
               )}
               {assembly && placed && placedRefs.has(ref) && (
                 <g data-placed={ref} style={{ pointerEvents: 'none' }}>
@@ -716,6 +779,18 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </line>
         )))}
 
+        {/* where the picked part's + / − / 1 goes, on its pads */}
+        {placed && marks2d.map(m => {
+          const w = Math.max(1.5, 0.62 * m.label.length + 0.7)
+          return (
+            <g key={m.key} data-mark={m.key} data-label={m.label} transform={`translate(${m.x} ${m.y})`} style={{ pointerEvents: 'none' }}>
+              <rect x={-w / 2} y={-0.75} width={w} height={1.5} rx={0.75} fill={MARK_COLOR(m.label)} stroke="#ffffff" strokeWidth={0.15} />
+              <text fontSize={m.label.length > 1 ? 0.85 : 1.05} fill="#ffffff" textAnchor="middle" dominantBaseline="central"
+                fontWeight={700} fontFamily={MONO}>{m.label}</text>
+            </g>
+          )
+        })}
+
         {/* assembly: one click target per part to place, over everything else */}
         {assembly && placed && asmRefs.map(ref => {
           const p = byRef[ref], pose = poses[ref]
@@ -731,10 +806,28 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       </svg>
       </div>
 
+      {/* 배치하기 in 3D: KiCad's own model, a click on a part ticks it */}
+      {asm3d && placed && pcbFilename && (
+        <div data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
+          <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={[...placedRefs]} focus={focusRefs ?? []}
+            marks={marks3d} layout={layout3d} hoverLabel={hoverLabel} view={topView ? 'top' : 'iso'} resetKey={camReset} margin={1.08}
+            onPick={togglePlaced} onLoad={(refs, ok) => { setModelled3d(refs); setMarksIn3d(ok) }} onError={() => setGlbFailed(true)} />
+          <div style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
+            padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
+            fontFamily: MONO, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none' }}>
+            드래그 회전 · 오른쪽 드래그 이동 · 휠 확대 · 부품을 누르면 배치 체크
+          </div>
+        </div>
+      )}
+
       {assembly && placed && (
         <AssemblyPanel lines={asmLines} total={asmRefs.length} placedRefs={placedRefs} pick={pickRef}
-          reviewList={reviewList} reviewedKeys={reviewedKeys} hasFurniture={(final?.parts ?? []).length > asmRefs.length}
-          onToggle={togglePlaced} onPick={setPickRef} onClear={clearPlaced} onReview={toggleReviewed} />
+          reviewList={reviewList} reviewedKeys={reviewedKeys} pending={pendingRefs}
+          hasFurniture={(final?.parts ?? []).length > asmRefs.length} nudge={nudge}
+          view={asm3d ? '3d' : '2d'} glbFailed={glbFailed} marksShown={!asm3d || marksIn3d}
+          missing3d={asm3d && modelled3d ? asmRefs.filter(r => !modelled3d.includes(r)) : []}
+          onToggle={togglePlaced} onConfirm={confirmPlaced} onPick={setPickRef} onClear={clearPlaced} onReview={toggleReviewed}
+          onFocus={setFocusRefs} />
       )}
 
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
@@ -746,7 +839,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           onPointerUp={() => { drag3d.current = null }}
           onWheel={real3d && placed ? undefined : e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
           {real3d && placed && pcbFilename
-            ? <KiCad3DViewer pcbFilename={pcbFilename} selected={pickRef} reviewed={reviewedRefs} onPick={pickFrom3d} />
+            ? <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={reviewedRefs} marks={marks3d} layout={layout3d}
+                hoverLabel={hoverLabel} onPick={pickFrom3d} />
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
@@ -760,11 +854,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             </button>
           )}
           {/* one line always (cut with … on narrow panes) so the checks panel can stop just above it */}
-          <div title={real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 확인 항목' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
+          <div title={real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
             style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
             padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
             fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 확인 항목' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
+            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
           </div>
         </div>
       )}
@@ -782,7 +876,29 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
               {v === '2d' ? '2D' : v === 'both' ? '나란히' : '3D'}
             </button>
           ))}
-          {placed && (['F.Cu', 'B.Cu'] as const).map(L => (
+          {assembly && placed && pcbFilename && (['3d', '2d'] as const).map(v => {
+            const on = (v === '3d') === asm3d
+            const failed = v === '3d' && glbFailed
+            return (
+              // after a failed load the 3D button tries again
+              <button key={v} type="button" onClick={() => { if (failed) setGlbFailed(false); chooseAsmView(v) }} aria-pressed={on}
+                data-testid={`assembly-view-${v}`} title={failed ? '3D 모델을 불러오지 못했습니다. 누르면 다시 시도합니다' : v === '3d' ? '실제 3D 모델' : '평면 그림'}
+                style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${failed ? TONE_COLOR.warn : UI_LINE}`, background: on ? UI_FG : UI_BG,
+                  color: on ? '#ffffff' : failed ? TONE_COLOR.warn : UI_FG, fontWeight: on ? 700 : 400, fontFamily: MONO, fontSize: 11,
+                  cursor: 'pointer' }}>
+                {v === '3d' ? '3D' : '2D'}
+              </button>
+            )
+          })}
+          {asm3d && placed && (
+            <button type="button" onClick={() => setTopView(t => !t)} aria-pressed={topView} data-testid="assembly-top"
+              title={topView ? '비스듬히 보기' : '위에서 내려다보기 (평면 그림과 같은 방향)'}
+              style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${UI_LINE}`, background: topView ? UI_FG : UI_BG,
+                color: topView ? '#ffffff' : UI_FG, fontFamily: MONO, fontSize: 11, cursor: 'pointer' }}>
+              위에서
+            </button>
+          )}
+          {placed && !asm3d && (['F.Cu', 'B.Cu'] as const).map(L => (
             <button key={L} onClick={() => setShow(s => ({ ...s, [L]: !s[L] }))}
               title={L === 'F.Cu' ? '윗면 구리' : '아랫면 구리'}
               style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${LAYER_COLOR[L]}`,
@@ -792,7 +908,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             </button>
           ))}
           {assembly && placed && (
-            <button onClick={() => { setZoom(1); setPanXY([0, 0]) }} data-testid="board-fit" title="기판 전체 보기"
+            <button onClick={() => { if (asm3d) setCamReset(n => n + 1); else { setZoom(1); setPanXY([0, 0]) } }}
+              data-testid="board-fit" title="기판 전체 보기"
               style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${UI_LINE}`, background: UI_BG,
                 color: UI_FG, fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
               맞춤
@@ -905,8 +1022,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                     {open && r.id === HUMAN_ROW && (
                       <div data-check-detail={r.id} style={{ paddingBottom: 6 }}>
                         <div style={{ padding: '2px 10px 6px 16px', color: UI_DIM, fontFamily: SANS, lineHeight: 1.45 }}>
-                          자동 검사가 볼 수 없는 것만 묻습니다. 실물 부품이나 데이터시트와 맞춰 보고 체크하세요.
-                          3D에서 부품을 눌러도 이 목록으로 옵니다.
+                          거꾸로 달면 동작하지 않는 부품입니다. 부품 이름을 누르면 기판에 맞출 자리(+, −, 1)를 표시합니다.
+                          실물 부품의 표시와 맞춰 보고 체크하세요.
                         </div>
                         {reviewList.map(it => {
                           const ok = reviewedKeys.has(it.key)
@@ -933,22 +1050,27 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                                 <div style={{ marginTop: 4, color: TONE_COLOR.bad, fontFamily: SANS, lineHeight: 1.45 }}>{it.warning}</div>
                               )}
                               <div style={{ marginTop: 4, fontFamily: SANS, lineHeight: 1.45 }}>{it.what}</div>
-                              <table style={{ marginTop: 4, borderCollapse: 'collapse', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
-                                <thead>
-                                  <tr>{['패드', '핀', '넷'].map(h => (
-                                    <th key={h} scope="col" style={{ padding: '0 12px 0 0', textAlign: 'left', fontWeight: 400, color: UI_DIM }}>{h}</th>
-                                  ))}</tr>
-                                </thead>
-                                <tbody>
-                                  {it.pins.map(pn => (
-                                    <tr key={pn.pad}>
-                                      <td style={{ padding: '0 12px 0 0' }}>{pn.pad}</td>
-                                      <td style={{ padding: '0 12px 0 0', fontWeight: 700 }}>{pn.name}</td>
-                                      <td style={{ color: UI_DIM }}>{pn.net ?? '연결 없음'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                              {it.tip && <div style={{ marginTop: 3, fontFamily: SANS, lineHeight: 1.45, color: UI_DIM }}>{it.tip}</div>}
+                              {/* pad numbers and nets are for someone checking against a datasheet: folded away */}
+                              <details style={{ marginTop: 4 }}>
+                                <summary style={{ cursor: 'pointer', color: UI_DIM, fontSize: 10.5 }}>자세히 (패드 번호)</summary>
+                                <table style={{ marginTop: 4, borderCollapse: 'collapse', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                                  <thead>
+                                    <tr>{['패드', '핀', '넷'].map(h => (
+                                      <th key={h} scope="col" style={{ padding: '0 12px 0 0', textAlign: 'left', fontWeight: 400, color: UI_DIM }}>{h}</th>
+                                    ))}</tr>
+                                  </thead>
+                                  <tbody>
+                                    {it.pins.map(pn => (
+                                      <tr key={pn.pad}>
+                                        <td style={{ padding: '0 12px 0 0' }}>{pn.pad}</td>
+                                        <td style={{ padding: '0 12px 0 0', fontWeight: 700 }}>{pn.name}</td>
+                                        <td style={{ color: UI_DIM }}>{pn.net ?? '연결 없음'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </details>
                             </div>
                           )
                         })}
@@ -1037,10 +1159,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         </>}
         {settled && drc && !drc.available && <Metric testId="board-drc" k="DRC" v="건너뜀" tone="warn" title={drc.reason} />}
         {placed && reviewList.length > 0 && (
-          <Metric testId="board-review" k="사람 확인" v={`${reviewedKeys.size}/${reviewList.length}`}
+          <Metric testId="board-review" k="방향 확인" v={`${reviewedKeys.size}/${reviewList.length}`}
             tone={reviewedKeys.size === reviewList.length ? 'ok' : 'warn'}
-            title={assembly ? '극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 부품을 누르면 오른쪽에서 체크합니다'
-              : "극성·핀 배열·커넥터 순서처럼 자동 검사가 볼 수 없는 것. 검사 목록의 '사람 확인'에서 체크합니다"} />
+            title={assembly ? '+/− 방향이나 1번 다리처럼 거꾸로 달면 안 되는 부품. 부품을 누르면 맞출 자리를 보여 주고, 맞췄어요를 누르면 체크됩니다'
+              : "+/− 방향이나 1번 다리처럼 거꾸로 달면 안 되는 부품. 검사 목록의 '방향 확인'에서 체크합니다"} />
         )}
         {hoverNet && <Metric k="넷" v={hoverNet} />}
       </div>
@@ -1050,27 +1172,40 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
 /**
  * Assembly list beside the board: the parts grouped like the BOM, one chip per part (✓ when placed),
- * and for the part last touched its review (polarity, pinout) with its own tick.
+ * and for the part last touched what it is and, if it has a direction, where its + / − / 1 goes.
  */
-function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, hasFurniture, onToggle, onPick, onClear, onReview }: {
+function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, pending, hasFurniture, nudge, view, glbFailed,
+  marksShown, missing3d, onToggle, onConfirm, onPick, onClear, onReview, onFocus }: {
   lines: BomLine[]
   total: number
   placedRefs: Set<string>
   pick: string | null
   reviewList: ReviewItem[]
   reviewedKeys: Set<string>
+  pending: Set<string>                // parts whose direction nobody confirmed yet
   hasFurniture: boolean
+  nudge: number                       // bumps when a click asked for the direction first: the box flashes
+  view: '3d' | '2d'
+  glbFailed: boolean
+  marksShown: boolean                 // false: the 3D model did not match the board file, so it shows no marks
+  missing3d: string[]                 // parts to place that have no 3D model (tick them in the list)
   onToggle: (ref: string) => void
+  /** "맞췄어요": direction confirmed and part ticked */
+  onConfirm: (ref: string) => void
   /** show a part's details without ticking it */
   onPick: (ref: string) => void
   onClear: () => void
   onReview: (it: ReviewItem) => void
+  /** light these parts on the board (null: none) */
+  onFocus: (refs: string[] | null) => void
 }) {
   const done = placedRefs.size
   const pickLine = pick ? lines.find(l => l.refs.includes(pick)) : undefined
   const pickReviews = pick ? reviewList.filter(it => it.ref === pick) : []
-  const toLook = new Set(reviewList.filter(it => !reviewedKeys.has(it.key)).map(it => it.ref))
   const small = { fontSize: 11, color: UI_DIM, lineHeight: 1.45 }
+  const btn = (filled: boolean, tone: string) => ({ padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: SANS, fontSize: 11.5,
+    border: `1px solid ${tone}`, background: filled ? tone : 'transparent', color: filled ? '#ffffff' : tone })
+  const where = view === '3d' ? '3D' : '기판 그림'
   return (
     <aside data-testid="assembly-panel" aria-label="배치하기"
       style={{ flex: `0 0 ${ASSEMBLY_W}px`, width: ASSEMBLY_W, minWidth: 0, display: 'flex', flexDirection: 'column',
@@ -1091,14 +1226,25 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
           style={{ marginTop: 6, height: 5, borderRadius: 3, background: 'rgba(0, 0, 0, 0.08)', overflow: 'hidden' }}>
           <div style={{ width: `${total ? (done / total) * 100 : 0}%`, height: '100%', background: TONE_COLOR.ok, transition: 'width 0.2s' }} />
         </div>
-        <div style={{ ...small, marginTop: 6 }}>기판에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 끌어서 이동, 휠로 확대합니다.</div>
+        <div data-testid="assembly-hint" style={{ ...small, marginTop: 6 }}>
+          {view === '3d'
+            ? '3D에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 목록에 마우스를 올리면 그 부품이 기판에서 빛납니다.'
+            : '기판에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 끌어서 이동, 휠로 확대합니다.'}
+        </div>
+        {glbFailed && <div style={{ ...small, marginTop: 4, color: TONE_COLOR.warn }}>3D 모델을 불러오지 못해 평면 그림으로 보여 줍니다. 위의 3D 단추를 누르면 다시 시도합니다.</div>}
+        {missing3d.length > 0 && (
+          <div data-testid="assembly-missing3d" style={{ ...small, marginTop: 4, color: TONE_COLOR.warn }}>
+            3D 모델이 없는 부품: {missing3d.join(', ')}. 목록에서 체크하거나 2D로 봅니다.
+          </div>
+        )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 10px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 10px' }} onMouseLeave={() => onFocus(null)}>
         {lines.map(l => {
           const n = l.refs.filter(r => placedRefs.has(r)).length
           return (
-            <div key={l.key} data-assembly-line={l.refs.join(',')} style={{ padding: '6px 12px', borderBottom: `1px solid rgba(0, 0, 0, 0.05)` }}>
+            <div key={l.key} data-assembly-line={l.refs.join(',')} onMouseEnter={() => onFocus(l.refs)}
+              style={{ padding: '6px 12px', borderBottom: `1px solid rgba(0, 0, 0, 0.05)` }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, ...small }}>
                 <span style={{ color: UI_FG, whiteSpace: 'nowrap' }}>{l.type}</span>
                 <span style={{ marginLeft: 'auto', fontFamily: MONO, color: n === l.qty ? TONE_COLOR.ok : UI_DIM }}>{n}/{l.qty}</span>
@@ -1107,24 +1253,26 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                 {l.refs.map(ref => {
                   const on = placedRefs.has(ref)
+                  const dir = reviewList.some(it => it.ref === ref)
                   return (
-                    <span key={ref} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                    <span key={ref} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
+                      onMouseEnter={() => onFocus([ref])} onMouseLeave={() => onFocus(l.refs)}>
                     <button type="button" data-assembly-ref={ref} aria-pressed={on}
-                      onClick={() => onToggle(ref)}
-                      title={`${ref} ${on ? '배치함 (누르면 해제)' : '눌러서 배치 체크'}${toLook.has(ref) ? ' · 극성·핀 배열 확인 필요' : ''}`}
+                      onClick={() => onToggle(ref)} onFocus={() => onFocus([ref])} onBlur={() => onFocus(null)}
+                      title={`${ref} ${on ? '배치함 (누르면 해제)' : pending.has(ref) ? '방향이 있는 부품: 누르면 맞출 자리를 보여 줍니다' : '눌러서 배치 체크'}`}
                       style={{ padding: '2px 8px', borderRadius: 12, cursor: 'pointer', fontFamily: MONO, fontSize: 11,
                         border: `1px solid ${on ? TONE_COLOR.ok : pick === ref ? TONE_COLOR.accent : UI_LINE}`,
                         background: on ? TONE_COLOR.ok : '#ffffff', color: on ? '#ffffff' : UI_FG }}>
                       {on ? '✓ ' : ''}{ref}
                     </button>
-                    {reviewList.some(it => it.ref === ref) && (
+                    {dir && (
                       <button type="button" data-assembly-info={ref} onClick={() => onPick(ref)}
-                        aria-label={`${ref} 극성·핀 배열 보기${toLook.has(ref) ? ' (확인 필요)' : ' (확인함)'}`}
-                        title="극성·핀 배열 보기 (배치 체크는 바뀌지 않습니다)"
+                        aria-label={`${ref} 방향 보기${pending.has(ref) ? ' (확인 전)' : ' (확인함)'}`}
+                        title="맞출 자리 보기 (배치 체크는 바뀌지 않습니다)"
                         style={{ width: 20, height: 20, padding: 0, borderRadius: 10, cursor: 'pointer', fontFamily: MONO, fontSize: 11, fontWeight: 700,
-                          border: `1px solid ${toLook.has(ref) ? TONE_COLOR.warn : UI_LINE}`, background: '#ffffff',
-                          color: toLook.has(ref) ? TONE_COLOR.warn : TONE_COLOR.ok }}>
-                        {toLook.has(ref) ? '!' : '✓'}
+                          border: `1px solid ${pending.has(ref) ? TONE_COLOR.warn : UI_LINE}`, background: '#ffffff',
+                          color: pending.has(ref) ? TONE_COLOR.warn : TONE_COLOR.ok }}>
+                        {pending.has(ref) ? '!' : '✓'}
                       </button>
                     )}
                     </span>
@@ -1135,36 +1283,69 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
           )
         })}
         {hasFurniture && <div style={{ ...small, padding: '8px 12px 0' }}>테스트 패드와 고정 구멍은 올릴 부품이 아니라 목록에서 뺐습니다.</div>}
-        {reviewList.length > 0 && <div style={{ ...small, padding: '4px 12px 0' }}><span style={{ color: TONE_COLOR.warn, fontWeight: 700 }}>!</span> 단추는 극성이나 핀 배열을 실물과 맞춰 볼 부품입니다. 누르면 배치 체크는 그대로 두고 목록 아래에 확인 내용이 나옵니다.</div>}
+        {reviewList.length > 0 && (
+          <div style={{ ...small, padding: '4px 12px 0' }}>
+            <span style={{ color: TONE_COLOR.warn, fontWeight: 700 }}>!</span> 표시 부품은 방향이 있습니다. 누르면 {where}에 맞출 자리(+, −, 1)를 보여 주고, 맞췄어요를 누르면 체크됩니다.
+          </div>
+        )}
       </div>
       {pick && pickLine && (
-        <div data-testid="assembly-pick" style={{ padding: '8px 12px', borderTop: `1px solid ${UI_LINE}`, flexShrink: 0, maxHeight: '45%', overflowY: 'auto', background: 'rgba(106, 76, 181, 0.04)' }}>
+        <div key={`pick-${nudge}`} data-testid="assembly-pick" className={nudge ? 'sf-nudge' : undefined}
+          style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${UI_LINE}`, flexShrink: 0, maxHeight: '55%',
+            background: 'rgba(106, 76, 181, 0.04)' }}>
+          <div data-testid="assembly-pick-text" style={{ padding: '8px 12px 0', minHeight: 0, overflowY: 'auto' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <strong style={{ fontFamily: MONO, fontSize: 12 }}>{pick}</strong>
             <span style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {pickLine.value} · {pickLine.type}{pickLine.pkg ? ` · ${pickLine.pkg}` : ''}
             </span>
           </div>
-          <button type="button" onClick={() => onToggle(pick)} aria-pressed={placedRefs.has(pick)}
-            style={{ marginTop: 6, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: SANS, fontSize: 11.5,
-              border: `1px solid ${TONE_COLOR.ok}`, background: placedRefs.has(pick) ? TONE_COLOR.ok : 'transparent',
-              color: placedRefs.has(pick) ? '#ffffff' : TONE_COLOR.ok }}>
-            {placedRefs.has(pick) ? '✓ 배치함' : '배치 체크'}
-          </button>
-          {pickReviews.map(it => (
-            <div key={it.key} data-assembly-review={it.ref} style={{ marginTop: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer' }}>
-                <input type="checkbox" checked={reviewedKeys.has(it.key)} onChange={() => onReview(it)}
-                  style={{ margin: 0, width: 14, height: 14, accentColor: TONE_COLOR.ok, cursor: 'pointer' }} />
-                {KIND_LABEL[it.kind]} 확인함
-              </label>
-              {it.warning && <div style={{ marginTop: 4, fontSize: 11, color: TONE_COLOR.bad, lineHeight: 1.45 }}>{it.warning}</div>}
-              <div style={{ marginTop: 4, fontSize: 11.5, lineHeight: 1.45 }}>{it.what}</div>
-              <div style={{ ...small, marginTop: 2, fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
-                {it.pins.map(pn => `패드 ${pn.pad} = ${pn.name}${pn.net ? ` (${pn.net})` : ''}`).join(' · ')}
+          {pickReviews.map(it => {
+            const ok = reviewedKeys.has(it.key)
+            return (
+              <div key={it.key} data-assembly-review={it.ref} data-review-ok={ok ? '1' : '0'} style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700 }}>
+                  {KIND_LABEL[it.kind]} 맞추기
+                  {it.marks.map(m => (
+                    <span key={m.pad} aria-hidden="true" style={{ minWidth: 16, height: 16, padding: '0 4px', boxSizing: 'border-box', borderRadius: 8,
+                      display: 'inline-grid', placeItems: 'center', background: MARK_COLOR(m.label), color: '#ffffff',
+                      fontFamily: MONO, fontSize: 10, fontWeight: 700 }}>{m.label}</span>
+                  ))}
+                  {ok && <span style={{ marginLeft: 'auto', color: TONE_COLOR.ok, fontSize: 11 }}>✓ 확인함</span>}
+                </div>
+                {it.warning && <div style={{ marginTop: 4, fontSize: 11, color: TONE_COLOR.bad, lineHeight: 1.45 }}>{it.warning}</div>}
+                <div style={{ marginTop: 4, fontSize: 11.5, lineHeight: 1.5 }}>{it.what}</div>
+                {it.tip && <div style={{ ...small, marginTop: 3 }}>{it.tip}</div>}
+                {it.marks.length > 0 && (marksShown
+                  ? <div style={{ ...small, marginTop: 3 }}>{where}에 맞출 자리를 표시했습니다.</div>
+                  : <div style={{ ...small, marginTop: 3, color: TONE_COLOR.warn }}>3D 모델에는 표시하지 못했습니다. 2D로 보면 기판 그림에 표시됩니다.</div>)}
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ ...small, cursor: 'pointer' }}>자세히 (패드 번호)</summary>
+                  <div style={{ ...small, marginTop: 2, fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
+                    {it.pins.map(pn => `패드 ${pn.pad} = ${pn.name}${pn.net ? ` (${pn.net})` : ''}`).join(' · ')}
+                  </div>
+                </details>
+                {ok && (
+                  <button type="button" onClick={() => onReview(it)} data-assembly-unreview={it.ref}
+                    style={{ marginTop: 4, padding: 0, border: 'none', background: 'transparent', color: UI_DIM, fontSize: 10.5,
+                      textDecoration: 'underline', cursor: 'pointer' }}>
+                    방향 확인 취소
+                  </button>
+                )}
               </div>
-            </div>
-          ))}
+            )
+          })}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 12px 10px', flexShrink: 0 }}>
+            {placedRefs.has(pick)
+              ? <button type="button" data-assembly-place={pick} onClick={() => onToggle(pick)} aria-pressed={true} style={btn(true, TONE_COLOR.ok)}>✓ 배치함</button>
+              : pending.has(pick)
+                ? <button type="button" data-assembly-confirm={pick} onClick={() => onConfirm(pick)} style={btn(true, TONE_COLOR.ok)}>맞췄어요 · 배치 체크</button>
+                : <button type="button" data-assembly-place={pick} onClick={() => onToggle(pick)} aria-pressed={false} style={btn(false, TONE_COLOR.ok)}>배치 체크</button>}
+            {placedRefs.has(pick) && pending.has(pick) && (
+              <button type="button" data-assembly-confirm={pick} onClick={() => onConfirm(pick)} style={btn(false, TONE_COLOR.ok)}>방향 맞췄어요</button>
+            )}
+          </div>
         </div>
       )}
 
