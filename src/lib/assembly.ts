@@ -55,6 +55,25 @@ export function savePlaced(board: string | null | undefined, placed: Set<string>
   } catch { /* private mode or full: keep in memory */ }
 }
 
+/**
+ * What a click on a part to place does. A part with a direction nobody confirmed is never ticked blind:
+ * the click shows where its + / − / 1 goes, and "맞췄어요" ticks it. Everything else toggles.
+ */
+export function clickAction(ref: string, placed: Set<string>, pending: Set<string>): 'show' | 'toggle' {
+  return !placed.has(ref) && pending.has(ref) ? 'show' : 'toggle'
+}
+
+export const VIEW_STORE = 'sf_assembly_view'
+
+/** The view the assembly tab opens in: the real 3D model unless this browser chose the 2D drawing. */
+export function loadAssemblyView(storage: Pick<Storage, 'getItem'> | null = safeStorage()): '3d' | '2d' {
+  try { return storage?.getItem(VIEW_STORE) === '2d' ? '2d' : '3d' } catch { return '3d' }
+}
+
+export function saveAssemblyView(view: '3d' | '2d', storage: Pick<Storage, 'setItem'> | null = safeStorage()): void {
+  try { storage?.setItem(VIEW_STORE, view) } catch { /* private mode: this visit only */ }
+}
+
 function safeStorage(): Storage | null {
   try { return typeof window !== 'undefined' ? window.localStorage : null } catch { return null }
 }

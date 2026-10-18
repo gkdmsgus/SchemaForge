@@ -8,7 +8,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import BoardView from '../src/components/BoardView.tsx'
-import { PLACED_STORE, assemblyRefs, loadPlaced, placedKey, savePlaced } from '../src/lib/assembly.ts'
+import { confirmReviews } from '../src/lib/humanReview.ts'
+import { PLACED_STORE, VIEW_STORE, assemblyRefs, clickAction, loadAssemblyView, loadPlaced, placedKey, saveAssemblyView, savePlaced } from '../src/lib/assembly.ts'
 import type { AiRound, BoardFrame, BoardModel, BoardPart } from '../src/types.ts'
 
 let failed = 0
@@ -34,7 +35,7 @@ const part = (ref: string, value: string, kind: string, x: number, y: number, pa
 const parts = [
   part('R10', '1k', 'R', 6, 5, [pad('1', -1, 'VCC'), pad('2', 1, 'A')]),
   part('R2', '1k', 'R', 6, 10, [pad('1', -1, 'VCC'), pad('2', 1, 'B')]),
-  part('D1', 'RED', 'LED', 14, 5, [pad('1', -1, 'GND'), pad('2', 1, 'A')]),
+  { ...part('D1', 'RED', 'LED', 14, 5, [pad('1', -1, 'GND'), pad('2', 1, 'A')]), pad_pins: { 1: 2, 2: 1 } },   // pad 1 = K
   part('TP1', 'GND', 'TestPoint', 14, 10, [pad('1', 0, 'GND')]),
   part('H1', 'M3', 'MountingHole', 2, 2, []),
 ]
@@ -70,9 +71,16 @@ check('A1 parts to place', assemblyRefs(final).join() === 'D1,R2,R10', assemblyR
 // rendered on the server: the first render is what the user sees before any effect runs
 const frames: BoardFrame[] = [{ iter: 0, phase: 'refine', hpwl: 10, parts: Object.fromEntries(parts.map(p => [p.ref, [p.x, p.y, p.rot]])) }]
 const ai: AiRound[] = [{ round: 1, part: 'place', reason: 'C1을 U1 가까이로 옮깁니다', actions: { moves: [] }, before: { hpwl: 10, vias: 0, unrouted: 0, drcErrors: 0 } as never, kept: false } as never]
-const render = (mode: 'build' | 'assembly') => renderToStaticMarkup(createElement(BoardView, {
-  parts, frames, routes: [], target: null, final, drc: null, ai, status: 'done', mode, pcbFilename: undefined,
+const render = (mode: 'build' | 'assembly', pcbFilename?: string) => renderToStaticMarkup(createElement(BoardView, {
+  parts, frames, routes: [], target: null, final, drc: null, ai, status: 'done', mode, pcbFilename,
 }))
+/** render with this browser's storage holding `init` (the page reads window.localStorage) */
+function withStorage<T>(init: Record<string, string>, run: () => T): T {
+  const g = globalThis as { window?: unknown }
+  const had = 'window' in g, before = g.window
+  g.window = { localStorage: store(init) }
+  try { return run() } finally { if (had) g.window = before; else delete g.window }
+}
 
 // A4. the assembly view: the finished board at once, a click target on every part to place (none on pads or holes),
 //     the list beside it, no 3D, no checks list, no AI rounds
@@ -126,6 +134,52 @@ const render = (mode: 'build' | 'assembly') => renderToStaticMarkup(createElemen
 {
   const html = render('assembly')
   check('A9 review button beside the chip', html.includes('data-assembly-info="D1"') && !html.includes('data-assembly-info="R2"'))
+}
+
+// A10. with a board file the assembly view opens on KiCad's 3D model: the drawing is hidden, a 3D/2D switch,
+//      a top view button, no copper layer buttons (they do nothing in 3D), the hint speaks of 3D
+{
+  const html = render('assembly', 'a.kicad_pcb')
+  const has = (id: string) => html.includes(`data-testid="${id}"`)
+  const want = { pane: has('assembly-3d'), viewer: has('kicad-3d'),
+    svgHidden: /<div style="flex:1;min-width:0;display:none"><svg[^>]*data-testid="board-view"/.test(html),
+    on3d: /aria-pressed="true" data-testid="assembly-view-3d"/.test(html), switch2d: has('assembly-view-2d'),
+    top: has('assembly-top'), noCopper: !html.includes('title="윗면 구리"'), hint: html.includes('3D에서 부품을 누르면') }
+  check('A10 3D by default with a board file', Object.values(want).every(Boolean),
+    Object.entries(want).filter(([, v]) => !v).map(([k]) => k).join(',') || 'all present')
+}
+
+// A11. the 2D/3D choice: kept in this browser, anything odd reads as 3D, a blocked storage never throws
+{
+  let threw = false
+  try { saveAssemblyView('2d', store({}, true)) } catch { threw = true }
+  const s = store()
+  saveAssemblyView('2d', s)
+  check('A11 view choice is forgiving', loadAssemblyView(null) === '3d' && loadAssemblyView(store({}, true)) === '3d'
+    && loadAssemblyView(store({ [VIEW_STORE]: 'x' })) === '3d' && loadAssemblyView(s) === '2d' && !threw)
+}
+
+// A12. a browser that chose 2D gets the drawing with its click targets even with a board file; 3D stays one click away
+{
+  const html = withStorage({ [VIEW_STORE]: '2d' }, () => render('assembly', 'a.kicad_pcb'))
+  const hits = [...html.matchAll(/data-assembly-hit="([^"]+)"/g)].map(m => m[1])
+  check('A12 2D chosen: drawing and click targets', !html.includes('data-testid="assembly-3d"') && hits.join() === 'D1,R2,R10'
+    && /aria-pressed="true" data-testid="assembly-view-2d"/.test(html) && html.includes('title="윗면 구리"'), `hits=${hits.join()}`)
+}
+
+// A13. a click on a part with a direction nobody confirmed shows it and never ticks it; anything else toggles
+{
+  const placed = new Set(['R2']), pending = new Set(['D1'])
+  const got = [clickAction('D1', placed, pending), clickAction('D1', new Set(['D1']), pending), clickAction('R10', placed, pending),
+    clickAction('R2', placed, pending)]
+  check('A13 first click on an unconfirmed part shows it', got.join() === 'show,toggle,toggle,toggle', got.join())
+}
+
+// A14. 맞췄어요 confirms every item of that part now, keeps earlier times, touches no other part
+{
+  const items = [{ ref: 'D1', key: 'd1-a' }, { ref: 'D1', key: 'd1-b' }, { ref: 'C1', key: 'c1' }]
+  const next = confirmReviews('D1', items, { 'd1-b': 5, other: 1 }, 100)
+  check('A14 one-step confirm', JSON.stringify(next) === JSON.stringify({ 'd1-b': 5, other: 1, 'd1-a': 100 }), JSON.stringify(next))
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall assembly checks passed')
