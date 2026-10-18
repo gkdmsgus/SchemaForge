@@ -216,7 +216,7 @@ function checkRowsBase(
     const raw = pinoutWarnings(final)
     for (const i of review.items) if (i.warning && raw.has(i.ref)) covered.add(raw.get(i.ref)!.raw)
     rows.push({
-      id: HUMAN_ROW, label: '사람 확인',
+      id: HUMAN_ROW, label: '방향 확인',
       state: done < total ? 'review' : 'pass', count: total - done,
       note: `${done}/${total} 확인`, detail: [], findings: [],
     })
