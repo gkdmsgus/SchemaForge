@@ -16,12 +16,13 @@ import {
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
 } from './primitives.tsx'
 import type {
-  GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary,
+  GenerateResult, Version, ChatSession, NetGraph, ChatMessage, PcbSummary, ErcFinding,
   BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
 } from '../types'
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
+import { applyActions } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
@@ -133,6 +134,8 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // the operating checks open from their chip in the tab bar, so they never sit over the schematic uninvited
   const [opOpen, setOpOpen] = useState(false)
+  // the netlist check on the circuit the AI editor changed, run again after every change (a fix made by chat shows at once)
+  const [aiErc, setAiErc] = useState<{ graph: NetGraph; findings: ErcFinding[] | null; error?: string } | null>(null)
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
   /** text null: the server has no such file (404); failed: the request did not get through (retry offered) */
@@ -156,12 +159,30 @@ export default function ResultPanel({
       .then(got => { if (!off) setNetText({ file: netFile, ...got }) })
     return () => { off = true }
   }, [drawerOpen, activeTab, netFile, netText?.file])
+  useEffect(() => {
+    if (!aiEdited || !localGraph) return
+    let off = false
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: localGraph }) })
+        const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string } | null
+        if (off) return
+        setAiErc({ graph: localGraph, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null,
+          error: data?.ercError ?? data?.error ?? (res.ok ? undefined : `HTTP ${res.status}`) })
+      } catch (e) {
+        if (!off) setAiErc({ graph: localGraph, findings: null, error: (e as Error).message })
+      }
+    }, 300)
+    return () => { off = true; clearTimeout(timer) }
+  }, [aiEdited, localGraph])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
   const opHead = operatingHeadline(opResults)
   const opFixMap = useMemo(() => (effectiveGraph ? opFixes(fromGraph(effectiveGraph, pcbStyle), opResults) : new Map<string, Fix>()), [effectiveGraph, pcbStyle, opResults])
-  const ercFixList = useMemo(() => ercFixes(result?.erc?.findings ?? [], result?.graph), [result?.erc?.findings, result?.graph])
+  const aiErcNow = aiEdited && aiErc?.graph === localGraph ? aiErc : null
+  const ercShown = aiEdited ? aiErcNow?.findings ?? [] : result?.erc?.findings ?? []
+  const ercFixList = useMemo(() => ercFixes(ercShown, aiEdited ? localGraph : result?.graph), [ercShown, aiEdited, localGraph, result?.graph])
   // parts list: the board's footprints once a PCB exists (deps on parts/final, not every streamed frame)
   const boardParts = board?.parts
   const boardFinal = board?.final ?? null
@@ -171,8 +192,18 @@ export default function ResultPanel({
   const bomStyle = boardFinal?.style ?? pcbStyle
   // the netlist check /generate ran: shown on the schematic while the circuit is still that netlist
   const ercNotice = useMemo(() => {
+    // after an AI edit: the check run on the edited circuit (the generated one no longer applies)
+    if (aiEdited) {
+      if (!aiErcNow) return { tone: 'ok' as const, head: '바뀐 회로의 연결을 점검하는 중입니다…', lines: [] as string[] }
+      if (!aiErcNow.findings) return { tone: 'warn' as const, head: '바뀐 회로의 연결 점검을 돌리지 못했습니다',
+        lines: [aiErcNow.error ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
+      const errs = aiErcNow.findings.filter(f => f.severity === 'error')
+      if (errs.length) return { tone: 'bad' as const, head: `AI 편집 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
+        lines: ['AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
+      return { tone: 'ok' as const, head: 'AI 편집 뒤 연결 점검 통과', lines: ['바뀐 회로를 다시 점검했습니다. 기판은 PCB를 다시 만들어야 바뀝니다.'] }
+    }
     const erc = result?.erc
-    if (!erc || aiEdited || result?.codeEdited) return null
+    if (!erc || result?.codeEdited) return null
     const errors = (erc.findings ?? []).filter(f => f.severity === 'error')
     const count = ercErrorCount(errors)
     const rep = erc.repair
@@ -186,7 +217,7 @@ export default function ResultPanel({
     if (rep?.kept) return { tone: 'ok' as const, head: `넷리스트 점검(ERC) 오류를 자동으로 고쳤습니다 (오류 ${rep.before} → ${rep.after})`,
       lines: ['AI가 고친 코드를 다시 실행해 오류가 줄고, 맞게 이어져 있던 연결과 부품 값이 그대로일 때만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
     return null
-  }, [result?.erc, result?.codeEdited, aiEdited])
+  }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
   const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
@@ -390,7 +421,7 @@ export default function ResultPanel({
             let newGraph: NetGraph | null = snapshot
             if (actions?.length && snapshot) {
               pushGraphHistory(snapshot)
-              newGraph = applyActions(snapshot, actions) as NetGraph | null
+              newGraph = applyActions(snapshot, actions)
               const diff = computeDiff(snapshot, newGraph)
               setGraphDiff(diff)
               // Let removed parts flash before they disappear, then show diagnostics.
@@ -823,7 +854,7 @@ export default function ResultPanel({
               borderBottom: `1px solid ${ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber)' : 'var(--sf-line)'}`,
               color: ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber-deep)' : 'var(--sf-fg-muted)', fontSize: 11, lineHeight: 1.5 }}>
               <strong>{ercNotice.head}</strong>
-              {ercNotice.tone === 'bad' && (result?.erc?.findings ?? []).map((f, i) => {
+              {ercNotice.tone === 'bad' && ercShown.map((f, i) => {
                 if (f.severity !== 'error') return null
                 const fix = ercFixList[i]
                 // a fix shared with an earlier finding (one break seen from both ends) is shown once
@@ -1017,26 +1048,6 @@ export default function ResultPanel({
   )
 }
 
-function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
-  let comps = [...(graph.components || [])]
-  let nets  = [...(graph.nets || [])]
-  for (const a of actions) {
-    if (a.type === 'add_component') {
-      if (!comps.find(c => c.ref === a.ref))
-        comps = [...comps, { ref: a.ref || '', name: a.name || a.ref || '', value: a.value || '' }]
-    } else if (a.type === 'remove_component') {
-      comps = comps.filter(c => c.ref !== a.ref)
-      nets  = nets.map(n => ({ ...n, nodes: n.nodes.filter((nd: { ref: string }) => nd.ref !== a.ref) })).filter(n => n.nodes.length > 0)
-    } else if (a.type === 'modify_component') {
-      comps = comps.map(c => c.ref === a.ref ? { ...c, ...(a.value !== undefined ? { value: a.value } : {}) } : c)
-    } else if (a.type === 'add_net') {
-      nets = [...nets, { name: a.name || '', nodes: a.nodes || [] }]
-    } else if (a.type === 'remove_net') {
-      nets = nets.filter(n => n.name !== a.name)
-    }
-  }
-  return { ...graph, components: comps, nets }
-}
 
 const iconBtn = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
