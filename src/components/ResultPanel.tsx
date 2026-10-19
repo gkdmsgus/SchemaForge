@@ -104,6 +104,7 @@ export default function ResultPanel({
 }: ResultPanelProps) {
   const resultRef = useRef<HTMLDivElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const chatBoxRef = useRef<HTMLTextAreaElement>(null)
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
@@ -136,6 +137,7 @@ export default function ResultPanel({
   const [opOpen, setOpOpen] = useState(false)
   // the netlist check on the circuit the AI editor changed, run again after every change (a fix made by chat shows at once)
   const [aiErc, setAiErc] = useState<{ graph: NetGraph; findings: ErcFinding[] | null; error?: string } | null>(null)
+  const [ercRetry, setErcRetry] = useState(0)       // 다시 점검: runs the check on the same circuit again
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
   /** text null: the server has no such file (404); failed: the request did not get through (retry offered) */
@@ -167,14 +169,16 @@ export default function ResultPanel({
         const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: localGraph }) })
         const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string } | null
         if (off) return
-        setAiErc({ graph: localGraph, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null,
-          error: data?.ercError ?? data?.error ?? (res.ok ? undefined : `HTTP ${res.status}`) })
-      } catch (e) {
-        if (!off) setAiErc({ graph: localGraph, findings: null, error: (e as Error).message })
+        const why = res.status === 404 ? '서버에 이 점검 기능이 없습니다. 서버를 최신 코드로 다시 시작하면 됩니다.'
+          : res.status === 400 ? '회로에 점검할 수 없는 이름(따옴표나 괄호)이 있습니다.'
+            : !res.ok ? `서버가 점검하지 못했습니다 (HTTP ${res.status}).` : undefined
+        setAiErc({ graph: localGraph, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
+      } catch {
+        if (!off) setAiErc({ graph: localGraph, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })
       }
     }, 300)
     return () => { off = true; clearTimeout(timer) }
-  }, [aiEdited, localGraph])
+  }, [aiEdited, localGraph, ercRetry])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
@@ -195,8 +199,8 @@ export default function ResultPanel({
     // after an AI edit: the check run on the edited circuit (the generated one no longer applies)
     if (aiEdited) {
       if (!aiErcNow) return { tone: 'ok' as const, head: '바뀐 회로의 연결을 점검하는 중입니다…', lines: [] as string[] }
-      if (!aiErcNow.findings) return { tone: 'warn' as const, head: '바뀐 회로의 연결 점검을 돌리지 못했습니다',
-        lines: [aiErcNow.error ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
+      if (!aiErcNow.findings) return { tone: 'warn' as const, head: '바뀐 회로의 연결 점검을 돌리지 못했습니다', retry: true,
+        lines: [aiErcNow.error ?? '이유를 알 수 없습니다', '회로가 틀렸다는 뜻은 아닙니다. 다시 점검하거나, PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
       const errs = aiErcNow.findings.filter(f => f.severity === 'error')
       if (errs.length) return { tone: 'bad' as const, head: `AI 편집 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
         lines: ['AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
@@ -315,6 +319,19 @@ export default function ResultPanel({
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
     }
+  }
+
+  /** A circuit check's 해결: its instruction in the AI editor's box, ready to send. */
+  function chatFix(text: string) {
+    setChatInput(text)
+    setEditorOpen(true)
+    // the panel may have been closed: focus once it is in the page
+    setTimeout(() => {
+      const box = chatBoxRef.current
+      if (!box) return
+      box.focus()
+      box.setSelectionRange(box.value.length, box.value.length)
+    }, 0)
   }
 
   /** A fix's lines go into the Code tab draft (on top of a draft already open); running it is the person's call. */
@@ -700,7 +717,7 @@ export default function ResultPanel({
 
               {/* Input */}
               <div style={{ padding: '8px 10px', borderTop: '1px solid var(--sf-line)', display: 'flex', gap: 6, alignItems: 'flex-end' }}>
-                <textarea
+                <textarea ref={chatBoxRef} data-testid="chat-input"
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
@@ -876,6 +893,10 @@ export default function ResultPanel({
                 )
               })}
               {ercNotice.lines.map((line, i) => <div key={`l${i}`} style={{ marginTop: 4 }}>{line}</div>)}
+              {'retry' in ercNotice && ercNotice.retry && (
+                <button type="button" data-testid="erc-retry" onClick={() => { setAiErc(null); setErcRetry(n => n + 1) }}
+                  style={{ ...ghostBtn, marginTop: 4, padding: '1px 8px', fontSize: 10.5, color: 'var(--sf-cyan)' }}>다시 점검</button>
+              )}
             </div>
           )}
 
@@ -923,6 +944,12 @@ export default function ResultPanel({
                       <span style={{ color: issue.severity === 'error' ? '#ff7770' : '#f5b942', fontWeight: 700, fontSize: 10 }}>{issue.code}</span>
                       <strong style={{ fontSize: 11 }}>{issue.title}</strong>
                       {(issue.refs.length > 0 || issue.nets.length > 0) && <span style={{ opacity: 0.55, fontSize: 9 }}>{[...issue.refs, ...issue.nets].join(' · ')}</span>}
+                      <button type="button" data-cir-fix={issue.code} onClick={() => chatFix(issue.chat)}
+                        title={`AI 편집 입력칸에 넣습니다: ${issue.chat}`}
+                        style={{ marginLeft: 'auto', flexShrink: 0, padding: '2px 9px', borderRadius: 4, border: '1px solid #9fd8c6',
+                          background: 'transparent', color: '#9fd8c6', fontFamily: 'var(--sf-font-sans)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>
+                        해결
+                      </button>
                     </div>
                     <div style={{ marginTop: 4, fontSize: 10, lineHeight: 1.45, color: '#d8cfc6' }}>{issue.message}</div>
                     <div style={{ marginTop: 3, fontSize: 9, color: '#9fd8c6' }}>수정: {issue.suggestion}</div>
