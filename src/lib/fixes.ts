@@ -63,6 +63,9 @@ export function draftWith(code: string, lines: string[], note: string): string |
 
 // ── netlist check (ERC) ────────────────────────────────────────────────────────
 
+/** for a fix whose target net is not known: the AI editor is to ask, not guess (a guess can join drain to source) */
+const ASK = ' 어느 넷인지 확실하지 않으면 바꾸지 말고, 후보 넷을 알려 주고 물어봐줘.'
+
 const pinName = (part: string | undefined, sym: string) => {
   const n = part ? PIN_NAMES[part]?.[Number(sym) - 1] : undefined
   return n ? `${n} 핀(${sym}번)` : `${sym}번 핀`
@@ -126,7 +129,7 @@ export function ercFixes(findings: ErcFinding[], g: NetGraph | null | undefined)
       const pins = f.refs.map(r => pinName(tpl.get(r.ref), r.sym ?? r.pin)).join(', ')
       const ref0 = f.refs[0].ref
       const hints = [...new Set(f.refs.map(r => hint(r.ref, r.sym ?? r.pin)))].filter(h => !h.startsWith('회로에서')).join(' ')
-      const chat = `${ref0}의 ${pins}이 어디에도 연결되어 있지 않아. 회로에 맞게 각 핀을 이어야 할 넷에 연결해줘.${hints ? ` 참고: ${hints}` : ''}`
+      const chat = `${ref0}의 ${pins}이 어디에도 연결되어 있지 않아. 회로에 맞게 각 핀을 이어야 할 넷에 연결해줘.${hints ? ` 참고: ${hints}` : ''}${ASK}`
       out[i] = lines.length
         ? { text: `정해진 자리가 있는 핀부터 잇습니다: ${why.join(', ')}. 나머지 핀은 회로에서 이어져야 할 선을 찾아 잇습니다.`, lines, sure: 'exact', chat }
         : { text: `이 핀들이 이어져야 할 선을 회로에서 찾아 잇습니다.${hints ? ` ${hints}` : ''}`, sure: 'hint', chat }
@@ -146,13 +149,13 @@ export function ercFixes(findings: ErcFinding[], g: NetGraph | null | undefined)
       continue
     }
     out[i] = { text: `${r.ref}의 ${name}이 어디에도 이어져 있지 않습니다. ${hint(r.ref, sym)}`, sure: 'hint',
-      chat: `${r.ref}의 ${name}이 어디에도 연결되어 있지 않아. 회로에 맞는 넷에 연결해줘.${hint(r.ref, sym).startsWith('회로에서') ? '' : ` 참고: ${hint(r.ref, sym)}`}` }
+      chat: `${r.ref}의 ${name}이 어디에도 연결되어 있지 않아. 회로에 맞는 넷에 연결해줘.${hint(r.ref, sym).startsWith('회로에서') ? '' : ` 참고: ${hint(r.ref, sym)}`}${ASK}` }
   }
   for (const { f, i } of cut) {
     if (out[i]) continue
     const r = f.refs[0], sym = r.sym ?? r.pin
     out[i] = { text: `${f.net} 선에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 붙어 있습니다. 이 선에 이어야 할 핀을 연결하거나, 필요 없는 선이면 지웁니다.`, sure: 'hint',
-      chat: `${f.net} 넷에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 남아 끊겨 있어. 이 넷에 원래 이어져야 할 핀을 다시 연결해줘. 필요 없는 넷이면 지워줘.` }
+      chat: `${f.net} 넷에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 남아 끊겨 있어. 이 넷에 원래 이어져야 할 핀을 다시 연결해줘. 필요 없는 넷이면 지워줘.${ASK}` }
   }
   findings.forEach((f, i) => {
     if (out[i] || f.rule !== 'no_ground') return

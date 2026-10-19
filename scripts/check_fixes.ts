@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, withFixes } from '../src/lib/fixes.ts'
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
-import { applyActions, pinNumber } from '../src/lib/graphEdit.ts'
+import { applyActions, movedPins, pinNumber } from '../src/lib/graphEdit.ts'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
 
 let failed = 0, skipped = 0
@@ -136,6 +136,35 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'D1', value: 'RED', name: 'LED' }], nets: [net('GND', 'BT1.2')] }
   const out = applyActions(g, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'BT1', pin: '-' }, { ref: 'D1', pin: 'K' }] }])
   check('G2b connecting "D1 K" joins D1.2 to GND once', JSON.stringify(out.nets) === JSON.stringify([net('GND', 'BT1.2', 'D1.2')]), JSON.stringify(out.nets))
+}
+
+// G3. the model sometimes leaves add_net's name out (gpt-4o-mini, live run): the net its listed pins already share
+//     is the one meant; pins on no net get a fresh name, never an empty one that would drop them
+{
+  const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'D1', value: 'RED', name: 'LED' }, { ref: 'J2', value: 'M', name: 'Conn_01x02' }, { ref: 'Q1', value: 'Q', name: 'Q_NMOS' }],
+    nets: [net('GND', 'BT1.2'), net('VCC', 'BT1.1', 'D1.1')] }
+  const a = applyActions(g, [{ type: 'add_net', nodes: [{ ref: 'D1', pin: '2' }, { ref: 'BT1', pin: '2' }] }])
+  const b = applyActions(g, [{ type: 'add_net', nodes: [{ ref: 'Q1', pin: '2' }, { ref: 'J2', pin: '2' }] }])
+  check('G3 add_net without a name joins the net its pins share, else a fresh name', JSON.stringify(a.nets) === JSON.stringify([net('GND', 'BT1.2', 'D1.2'), net('VCC', 'BT1.1', 'D1.1')])
+    && b.nets.some(n => n.name === 'NET_3' && n.nodes.length === 2) && b.nets.every(n => n.name), `${JSON.stringify(a.nets)} | ${b.nets.map(n => n.name).join(',')}`)
+}
+
+// G4. pins an edit takes off their net are reported (live run: a motor's + pin moved off +12V); added pins are not
+{
+  const g: NetGraph = { components: [{ ref: 'J2', value: 'M', name: 'Conn_01x02' }, { ref: 'Q1', value: 'Q', name: 'Q_NMOS' }, { ref: 'BT1', value: '12V', name: 'Battery' }],
+    nets: [net('+12V', 'BT1.1', 'J2.1'), net('GND', 'BT1.2')] }
+  const after = applyActions(g, [{ type: 'add_net', name: 'MOTOR', nodes: [{ ref: 'Q1', pin: '2' }, { ref: 'J2', pin: '1' }] }])
+  const gone = applyActions(g, [{ type: 'remove_net', name: '+12V' }])
+  check('G4 moved pins are reported', JSON.stringify(movedPins(g, after)) === JSON.stringify([{ pin: 'J2.1', from: '+12V', to: 'MOTOR' }])
+    && JSON.stringify(movedPins(g, gone)) === JSON.stringify([{ pin: 'BT1.1', from: '+12V', to: null }, { pin: 'J2.1', from: '+12V', to: null }])
+    && movedPins(g, applyActions(g, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'Q1', pin: '3' }] }])).length === 0, JSON.stringify(movedPins(g, after)))
+}
+
+// F9b. where the target is not known the instruction asks the AI editor to ask, not guess
+{
+  const [h] = ercFixes([{ rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref: 'Q1', pin: '3', sym: '2', name: 'D' }], net: null }],
+    { components: [{ ref: 'Q1', value: 'Q', name: 'Q_NMOS' }], nets: [] })
+  check('F9b unknown target: ask, do not guess', !!h?.chat && /확실하지 않으면 바꾸지 말고/.test(h.chat), h?.chat)
 }
 
 // F9. every netlist fix carries an instruction for the AI editor naming the pins and the net

@@ -33,9 +33,16 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
     } else if (a.type === 'modify_component') {
       comps = comps.map(c => (c.ref === a.ref ? { ...c, ...(a.value !== undefined ? { value: a.value } : {}) } : c))
     } else if (a.type === 'add_net') {
-      const name = a.name || ''
       const add = (a.nodes || []).map(nd => ({ ref: nd.ref, pin: pinNumber(comps.find(c => c.ref === nd.ref)?.name, String(nd.pin)) }))
         .filter((nd, i, all) => all.findIndex(x => same(x, nd)) === i)
+      // the model sometimes leaves the name out (seen with gpt-4o-mini on "connect D1 K to GND"): the net its
+      // listed pins already share is the one meant; with none, a fresh name (never an empty one)
+      let name = (a.name || '').trim()
+      if (!name) {
+        const shared = nets.map(n => ({ n, k: n.nodes.filter(nd => add.some(x => same(x, nd))).length })).filter(x => x.k > 0).sort((p, q) => q.k - p.k)[0]
+        name = shared?.n.name ?? `NET_${nets.length + 1}`
+        while (!shared && nets.some(n => n.name === name)) name = `${name}_`
+      }
       nets = nets.map(n => (n.name === name ? n : { ...n, nodes: n.nodes.filter(nd => !add.some(x => same(x, nd))) }))
         .filter(n => n.name === name || n.nodes.length > 0)
       const at = nets.findIndex(n => n.name === name)
@@ -46,4 +53,15 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
     }
   }
   return { ...graph, components: comps, nets }
+}
+
+/**
+ * Pins an edit took off the net they were on (moved to another net, or left on none): a guess by the model can
+ * re-wire a pin that was right (seen live: a motor's + pin moved off +12V), so the chat says so under the reply.
+ */
+export function movedPins(before: NetGraph, after: NetGraph): { pin: string; from: string; to: string | null }[] {
+  const netOf = (g: NetGraph) => new Map(g.nets.flatMap(n => n.nodes.map(nd => [`${nd.ref}.${nd.pin}`, n.name] as const)))
+  const a = netOf(after), refs = new Set(after.components.map(c => c.ref))
+  return [...netOf(before)].filter(([pin, from]) => refs.has(pin.split('.')[0]) && a.get(pin) !== from)
+    .map(([pin, from]) => ({ pin, from, to: a.get(pin) ?? null }))
 }

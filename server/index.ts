@@ -614,8 +614,9 @@ Rules:
   NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Conn_01x02 … Conn_01x10 — the PCB
   footprint is chosen from this name, and pins are numbered as in those parts
   (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
-- add_net / remove_net: "nodes" must list every ref+pin on that net, not just the new one.
-  Pins are the numbers shown as ref.pin above (write "2", not "K" or "-").
+- add_net / remove_net: always set "name" to the net's name. To connect a pin to an existing
+  net, use add_net with that net's name from the list above. "nodes" must list every ref+pin on
+  that net, not just the new one. Pins are the numbers shown as ref.pin above (write "2", not "K" or "-").
 - modify_component: change only the field the user named.
 - If the request is ambiguous or names a part that does not exist, return an empty
   actions array and ask which one in the reply. Do not guess.
@@ -647,9 +648,9 @@ changed.`
               properties: {
                 type: { type: 'string', enum: ['remove_component','add_component','modify_component','add_net','remove_net'] },
                 ref:   { type: 'string' },
-                name:  { type: 'string' },
+                name:  { type: 'string', description: 'add_component: the part type (R, LED, ...). add_net / remove_net: the net name (required; an existing net from the list to add pins to it)' },
                 value: { type: 'string' },
-                nodes: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, pin: { type: 'string' } }, required: ['ref','pin'] } },
+                nodes: { type: 'array', description: 'add_net: every ref+pin on the net', items: { type: 'object', properties: { ref: { type: 'string' }, pin: { type: 'string', description: 'pin number as in ref.pin' } }, required: ['ref','pin'] } },
               },
               required: ['type'],
             },
