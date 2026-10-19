@@ -882,6 +882,10 @@ export default function ResultPanel({
                     {fix && !shared && (
                       <div data-erc-fix={i} style={{ color: 'var(--sf-fg-muted)', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
                         <span>해결: {fix.text}</span>
+                        {fix.chat && (
+                          <button type="button" data-erc-chat={i} onClick={() => chatFix(fix.chat!)} title={`AI 편집 입력칸에 넣습니다: ${fix.chat}`}
+                            style={{ ...ghostBtn, padding: '1px 8px', fontSize: 10.5, color: 'var(--sf-cyan)', fontWeight: 700 }}>해결 (AI 편집에 넣기)</button>
+                        )}
                         {fix.lines && canDraft && (
                           <button type="button" data-erc-draft={i} onClick={() => draftFix(fix, f.message)}
                             style={{ ...ghostBtn, padding: '1px 8px', fontSize: 10.5, color: 'var(--sf-cyan)' }}>Code 탭에 고칠 줄 넣기</button>
@@ -914,7 +918,7 @@ export default function ResultPanel({
                       {pcbStatus === 'loading' ? 'PCB를 만드는 중입니다. 끝나면 여기서 부품을 체크할 수 있습니다.' : 'PCB를 생성하면 실물 기판에 부품을 올리며 체크할 수 있습니다.'}
                     </div>
               : board
-                ? <BoardView key="build" pcbFilename={pcbFilename ?? undefined}
+                ? <BoardView key="build" pcbFilename={pcbFilename ?? undefined} onChatFix={chatFix}
                     parts={board.parts} frames={board.frames} routes={board.routes} target={board.target}
                     final={board.final} drc={board.drc} ai={board.ai} status={board.status} hpwlShelf={pcbSummary?.hpwl_shelf} />
                 : <>
@@ -924,7 +928,7 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
-            {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap} onClose={() => setOpOpen(false)}
+            {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               <div role="alert" data-testid="circuit-diagnostics" style={{

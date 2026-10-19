@@ -14,12 +14,14 @@ const FG = '#23262b'
 const DIM = '#6b7079'
 const RANK: Record<OpState, number> = { pass: 0, unknown: 1, warn: 2, error: 3 }
 
-export default function OperatingPanel({ results, style, fixes, onDraft, onClose }: {
+export default function OperatingPanel({ results, style, fixes, onDraft, onChat, onClose }: {
   results: OpResult[]; style: 'smd' | 'tht'
   /** fixes found by re-running the checks on a changed copy, keyed rule|ref */
   fixes?: Map<string, Fix>
   /** put a fix's lines into the Code tab (absent: the code no longer describes the circuit) */
   onDraft?: (fix: Fix, note: string) => void
+  /** a fix's instruction into the AI editor's chat box */
+  onChat?: (text: string) => void
   /** shown from the chip in the tab bar; the close button and Esc hide it again */
   onClose: () => void
 }) {
@@ -81,12 +83,23 @@ export default function OperatingPanel({ results, style, fixes, onDraft, onClose
                   return (
                     <div data-op-fix={r.ref} style={{ padding: '0 10px 7px 70px', fontFamily: SANS, fontSize: 11, lineHeight: 1.45, color: FG }}>
                       <span style={{ color: TONE_COLOR.ok, fontWeight: 700 }}>해결 </span>{text}
-                      {fix?.lines && onDraft && (
-                        <button type="button" data-op-draft={r.ref} onClick={() => onDraft(fix, r.summary)}
-                          style={{ display: 'block', marginTop: 4, padding: '2px 8px', borderRadius: 4, border: `1px solid ${TONE_COLOR.ok}`,
-                            background: 'transparent', color: TONE_COLOR.ok, fontFamily: SANS, fontSize: 10.5, cursor: 'pointer' }}>
-                          Code 탭에 고칠 줄 넣기
-                        </button>
+                      {((fix?.chat && onChat) || (fix?.lines && onDraft)) && (
+                        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                          {fix?.chat && onChat && (
+                            <button type="button" data-op-chat={r.ref} onClick={() => onChat(fix.chat!)} title={`AI 편집 입력칸에 넣습니다: ${fix.chat}`}
+                              style={{ padding: '2px 8px', borderRadius: 4, border: `1px solid ${TONE_COLOR.ok}`, background: TONE_COLOR.ok,
+                                color: '#ffffff', fontFamily: SANS, fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>
+                              해결 (AI 편집에 넣기)
+                            </button>
+                          )}
+                          {fix?.lines && onDraft && (
+                            <button type="button" data-op-draft={r.ref} onClick={() => onDraft(fix, r.summary)}
+                              style={{ padding: '2px 8px', borderRadius: 4, border: `1px solid ${TONE_COLOR.ok}`,
+                                background: 'transparent', color: TONE_COLOR.ok, fontFamily: SANS, fontSize: 10.5, cursor: 'pointer' }}>
+                              Code 탭에 고칠 줄 넣기
+                            </button>
+                          )}
+                        </span>
                       )}
                     </div>
                   )

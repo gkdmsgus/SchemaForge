@@ -12,6 +12,8 @@ export interface Fix {
   lines?: string[]
   /** exact: the rule or a re-run check says so; likely: the structure points at it; hint: where to look */
   sure: 'exact' | 'likely' | 'hint'
+  /** the same fix as an instruction for the AI editor (the 해결 button puts it into the chat box; the person sends it) */
+  chat?: string
 }
 
 // ── shared ─────────────────────────────────────────────────────────────────────
@@ -100,6 +102,9 @@ export function ercFixes(findings: ErcFinding[], g: NetGraph | null | undefined)
     const part = tpl.get(ref)
     if (part === 'LED') return sym === '2' ? 'LED의 K(−)는 보통 GND 쪽이나 트랜지스터 컬렉터에 잇습니다.' : 'LED의 A(+)는 보통 저항을 거쳐 전원 쪽에 잇습니다.'
     if (part === 'NE555' && sym === '5') return '555의 CTRL(5번)은 10 nF 커패시터를 거쳐 GND에 잇습니다.'
+    if (part === 'D') return sym === '2' ? '보호 다이오드라면 K(띠 쪽)는 전원 쪽에 잇습니다.' : '보호 다이오드라면 A는 트랜지스터(스위치) 쪽에 잇습니다.'
+    if (part === 'Q_NMOS') return sym === '3' ? 'N-MOSFET의 S(소스)는 보통 GND나 감지 저항에 잇습니다.' : sym === '2' ? 'N-MOSFET의 D(드레인)는 보통 부하(모터·릴레이·LED)의 아래쪽에 잇습니다.' : 'N-MOSFET의 G(게이트)는 보통 저항을 거쳐 제어 신호에 잇습니다.'
+    if (part === 'Q_NPN') return sym === '3' ? 'NPN 트랜지스터의 E(이미터)는 보통 GND에 잇습니다.' : sym === '2' ? 'NPN 트랜지스터의 C(컬렉터)는 보통 부하의 아래쪽에 잇습니다.' : 'NPN 트랜지스터의 B(베이스)는 보통 저항을 거쳐 제어 신호에 잇습니다.'
     if (part === 'NE555' && (sym === '2' || sym === '6')) {
       const other = netOf(ref, sym === '2' ? 6 : 2)
       return `깜빡이(비안정) 회로라면 555의 2번(TRIG)과 6번(THRES)은 같은 선${other ? `(${other})` : ''}에 잇습니다.`
@@ -118,30 +123,36 @@ export function ercFixes(findings: ErcFinding[], g: NetGraph | null | undefined)
         const sym = r.sym ?? r.pin, at = ruled(r.ref, sym)
         if (at) { lines.push(join(r.ref, sym, at.net)); why.push(`${pinName(tpl.get(r.ref), sym)} → ${at.net}`) }
       }
+      const pins = f.refs.map(r => pinName(tpl.get(r.ref), r.sym ?? r.pin)).join(', ')
+      const ref0 = f.refs[0].ref
+      const hints = [...new Set(f.refs.map(r => hint(r.ref, r.sym ?? r.pin)))].filter(h => !h.startsWith('회로에서')).join(' ')
+      const chat = `${ref0}의 ${pins}이 어디에도 연결되어 있지 않아. 회로에 맞게 각 핀을 이어야 할 넷에 연결해줘.${hints ? ` 참고: ${hints}` : ''}`
       out[i] = lines.length
-        ? { text: `정해진 자리가 있는 핀부터 잇습니다: ${why.join(', ')}. 나머지 핀은 회로에서 이어져야 할 선을 찾아 잇습니다.`, lines, sure: 'exact' }
-        : { text: '이 핀들이 이어져야 할 선을 회로에서 찾아 잇습니다.', sure: 'hint' }
+        ? { text: `정해진 자리가 있는 핀부터 잇습니다: ${why.join(', ')}. 나머지 핀은 회로에서 이어져야 할 선을 찾아 잇습니다.`, lines, sure: 'exact', chat }
+        : { text: `이 핀들이 이어져야 할 선을 회로에서 찾아 잇습니다.${hints ? ` ${hints}` : ''}`, sure: 'hint', chat }
       continue
     }
     const r = f.refs[0], sym = r.sym ?? r.pin, name = pinName(tpl.get(r.ref), sym)
     const at = ruled(r.ref, sym)
-    if (at) { out[i] = { text: `${r.ref}의 ${name}을 ${at.net} 선에 잇습니다. ${at.why}`, lines: [join(r.ref, sym, at.net)], sure: 'exact' }; continue }
+    if (at) { out[i] = { text: `${r.ref}의 ${name}을 ${at.net} 선에 잇습니다. ${at.why}`, lines: [join(r.ref, sym, at.net)], sure: 'exact', chat: `${r.ref}의 ${name}을 ${at.net} 넷에 연결해줘. 다른 연결은 그대로 둬.` }; continue }
     if (pairable) {
       const c = cut[0], cr = c.f.refs[0], csym = cr.sym ?? cr.pin
       const fix: Fix = {
         text: `${c.f.net} 선에는 ${cr.ref}의 ${pinName(tpl.get(cr.ref), csym)} 하나만 붙어 끊겨 있습니다. ${r.ref}의 ${name}을 ${c.f.net} 선에 이으면 둘 다 풀릴 가능성이 큽니다. ${hint(r.ref, sym)}`,
-        lines: [join(r.ref, sym, c.f.net!)], sure: 'likely',
+        lines: [join(r.ref, sym, c.f.net!)], sure: 'likely', chat: `${r.ref}의 ${name}을 ${c.f.net} 넷에 연결해줘. 다른 연결은 그대로 둬.`,
       }
       out[i] = fix
       out[c.i] = fix
       continue
     }
-    out[i] = { text: `${r.ref}의 ${name}이 어디에도 이어져 있지 않습니다. ${hint(r.ref, sym)}`, sure: 'hint' }
+    out[i] = { text: `${r.ref}의 ${name}이 어디에도 이어져 있지 않습니다. ${hint(r.ref, sym)}`, sure: 'hint',
+      chat: `${r.ref}의 ${name}이 어디에도 연결되어 있지 않아. 회로에 맞는 넷에 연결해줘.${hint(r.ref, sym).startsWith('회로에서') ? '' : ` 참고: ${hint(r.ref, sym)}`}` }
   }
   for (const { f, i } of cut) {
     if (out[i]) continue
     const r = f.refs[0], sym = r.sym ?? r.pin
-    out[i] = { text: `${f.net} 선에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 붙어 있습니다. 이 선에 이어야 할 핀을 연결하거나, 필요 없는 선이면 지웁니다.`, sure: 'hint' }
+    out[i] = { text: `${f.net} 선에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 붙어 있습니다. 이 선에 이어야 할 핀을 연결하거나, 필요 없는 선이면 지웁니다.`, sure: 'hint',
+      chat: `${f.net} 넷에 ${r.ref}의 ${pinName(tpl.get(r.ref), sym)} 하나만 남아 끊겨 있어. 이 넷에 원래 이어져야 할 핀을 다시 연결해줘. 필요 없는 넷이면 지워줘.` }
   }
   findings.forEach((f, i) => {
     if (out[i] || f.rule !== 'no_ground') return
@@ -150,8 +161,10 @@ export function ercFixes(findings: ErcFinding[], g: NetGraph | null | undefined)
       .filter((n): n is string => !!n)
     const named = [...new Set(grounds)]
     out[i] = named.length === 1
-      ? { text: `GND 선이 없습니다. 배터리 − 단자 등이 붙은 '${named[0]}' 선의 이름을 GND로 바꿉니다 (코드의 Net('${named[0]}')를 Net('GND')로).`, sure: 'likely' }
-      : { text: 'GND 선이 없습니다. 배터리나 전원 커넥터의 − 단자를 GND라는 이름의 선에 잇습니다.', sure: 'hint' }
+      ? { text: `GND 선이 없습니다. 배터리 − 단자 등이 붙은 '${named[0]}' 선의 이름을 GND로 바꿉니다 (코드의 Net('${named[0]}')를 Net('GND')로).`, sure: 'likely',
+          chat: `${named[0]} 넷의 이름을 GND로 바꿔줘. 연결된 핀은 그대로 둬.` }
+      : { text: 'GND 선이 없습니다. 배터리나 전원 커넥터의 − 단자를 GND라는 이름의 선에 잇습니다.', sure: 'hint',
+          chat: 'GND 넷이 없어. 배터리나 전원의 − 단자가 있는 넷의 이름을 GND로 바꿔줘.' }
   })
   return out
 }
@@ -204,7 +217,7 @@ export function opFixes(c: OpCircuit, results: OpResult[]): Map<string, Fix> {
       const style = c.style ? `${c.style.toUpperCase()} 부품 기준` : '부품 기준'
       out.set(keyOf(r), {
         text: `${rRef} 값을 ${ro(text)} 바꾸면 동작 검사를 통과합니다 (지금 ${rPart.value}, ${style}). 저항 발열도 함께 다시 확인한 값입니다.`,
-        lines: [`Part.get(${py(rRef)}).value = ${py(text)}`], sure: 'exact',
+        lines: [`Part.get(${py(rRef)}).value = ${py(text)}`], sure: 'exact', chat: `${rRef} 값을 ${ro(text)} 바꿔줘.`,
       })
       break
     }

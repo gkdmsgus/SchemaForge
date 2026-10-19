@@ -597,7 +597,8 @@ app.post('/chat_edit', async (req: Request, res: Response) => {
   if (!graph || !message) return res.status(400).json({ error: 'graph and message required' })
 
   const compSummary = (graph.components || []).map(c => `${c.ref}(${c.value || '?'})`).join(', ')
-  const netSummary  = (graph.nets || []).map(n => `${n.name}:[${n.nodes.map(nd => nd.ref).join(',')}]`).join(', ')
+  // ref.pin: an edit that lists a net's pins copies the real ones instead of guessing them
+  const netSummary  = (graph.nets || []).map(n => `${n.name}:[${n.nodes.map(nd => `${nd.ref}.${nd.pin}`).join(',')}]`).join(', ')
 
   const systemPrompt = `You edit an existing schematic. Apply exactly what the user asks — no extra "improvements".
 
@@ -614,6 +615,7 @@ Rules:
   footprint is chosen from this name, and pins are numbered as in those parts
   (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
 - add_net / remove_net: "nodes" must list every ref+pin on that net, not just the new one.
+  Pins are the numbers shown as ref.pin above (write "2", not "K" or "-").
 - modify_component: change only the field the user named.
 - If the request is ambiguous or names a part that does not exist, return an empty
   actions array and ask which one in the reply. Do not guess.
@@ -930,19 +932,24 @@ app.post('/test_code', requireAuth as any, async (req: AuthRequest, res: Respons
 // check /generate and /test_code run, so a fix made by chat shows whether it fixed anything.
 // Report-only; the netlist is written to a temp file and removed.
 
-/** names a netlist can carry as they are: no quotes, parens or line breaks (they would break the s-expression) */
-const SAFE_NAME = /^[^"()\r\n\\]{1,64}$/
+/** a name as the netlist can carry it inside its quotes: no quote, backslash or line break, at most 64 characters */
+const netName = (v: unknown) => String(v ?? '').replace(/["\\\r\n\t]/g, '').trim().slice(0, 64)
 
 app.post('/erc_graph', async (req: Request, res: Response) => {
   const g = (req.body || {}).graph as NetGraph | undefined
-  const okNode = (n: unknown) => !!n && typeof n === 'object' && SAFE_NAME.test(String((n as NetNode).ref)) && /^\w{1,8}$/.test(String((n as NetNode).pin))
-  const ok = g && Array.isArray(g.components) && Array.isArray(g.nets) && g.components.length <= 300 && g.nets.length <= 600
-    && g.components.every(c => SAFE_NAME.test(String(c?.ref)) && (c.value == null || c.value === '' || SAFE_NAME.test(String(c.value))) && (c.name == null || c.name === '' || SAFE_NAME.test(String(c.name))))
-    && g.nets.every(n => SAFE_NAME.test(String(n?.name)) && Array.isArray(n.nodes) && n.nodes.length <= 300 && n.nodes.every(okNode))
-  if (!ok) return res.status(400).json({ error: 'graph with components and nets (plain names) required' })
+  if (!g || !Array.isArray(g.components) || !Array.isArray(g.nets) || g.components.length > 300 || g.nets.length > 600
+    || g.nets.some(n => !Array.isArray(n?.nodes) || n.nodes.length > 300)) {
+    return res.status(400).json({ error: 'graph with components and nets required' })
+  }
+  // names an AI edit wrote ("LED (red)", pin "+") are cleaned, not refused; empty refs and nets are dropped
+  const clean: NetGraph = {
+    components: g.components.map(c => ({ ref: netName(c?.ref), value: netName(c?.value), ...(c?.name ? { name: netName(c.name) } : {}) })).filter(c => c.ref),
+    nets: g.nets.map(n => ({ name: netName(n.name), nodes: n.nodes.map(nd => ({ ref: netName(nd?.ref), pin: netName(nd?.pin) })).filter(nd => nd.ref && nd.pin) }))
+      .filter(n => n.name && n.nodes.length),
+  }
   const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
   try {
-    writeFileSync(netPath, graphToNetlist(g!), 'utf8')
+    writeFileSync(netPath, graphToNetlist(clean), 'utf8')
     const erc = await runErc(netPath, process.cwd())
     res.json(erc.ok ? { erc: erc.findings } : { erc: null, ercError: erc.reason })
   } finally {

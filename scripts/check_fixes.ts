@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, withFixes } from '../src/lib/fixes.ts'
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
-import { applyActions } from '../src/lib/graphEdit.ts'
+import { applyActions, pinNumber } from '../src/lib/graphEdit.ts'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
 
 let failed = 0, skipped = 0
@@ -126,6 +126,29 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const edits = applyActions(g, [{ type: 'modify_component', ref: 'BT1', value: '5V' }, { type: 'remove_component', ref: 'D1' }])
   check('G1c value change and part removal', edits.components.map(c => `${c.ref}=${c.value}`).join() === 'BT1=5V' && !JSON.stringify(edits.nets).includes('D1') && !edits.nets.some(n => n.name === 'OLD'))
   check('G1d the input graph is not changed', JSON.stringify(g.nets) === JSON.stringify([net('GND', 'BT1.2'), net('OLD', 'D1.2'), net('VCC', 'BT1.1', 'D1.1')]))
+}
+
+// G2. a pin the AI editor wrote by name ("K", "-", "p2") becomes the netlist's pin number; unknown names stay
+{
+  const got = [pinNumber('LED', 'K'), pinNumber('Battery', '-'), pinNumber('Battery', '−'), pinNumber('R', 'p2'), pinNumber('Q_NMOS', 's'),
+    pinNumber('NE555', 'RESET'), pinNumber('LED', '2'), pinNumber('X', 'foo'), pinNumber(undefined, 'A')]
+  check('G2 pin names -> numbers', got.join() === '2,2,2,2,3,4,2,foo,A', got.join())
+  const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'D1', value: 'RED', name: 'LED' }], nets: [net('GND', 'BT1.2')] }
+  const out = applyActions(g, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'BT1', pin: '-' }, { ref: 'D1', pin: 'K' }] }])
+  check('G2b connecting "D1 K" joins D1.2 to GND once', JSON.stringify(out.nets) === JSON.stringify([net('GND', 'BT1.2', 'D1.2')]), JSON.stringify(out.nets))
+}
+
+// F9. every netlist fix carries an instruction for the AI editor naming the pins and the net
+{
+  const g: NetGraph = { components: [{ ref: 'Q1', value: '2N7002', name: 'Q_NMOS' }, { ref: 'U1', value: 'NE555', name: 'NE555' }],
+    nets: [net('VCC', 'U1.8'), net('GND', 'U1.1')] }
+  const f: ErcFinding[] = [
+    { rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref: 'Q1', pin: '2', sym: '3', name: 'S' }, { ref: 'Q1', pin: '3', sym: '2', name: 'D' }], net: null },
+    { rule: 'floating_pin', severity: 'error', message: '', refs: [{ ref: 'U1', pin: '4', sym: '4', name: 'RESET' }], net: null },
+  ]
+  const [q, u] = ercFixes(f, g)
+  check('F9 AI-editor instructions with pins, nets and where such pins go', !!q?.chat && /Q1의 S 핀\(3번\), D 핀\(2번\)/.test(q.chat) && /GND나 감지 저항/.test(q.chat) && /부하/.test(q.chat)
+    && u?.chat === 'U1의 RESET 핀(4번)을 VCC 넷에 연결해줘. 다른 연결은 그대로 둬.', `${q?.chat} | ${u?.chat}`)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)

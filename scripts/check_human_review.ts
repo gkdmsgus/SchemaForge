@@ -104,11 +104,13 @@ if (boards.length) {
   const diodeMap = /DIODE_MAP = \{1: '(\d)', 2: '(\d)'\}/.exec(table)!
   const kPad = diodeMap[2]                                      // template pin 2 = K
   const aPad = diodeMap[1]
-  const diodes = boards.flatMap(x => reviewItems(x.b)).filter(i => i.part === 'D' || i.part === 'LED')
+  // an open pin has no pin map (board.py maps netted pins only): such items show the one label they can, see H10
+  const mapped = (i: ReviewItem) => i.pins.every(p => p.pin != null)
+  const diodes = boards.flatMap(x => reviewItems(x.b)).filter(i => (i.part === 'D' || i.part === 'LED') && mapped(i))
   check('H3 diode/LED: − on the cathode pad, + on the anode', diodes.length > 0
     && diodes.every(i => pins(i)[kPad] === 'K' && marksOf(i)[kPad] === '−' && marksOf(i)[aPad] === '+'),
     `K on pad ${kPad}, ${diodes.length} items`)
-  const caps = boards.flatMap(x => reviewItems(x.b)).filter(i => i.part === 'CP')
+  const caps = boards.flatMap(x => reviewItems(x.b)).filter(i => i.part === 'CP' && mapped(i))
   check('H3b electrolytic: + on pad 1, − on pad 2', caps.length > 0 && caps.every(i => pins(i)['1'] === '+' && marksOf(i)['1'] === '+' && marksOf(i)['2'] === '−'),
     `${caps.length} items`)
   // datasheet pinouts recorded in footprints_table.py's docstring; the board labels say the same
@@ -235,7 +237,11 @@ if (boards.some(x => x.b.style === 'smd' && x.b.parts.some(p => p.part === 'Q_NM
     const pads = new Set(i.marks.map(m => m.pad))
     if (pads.size !== i.marks.length || i.marks.some(m => !i.pins.some(p => p.pad === m.pad))) return true
     switch (i.kind) {
-      case 'polarity': return !(labels.includes('+') && labels.includes('−'))
+      case 'polarity': {
+        const want = i.pins.filter(p => p.pin != null && ['+', 'A', '-', 'K'].includes(p.name))
+          .map(p => `${p.pad}:${p.name === '+' || p.name === 'A' ? '+' : '−'}`).sort().join()
+        return i.marks.map(m => `${m.pad}:${m.label}`).sort().join() !== want || (i.pins.every(p => p.pin != null) && !(labels.includes('+') && labels.includes('−')))
+      }
       case 'orientation': return !(i.marks.length === 1 && labels[0] === '1' && i.pins.find(p => p.pad === i.marks[0].pad)?.pin === 1)
       case 'connector': return !(i.marks.length === 1 && i.marks[0].pad === '1')
       case 'pinout': return i.marks.length !== i.pins.filter(p => p.pin != null).length
