@@ -78,6 +78,8 @@ interface Props {
   status: 'streaming' | 'done' | 'error'
   /** 'assembly': the finished board only, a part list beside it, a click on a part ticks it as placed */
   mode?: 'build' | 'assembly'
+  /** a fix's instruction into the AI editor's chat box (the 해결 buttons); absent: no button */
+  onChatFix?: (text: string) => void
 }
 
 /** width of the assembly list beside the board (it sits next to the drawing, never over it) */
@@ -202,7 +204,7 @@ function Via({ v }: { v: BoardVia }) {
   )
 }
 
-export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], pcbFilename, hpwlShelf, status, mode = 'build' }: Props) {
+export default function BoardView({ parts, frames, routes, target, final, drc, ai = [], pcbFilename, hpwlShelf, status, mode = 'build', onChatFix }: Props) {
   const assembly = mode === 'assembly'
   // a board that was already finished when this view opened (a tab switch, the assembly view) shows finished;
   // the playback runs while it is being made, and again on ↺ 다시 보기
@@ -1103,7 +1105,13 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                             return fix ? (
                               <div data-finding-fix={f.id} style={{ padding: '0 10px 4px 16px', fontFamily: SANS, fontSize: 11, lineHeight: 1.45, color: UI_FG }}>
                                 <span style={{ color: TONE_COLOR.ok, fontWeight: 700 }}>해결 </span>{fix.text}
-                                {fix.lines && <span style={{ color: UI_DIM }}> 회로도 화면의 연결 점검 알림에서 Code 탭에 고칠 줄을 넣을 수 있습니다.</span>}
+                                {fix.chat && onChatFix && (
+                                  <button type="button" data-finding-chat={f.id} onClick={() => onChatFix(fix.chat!)} title={`AI 편집 입력칸에 넣습니다: ${fix.chat}`}
+                                    style={{ display: 'block', marginTop: 4, padding: '2px 9px', borderRadius: 4, border: `1px solid ${TONE_COLOR.ok}`,
+                                      background: 'transparent', color: TONE_COLOR.ok, fontFamily: SANS, fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>
+                                    해결 (AI 편집에 넣기)
+                                  </button>
+                                )}
                               </div>
                             ) : null
                           })()}
