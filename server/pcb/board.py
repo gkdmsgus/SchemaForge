@@ -25,6 +25,15 @@ ORIGIN = (100.0, 100.0)
 
 # ── geometry ──────────────────────────────────────────────────────
 
+
+def assumed_matches(assumed, value):
+    """Does the circuit's value name the part whose pinout the footprint follows? A family like 'L78xx'
+    matches any 78-series number (L7805, LM7812, MC7805: the same IN-GND-OUT TO-220 pinout)."""
+    if assumed.lower().endswith('xx'):
+        core = re.sub(r'^[A-Za-z]+', '', assumed[:-2])
+        return re.search(re.escape(core) + r'\d\d', value) is not None
+    return assumed.upper() in value.upper()
+
 def rotate(px, py, rot):
     """Rotate a footprint-local point by rot degrees (KiCad: CCW on a y-down screen)."""
     if rot % 360 == 0:
@@ -326,7 +335,7 @@ def build_board(components, nets, style='smd'):
 
         assumed = ASSUMED_PART.get((part, style))
         value = comp['value']
-        if assumed and value and assumed.upper() not in value.upper():
+        if assumed and value and not assumed_matches(assumed, value):
             warnings.append(f'{ref} ({value}): wired with the {assumed} pinout for {style.upper()}')
 
         pad_net, pad_pin = {}, {}

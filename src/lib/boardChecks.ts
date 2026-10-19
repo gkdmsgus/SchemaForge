@@ -23,7 +23,7 @@ export interface CheckRow {
 }
 
 /** One part's result inside a rule row. */
-export interface CheckItem { ref: string; state: CheckState; summary: string; detail: string[] }
+export interface CheckItem { ref: string; state: CheckState; summary: string; detail: string[]; fix?: string }
 
 /** Groups in display order. */
 export const GROUP = { board: '기판 검사', circuit: '회로 연결', operating: '동작 검사', parts: '부품 확인' } as const
@@ -98,7 +98,7 @@ export function operatingRows(results: OpResult[]): CheckRow[] {
       count: state === 'pass' ? 0 : hits.length,
       note: rs.length === 1 ? (rs[0].ref && rs[0].summary.startsWith(rs[0].ref) ? rs[0].summary.slice(rs[0].ref.length).replace(/^[\s:]+/, '') : rs[0].summary) : `${rs.length}개 항목`,
       detail: [], findings: [],
-      items: rs.map(r => ({ ref: r.ref, state: r.state, summary: r.summary, detail: r.detail })),
+      items: rs.map(r => ({ ref: r.ref, state: r.state, summary: r.summary, detail: r.detail, ...(r.fix ? { fix: r.fix } : {}) })),
     })
   }
   return rows
