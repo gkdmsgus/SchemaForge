@@ -45,6 +45,8 @@ export interface OpResult {
   causeRule?: OpRule
   /** the same physical problem seen from different parts (the two nets a short joins) */
   key?: string
+  /** what to change, in plain words (src/lib/fixes.ts fills in fixes found by re-running the checks) */
+  fix?: string
 }
 
 export interface OpPart { ref: string; part: string; value: string }
@@ -1305,7 +1307,8 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
       lines.push(`켜졌을 때 VDS ≤ RDS(on) ${ohm(spec.rds_on.v)} × 부하 전류 = ${V(d)}`)
     }
     const vgsList = per.map(p => vg(p.shown)).join(' / ')
-    let state: OpState, summary: string
+    let state: OpState, summary: string, fix: string | undefined
+    const logicLevel = '3.3 V에서 켜짐 저항이 보장된 논리 레벨 MOSFET(데이터시트에 VGS 2.5~3.3 V의 RDS(on)이 적힌 부품)으로 바꾸는 것이 해결책인데, 앱 부품표에는 아직 없습니다.'
     if (over) {
       const [a, b] = two(over.vgs.hi, spec.vgs_max.v, V)
       state = 'error'; summary = `${q.ref} 게이트 ${a} ≥ 최대 ${b}: 게이트가 파괴될 수 있습니다`
@@ -1313,6 +1316,7 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
     else if (passing.length) {
       state = 'warn'
       summary = `${q.ref}: ${passing.map(p => p.cd.label).join(', ')} 신호에서만 완전히 켜집니다 (${per.filter(p => p.state !== 'pass').map(p => `${p.cd.label} → VGS ${vg(p.shown)}`).join(', ')})`
+      fix = `${passing.map(p => p.cd.label).join(', ')} 신호로 구동하면 됩니다. 더 낮은 신호로 구동하려면 ${logicLevel}`
     } else if (per.every(p => p.state === 'error')) {
       state = 'error'; summary = `${q.ref} 게이트 ${per.map(p => span(p.shown.lo, p.shown.hi, v => two(v, th, V)[0])).join(' / ')} < 문턱 최대 ${V(th)}: 켜지지 않을 수 있습니다`
     } else {
@@ -1320,13 +1324,16 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
       summary = `${q.ref} 게이트 ${vgsList}: 문턱은 넘지만 켜짐 저항 보장 전압 ${V(rated)} 미만이라 발열·전압 강하가 생길 수 있습니다`
       const lossy = per.filter(p => p.lossy)
       if (lossy.length) summary += ` · ${lossy.map(p => p.cd.label).join(', ')} 신호는 ${ro(why)} ${lossy.map(p => vg(p.shown)).join(', ')}`
+      fix = `게이트 전압이 이 MOSFET의 켜짐 저항 보장 전압 ${V(rated)}에 못 미칩니다. ${logicLevel}`
     }
     if (!sw.pull && ctlInfo.fromSignal && state === 'pass') {
       state = 'warn'
       summary += ' · 풀다운 저항 없음'
       lines.push('게이트 풀다운이 없으면 입력이 끊겼을 때 게이트가 떠서 저절로 켜질 수 있습니다')
+      fix = '게이트와 GND 사이에 10 kΩ 저항을 답니다.'
     }
     verdict(state, summary, lines)
+    if (fix) sw.result.fix = fix
     if (state !== 'pass') {
       const vgsOk = (lo: number, vs: number) => atLeast(lo * div - vs, rated) && !atLeast(lo * div, spec.vgs_max.v)
       // the source lifted by an LED over its rating: with correctly sized LEDs the gate would do
@@ -1727,6 +1734,7 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
     if (unknown.length) {
       res('unknown', `${sw.q.ref} 부하 전류를 알 수 없습니다 (${unknown.map(l => l.note).join(', ')}). 최대 ${mA(lim.v)} 이하여야 합니다`,
         [...notes, `${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(lim.v)}: ${cite(lim)}`], unknown.every(l => l.cause) ? unknown[0].cause : undefined)
+      out[out.length - 1].fix = `부하 값에 데이터시트의 전류를 적습니다 (예: MOTOR 0.1A). ${sw.q.ref}는 ${mA(lim.v)}까지 견딥니다. 적은 값으로 다시 판단합니다.`
       continue
     }
     const i = loadI(sw.loads, 0)

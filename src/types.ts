@@ -123,7 +123,8 @@ export interface ErcFinding {
   rule: string
   severity: 'error' | 'warning'
   message: string
-  refs: { ref: string; pin: string }[]
+  /** pin = the board pad when the board model is known; sym/name = the symbol pin the code and netlist use */
+  refs: { ref: string; pin: string; sym?: string; name?: string }[]
   net: string | null
 }
 
