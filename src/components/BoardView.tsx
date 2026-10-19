@@ -11,6 +11,7 @@ import { fromBoard, operatingChecks } from '../lib/operatingCheck'
 import { KIND_LABEL, MARK_COLOR, boardMarks, confirmReviews, loadReviewed, reviewItems, saveReviewed, type BoardMark, type ReviewItem } from '../lib/humanReview'
 import { assemblyRefs, clickAction, loadAssemblyView, loadPlaced, placedKey, saveAssemblyView, savePlaced } from '../lib/assembly'
 import { buildBom, type BomLine } from '../lib/bom'
+import { ercFixes, graphFromBoard, opFixes, withFixes } from '../lib/fixes'
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -446,7 +447,13 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const aiSkipped = ai.some(r => r.round === 0 && !r.kept)
   const aiOpen = aiOpenSet ?? aiSkipped
   // does it work: numeric checks on the finished board's part values
-  const opResults = useMemo(() => (final ? operatingChecks(fromBoard(final)) : []), [final])
+  const opResults = useMemo(() => {
+    if (!final) return []
+    const c = fromBoard(final), rs = operatingChecks(c)
+    return withFixes(rs, opFixes(c, rs))
+  }, [final])
+  // a fix next to each netlist-check finding (pins mapped back to the template pins the code uses)
+  const ercFixList = useMemo(() => (final?.erc ? ercFixes(final.erc, graphFromBoard(final)) : []), [final])
   const rows = useMemo(() => checkRows(drc, final, { items: reviewList, reviewed: reviewedKeys }, opResults),
     [drc, final, reviewList, reviewedKeys, opResults])
   const checkSum = summarize(rows)
@@ -1082,7 +1089,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                           <div key={k} style={{ padding: '2px 10px 2px 16px', color: UI_DIM, lineHeight: 1.45 }}>{line}</div>
                         ))}
                         {items.map(f => (
-                          <button type="button" key={f.id} data-finding={f.id} onClick={() => focusOn(f)}
+                          <Fragment key={f.id}>
+                          <button type="button" data-finding={f.id} onClick={() => focusOn(f)}
                             style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 10px 3px 16px',
                               border: 'none', cursor: f.pos ? 'pointer' : 'default', font: 'inherit', lineHeight: 1.45,
                               background: focusId === f.id ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
@@ -1090,6 +1098,16 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                             {f.text}
                             {f.pos && <span style={{ color: UI_DIM }}> · {f.pos.x.toFixed(1)}, {f.pos.y.toFixed(1)}</span>}
                           </button>
+                          {(() => {
+                            const fix = f.id.startsWith('erc') ? ercFixList[Number(f.id.slice(3))] : null
+                            return fix ? (
+                              <div data-finding-fix={f.id} style={{ padding: '0 10px 4px 16px', fontFamily: SANS, fontSize: 11, lineHeight: 1.45, color: UI_FG }}>
+                                <span style={{ color: TONE_COLOR.ok, fontWeight: 700 }}>해결 </span>{fix.text}
+                                {fix.lines && <span style={{ color: UI_DIM }}> 회로도 화면의 연결 점검 알림에서 Code 탭에 고칠 줄을 넣을 수 있습니다.</span>}
+                              </div>
+                            ) : null
+                          })()}
+                          </Fragment>
                         ))}
                         {/* per-part results with the calculation behind each */}
                         {r.items?.map((it, k) => (
@@ -1108,6 +1126,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                             {it.detail.map((line, k) => (
                               <div key={k} style={{ marginTop: 2, paddingLeft: 60, color: UI_DIM, fontSize: 10.5, lineHeight: 1.45 }}>{line}</div>
                             ))}
+                            {it.fix && it.state !== 'pass' && (
+                              <div data-op-fix={it.ref} style={{ marginTop: 3, paddingLeft: 60, fontFamily: SANS, fontSize: 11, lineHeight: 1.45 }}>
+                                <span style={{ color: TONE_COLOR.ok, fontWeight: 700 }}>해결 </span>{it.fix}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

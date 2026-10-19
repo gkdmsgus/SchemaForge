@@ -22,6 +22,8 @@ import type {
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
+import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
+import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { STATE_TONE, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
@@ -156,6 +158,8 @@ export default function ResultPanel({
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
   const opHead = operatingHeadline(opResults)
+  const opFixMap = useMemo(() => (effectiveGraph ? opFixes(fromGraph(effectiveGraph, pcbStyle), opResults) : new Map<string, Fix>()), [effectiveGraph, pcbStyle, opResults])
+  const ercFixList = useMemo(() => ercFixes(result?.erc?.findings ?? [], result?.graph), [result?.erc?.findings, result?.graph])
   // parts list: the board's footprints once a PCB exists (deps on parts/final, not every streamed frame)
   const boardParts = board?.parts
   const boardFinal = board?.final ?? null
@@ -173,9 +177,10 @@ export default function ResultPanel({
     if (!erc.findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
       lines: [erc.reason ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
     if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${count}개`,
-      lines: [...errors.map(f => f.message),
-        rep && !rep.tried ? '자동 재시도가 꺼져 있어 고치지 않았습니다 (설정).'
-          : rep?.tried && !rep.kept ? `자동 수정이 받아들여지지 않아 원래 회로를 그대로 둡니다: ${rep.note}` : 'Code 탭에서 연결을 고치거나 다시 생성하세요.'] }
+      lines: [
+        rep && !rep.tried ? '자동 재시도가 꺼져 있어 고치지 않았습니다. 아래 해결책을 Code 탭에 넣거나, 설정에서 자동 재시도를 켜고 다시 생성합니다.'
+          : rep?.tried && !rep.kept ? `AI가 한 번 고쳐 봤지만 받아들이지 않아 원래 회로를 그대로 둡니다 (${rep.note}). 아래처럼 직접 고칩니다.`
+            : rep?.kept ? `AI가 오류 ${rep.before}개 중 ${rep.before - rep.after}개를 고쳤습니다. 남은 오류는 아래처럼 고칩니다.` : 'Code 탭에서 연결을 고치거나 다시 생성합니다.'] }
     if (rep?.kept) return { tone: 'ok' as const, head: `넷리스트 점검(ERC) 오류를 자동으로 고쳤습니다 (오류 ${rep.before} → ${rep.after})`,
       lines: ['AI가 고친 코드를 다시 실행해 오류가 줄고, 맞게 이어져 있던 연결과 부품 값이 그대로일 때만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
     return null
@@ -211,7 +216,10 @@ export default function ResultPanel({
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
-  async function generatePCB() {
+  async function generatePCB(opts: { style?: 'smd' | 'tht'; ai?: boolean } = {}) {
+    const style = opts.style ?? pcbStyle, ai = opts.ai ?? useAi
+    if (opts.style) setPcbStyle(opts.style)
+    if (opts.ai != null) setUseAi(opts.ai)
     if (circuitErrors.length) {
       setPcbStatus('invalid')
       setViewMode('schematic')
@@ -219,11 +227,11 @@ export default function ResultPanel({
     }
     // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
-      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style: pcbStyle, ai: useAi }
-      : result?.filename ? { filename: result.filename, style: pcbStyle, ai: useAi } : null
+      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai }
+      : result?.filename ? { filename: result.filename, style, ai } : null
     if (!body) { setPcbStatus('error'); return }
 
-    setPcbSource({ graph: effectiveGraph, style: pcbStyle })
+    setPcbSource({ graph: effectiveGraph, style })
     setPcbStatus('loading')
     // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
     if (window.innerWidth < 1280) { setEditorOpen(false); setSidebarOpen(false) }
@@ -274,6 +282,18 @@ export default function ResultPanel({
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
     }
+  }
+
+  /** A fix's lines go into the Code tab draft (on top of a draft already open); running it is the person's call. */
+  const canDraft = !!result?.code && !aiEdited && draftWith(result.code, ['x'], 'x') != null
+  function draftFix(fix: Fix, note: string) {
+    if (!fix.lines?.length || !result?.code || aiEdited) return
+    const base = codeEdit?.text ?? result.code
+    const text = draftWith(base, fix.lines, note)
+    if (!text) return
+    setCodeEdit({ text, error: null })
+    setActiveTab('Code')
+    setDrawerOpen(true)
   }
 
   /** A successful run in the Code tab replaces the circuit, AI chat edits included (the user confirmed). */
@@ -737,7 +757,7 @@ export default function ResultPanel({
                   AI 다듬기 {useAi ? 'ON' : 'OFF'}
                 </button>
               )}
-              {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={generatePCB} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
+              {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={() => generatePCB()} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {/* a board built from a previous circuit: no downloads of files that no longer match */}
               {pcbStatus === 'done' && pcbFilename && !pcbStale && <>
@@ -746,7 +766,7 @@ export default function ResultPanel({
                 {gerberStatus === 'loading' && <StatusChip tone="accent" busy>거버 생성 중</StatusChip>}
                 {gerberStatus === 'done' && <StatusChip tone="ok">거버 완료</StatusChip>}
               </>}
-              {pcbStatus === 'error' && <button onClick={generatePCB} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
+              {pcbStatus === 'error' && <button onClick={() => generatePCB()} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
             </div>
           </div>
 
@@ -758,24 +778,67 @@ export default function ResultPanel({
                   ? '회로가 바뀌었습니다. 이 기판은 바뀌기 전 회로로 만든 것이라 2D·3D·DRC·거버가 지금 회로와 다를 수 있습니다.'
                   : `부품 방식이 바뀌었습니다. 이 기판은 ${pcbSource.style.toUpperCase()} 부품으로 만든 것입니다.`}
               </span>
-              <button onClick={generatePCB} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
+              <button onClick={() => generatePCB()} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
             </div>
           )}
-          {viewMode !== 'schematic' && pcbStatus === 'done' && pcbSummary && pcbSummary.warnings.length > 0 && (
-            <div role="alert" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
-              borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
-              <strong>제작 전 부품·핀 배열 확인 필요</strong>
-              {pcbSummary.warnings.map((warning, index) => <div key={index}>{warning}</div>)}
-              <div>선택한 실제 부품의 데이터시트와 기판 패드 번호를 대조하세요. DRC 통과만으로 실물 핀 배열은 보증되지 않습니다.</div>
-            </div>
-          )}
+          {viewMode !== 'schematic' && pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (() => {
+            const parsed = board?.final ? pinoutWarnings(board.final) : new Map()
+            const built = (board?.final?.style ?? pcbStyle) === 'tht' ? 'tht' : 'smd'
+            return (
+              <div role="alert" data-testid="pcb-pinout-banner" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
+                borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
+                <strong>제작 전 부품 확인 필요</strong>
+                {pcbSummary.warnings.map((warning, index) => {
+                  const ref = /^(\S+)/.exec(warning)?.[1] ?? ''
+                  const w = [...parsed.values()].find(x => x.raw === warning)
+                  const part = board?.final?.parts.find(p => p.ref === ref)
+                  const other = w && part ? pinoutStyleFix(part.part, w.value, built) : null
+                  return (
+                    <div key={index} data-pinout-warning={ref} style={{ marginTop: 3 }}>
+                      {w ? <div>{ref}: 회로에는 {w.value}라고 적혀 있지만 이 기판은 {w.assumed}의 다리 순서로 만들었습니다.</div> : <div>{warning}</div>}
+                      <div style={{ color: 'var(--sf-fg-muted)', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
+                        <span>해결: {other ? `${other.toUpperCase()}로 다시 만들면 ${w!.value}와 다리 순서가 같아집니다.`
+                          : w ? `${w.assumed}를 사거나, 산 부품의 다리 순서가 같은지 기판의 '방향 확인'에서 맞춰 봅니다.`
+                            : '선택한 실제 부품의 데이터시트와 기판 패드 번호를 대조합니다.'}</span>
+                        {other && (
+                          <button type="button" data-pinout-fix={ref} onClick={() => generatePCB({ style: other })}
+                            style={{ ...ghostBtn, padding: '1px 8px', fontSize: 10.5, color: 'var(--sf-cyan)' }}>{other.toUpperCase()}로 다시 만들기</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
 
           {viewMode === 'schematic' && ercNotice && (
             <div role={ercNotice.tone === 'bad' ? 'alert' : 'status'} data-testid="erc-notice" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
               borderBottom: `1px solid ${ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber)' : 'var(--sf-line)'}`,
               color: ercNotice.tone === 'bad' ? 'var(--sf-danger)' : ercNotice.tone === 'warn' ? 'var(--sf-amber-deep)' : 'var(--sf-fg-muted)', fontSize: 11, lineHeight: 1.5 }}>
               <strong>{ercNotice.head}</strong>
-              {ercNotice.lines.map((line, i) => <div key={i}>{line}</div>)}
+              {ercNotice.tone === 'bad' && (result?.erc?.findings ?? []).map((f, i) => {
+                if (f.severity !== 'error') return null
+                const fix = ercFixList[i]
+                // a fix shared with an earlier finding (one break seen from both ends) is shown once
+                const shared = fix && ercFixList.indexOf(fix) !== i
+                return (
+                  <div key={i} data-erc-finding={i} style={{ marginTop: 4 }}>
+                    <div>{f.message}</div>
+                    {fix && !shared && (
+                      <div data-erc-fix={i} style={{ color: 'var(--sf-fg-muted)', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
+                        <span>해결: {fix.text}</span>
+                        {fix.lines && canDraft && (
+                          <button type="button" data-erc-draft={i} onClick={() => draftFix(fix, f.message)}
+                            style={{ ...ghostBtn, padding: '1px 8px', fontSize: 10.5, color: 'var(--sf-cyan)' }}>Code 탭에 고칠 줄 넣기</button>
+                        )}
+                      </div>
+                    )}
+                    {shared && <div style={{ color: 'var(--sf-fg-muted)' }}>해결: 위 항목과 같은 문제입니다.</div>}
+                  </div>
+                )
+              })}
+              {ercNotice.lines.map((line, i) => <div key={`l${i}`} style={{ marginTop: 4 }}>{line}</div>)}
             </div>
           )}
 
@@ -803,7 +866,8 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
-            {viewMode === 'schematic' && <OperatingPanel results={opResults} style={pcbStyle} />}
+            {viewMode === 'schematic' && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap}
+              onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               <div role="alert" data-testid="circuit-diagnostics" style={{
                 position: 'absolute', left: 14, top: 14, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
@@ -935,7 +999,7 @@ export default function ResultPanel({
             {activeTab === 'Code' && (
               <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
                 lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited}
-                pcbStale={pcbStale === 'circuit'} onRegeneratePcb={generatePCB} canRun={!!authUser} onAuthExpired={onAuthExpired} />
+                pcbStale={pcbStale === 'circuit'} onRegeneratePcb={() => generatePCB()} canRun={!!authUser} onAuthExpired={onAuthExpired} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
               <GerberFilePanel info={gerberInfo} />

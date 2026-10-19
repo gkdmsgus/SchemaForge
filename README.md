@@ -206,6 +206,11 @@ npx tsx scripts/check_human_review.ts
 방향 확인 29항목. 방향을 묻는 부품(극성·1번 다리·다리 순서·커넥터)만 고르는지, 핀 이름이 서버 부품 템플릿과 같은지, +·−·1 표시가 생성기가 배선한 패드에 붙는지(다이오드 캐소드, 전해 커패시터 +, MOSFET 다리 순서), 부품을 돌려도 표시가 그 패드에 가는지, 설명이 SMD·THT에 맞고 패드 번호를 쓰지 않는지(IC 1번 다리, 트랜지스터·레귤레이터를 꽂는 방향 포함), 부품 이름 뒤 조사, 확인 기록 저장. 앱에서 만든 기판(`server/outputs`)이 없으면 그 기판들로 하는 항목은 건너뛴다고 표시하고 통과로 세지 않는다.
 
 ```bash
+npx tsx scripts/check_fixes.ts
+```
+경고 해결책 12항목. Code 탭에 넣는 고칠 줄의 위치, 555 RESET은 VCC 핀과 같은 선으로, 끊긴 LED K와 한 핀짜리 GND는 하나의 해결책으로(기판 패드가 아닌 기호 핀 번호), 같은 부품 양끝은 제안하지 않음, LED 저항 추천값을 동작 검사로 다시 확인(SMD 470 Ω, THT 270 Ω, 전류만 보고 고른 330 Ω은 발열로 걸러짐), 핀 배열 경고의 다시 만들 방식, 모터 데모 경고의 해결 문구. 고칠 줄은 skidl·ERC·자동 수정 판정으로 따로 돌려 확인했다.
+
+```bash
 npx tsc --noEmit             # 화면 타입 검사
 cd server && npm run typecheck
 npm run lint
@@ -230,6 +235,7 @@ src/                  화면 (React + TypeScript)
     partSpecs         데이터시트 한계값과 출처
     boardChecks       검사 목록 행 만들기
     humanReview       방향 확인 항목 (초보자용 설명, 패드 위 표시)
+    fixes             경고 옆 해결책 (ERC 연결, LED 저항값, 핀 배열 다시 만들기)
 server/
   index.ts            API, 스트리밍 생성, KiCad 호출
   ai_layout.ts        AI 다듬기: 제안 나누기·적용·점수
