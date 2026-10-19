@@ -22,7 +22,7 @@ import type {
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
-import { applyActions } from '../lib/graphEdit'
+import { applyActions, movedPins } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
@@ -436,9 +436,13 @@ export default function ResultPanel({
             const { reply, actions } = JSON.parse(raw)
             const snapshot = effectiveGraph ?? null
             let newGraph: NetGraph | null = snapshot
+            let note = ''
             if (actions?.length && snapshot) {
               pushGraphHistory(snapshot)
               newGraph = applyActions(snapshot, actions)
+              // pins the edit took off a net they were on: the model may have guessed, so the person sees it
+              const moved = movedPins(snapshot, newGraph)
+              if (moved.length) note = `\n\n바뀐 연결: ${moved.map(m => `${m.pin} ${m.from} → ${m.to ?? '연결 없음'}`).join(', ')}. 의도와 다르면 위의 되돌리기를 누르세요.`
               const diff = computeDiff(snapshot, newGraph)
               setGraphDiff(diff)
               // Let removed parts flash before they disappear, then show diagnostics.
@@ -446,7 +450,7 @@ export default function ResultPanel({
               else setLocalGraph(newGraph)
               setTimeout(() => setGraphDiff(null), 3000)
             }
-            const assistantMsg: ChatMessage = { role: 'assistant', content: reply as string, actions: actions || [] }
+            const assistantMsg: ChatMessage = { role: 'assistant', content: `${reply as string}${note}`, actions: actions || [] }
             setChatMessages(prev => {
               const next = [...prev.slice(0, -1), assistantMsg]
               updateSavedResultChat(lastPrompt, next, newGraph)
