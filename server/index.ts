@@ -925,6 +925,31 @@ app.post('/test_code', requireAuth as any, async (req: AuthRequest, res: Respons
   res.json(erc.ok ? { filename, graph, erc: erc.findings } : { filename, graph, erc: null, ercError: erc.reason })
 })
 
+// ── POST /erc_graph ────────────────────────────────────────────────
+// The netlist check on a circuit the AI editor changed (the schematic graph, not code): the same
+// check /generate and /test_code run, so a fix made by chat shows whether it fixed anything.
+// Report-only; the netlist is written to a temp file and removed.
+
+/** names a netlist can carry as they are: no quotes, parens or line breaks (they would break the s-expression) */
+const SAFE_NAME = /^[^"()\r\n\\]{1,64}$/
+
+app.post('/erc_graph', async (req: Request, res: Response) => {
+  const g = (req.body || {}).graph as NetGraph | undefined
+  const okNode = (n: unknown) => !!n && typeof n === 'object' && SAFE_NAME.test(String((n as NetNode).ref)) && /^\w{1,8}$/.test(String((n as NetNode).pin))
+  const ok = g && Array.isArray(g.components) && Array.isArray(g.nets) && g.components.length <= 300 && g.nets.length <= 600
+    && g.components.every(c => SAFE_NAME.test(String(c?.ref)) && (c.value == null || c.value === '' || SAFE_NAME.test(String(c.value))) && (c.name == null || c.name === '' || SAFE_NAME.test(String(c.name))))
+    && g.nets.every(n => SAFE_NAME.test(String(n?.name)) && Array.isArray(n.nodes) && n.nodes.length <= 300 && n.nodes.every(okNode))
+  if (!ok) return res.status(400).json({ error: 'graph with components and nets (plain names) required' })
+  const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
+  try {
+    writeFileSync(netPath, graphToNetlist(g!), 'utf8')
+    const erc = await runErc(netPath, process.cwd())
+    res.json(erc.ok ? { erc: erc.findings } : { erc: null, ercError: erc.reason })
+  } finally {
+    try { unlinkSync(netPath) } catch { /* already gone */ }
+  }
+})
+
 // ── GET /download/:filename ────────────────────────────────────────
 
 app.get('/download/:filename', (req: Request, res: Response) => {

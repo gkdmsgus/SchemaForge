@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, withFixes } from '../src/lib/fixes.ts'
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
+import { applyActions } from '../src/lib/graphEdit.ts'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
 
 let failed = 0, skipped = 0
@@ -111,6 +112,20 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
     const gate = rs.find(r => r.rule === 'op_drive' && r.state === 'warn'), load = rs.find(r => r.rule === 'op_switch' && r.state === 'unknown')
     check('F8 motor demo: gate and load warnings carry a fix', !!gate?.fix && /논리 레벨/.test(gate.fix) && !!load?.fix && /MOTOR 0\.1A/.test(load.fix), `${gate?.fix?.slice(0, 40)} | ${load?.fix?.slice(0, 40)}`)
   }
+}
+
+// G1. the AI editor connecting a pin to a net joins the net of that name (it used to add a second "GND" holding
+//     only that pin, as cut off as before) and moves the pin off the net it was on
+{
+  const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'D1', value: 'RED', name: 'LED' }],
+    nets: [net('GND', 'BT1.2'), net('OLD', 'D1.2'), net('VCC', 'BT1.1', 'D1.1')] }
+  const out = applyActions(g, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'D1', pin: '2' }] }])
+  check('G1 add_net joins the existing net, the pin moves', JSON.stringify(out.nets) === JSON.stringify([net('GND', 'BT1.2', 'D1.2'), net('VCC', 'BT1.1', 'D1.1')]), JSON.stringify(out.nets))
+  const fresh = applyActions(g, [{ type: 'add_net', name: 'NEW', nodes: [{ ref: 'D1', pin: '2' }, { ref: 'D1', pin: '2' }] }])
+  check('G1b a new name makes one net, the pin listed once', JSON.stringify(fresh.nets.find(n => n.name === 'NEW')) === JSON.stringify(net('NEW', 'D1.2')) && !fresh.nets.some(n => n.name === 'OLD'))
+  const edits = applyActions(g, [{ type: 'modify_component', ref: 'BT1', value: '5V' }, { type: 'remove_component', ref: 'D1' }])
+  check('G1c value change and part removal', edits.components.map(c => `${c.ref}=${c.value}`).join() === 'BT1=5V' && !JSON.stringify(edits.nets).includes('D1') && !edits.nets.some(n => n.name === 'OLD'))
+  check('G1d the input graph is not changed', JSON.stringify(g.nets) === JSON.stringify([net('GND', 'BT1.2'), net('OLD', 'D1.2'), net('VCC', 'BT1.1', 'D1.1')]))
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)
