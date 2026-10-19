@@ -131,6 +131,8 @@ export default function ResultPanel({
   // Code tab: the draft and the last run outlive drawer tab switches
   const [codeEdit, setCodeEdit] = useState<CodeEdit | null>(null)
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
+  // the operating checks open from their chip in the tab bar, so they never sit over the schematic uninvited
+  const [opOpen, setOpOpen] = useState(false)
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
   /** text null: the server has no such file (404); failed: the request did not get through (retry offered) */
@@ -744,10 +746,14 @@ export default function ResultPanel({
                 </StatusChip>
               )}
               {opResults.length > 0 && (
-                <StatusChip tone={STATE_TONE[opHead.state]} testId="op-chip"
-                  title={opResults.filter(r => r.state !== 'pass').map(r => r.summary).join('\n') || '모든 동작 검사 통과'}>
-                  {opHead.text}
-                </StatusChip>
+                <button type="button" data-testid="op-toggle" aria-expanded={opOpen && viewMode === 'schematic'} aria-controls="operating-panel"
+                  onClick={() => { if (viewMode !== 'schematic') { setViewMode('schematic'); setOpOpen(true) } else setOpOpen(o => !o) }}
+                  title={`${opResults.filter(r => r.state !== 'pass').map(r => r.summary).join('\n') || '모든 동작 검사 통과'}\n(눌러서 동작 검사 ${opOpen && viewMode === 'schematic' ? '닫기' : '보기'})`}
+                  style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', flexShrink: 0 }}>
+                  <StatusChip tone={STATE_TONE[opHead.state]} testId="op-chip">
+                    {opHead.text} {opOpen && viewMode === 'schematic' ? '▴' : '▾'}
+                  </StatusChip>
+                </button>
               )}
               {pcbStatus !== 'loading' && (
                 <button onClick={() => { setUseAi(v => !v); if (pcbStatus === 'done') setPcbStatus(null) }}
@@ -866,7 +872,7 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
-            {viewMode === 'schematic' && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap}
+            {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap} onClose={() => setOpOpen(false)}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               <div role="alert" data-testid="circuit-diagnostics" style={{
