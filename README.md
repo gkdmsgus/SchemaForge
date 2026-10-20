@@ -271,3 +271,6 @@ dev/board.html        기판 화면만 따로 띄우는 개발용 페이지
 ## 배포
 
 Railway + Supabase 기준 순서는 [DEPLOY.md](DEPLOY.md) 참고. 컨테이너에 KiCad가 없으면 DRC·거버·3D가 비활성화된다.
+
+- 배포 서버(`NODE_ENV=production`)에서는 데모·기판·거버는 누구나 쓰고, 회로 생성·AI 편집·코드 실행은 `ALLOWED_EMAILS`에 있는 계정만 쓴다 (DEPLOY.md 0절).
+- 이미지는 약 4.3 GB(압축 전)로, KiCad 공식 이미지가 대부분이다. Railway Trial·Free 플랜의 이미지 한도(4 GB)를 넘을 수 있어 Hobby 플랜(100 GB)을 쓴다 ([Railway 플랜 표](https://docs.railway.com/pricing/plans). 한도를 압축 전 크기로 재는지는 확인하지 못했다).
