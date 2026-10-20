@@ -10,7 +10,7 @@ import AuthModal from './components/AuthModal'
 import LegalPage from './components/LegalPage'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
 import { Button } from './components/primitives.tsx'
-import { loadAuth, logout as apiLogout, authHeaders, saveSession, type AuthUser } from './api'
+import { loadAuth, logout as apiLogout, authHeaders, errorText, saveSession, type AuthUser } from './api'
 import type {
   AppSettings, LogLine, LogKind, Progress, ClarifyData, PlanData,
   Version, ChatSession, PendingCached, GenerateResult,
@@ -262,8 +262,9 @@ export default function App() {
         signal: abort.signal,
       })
       if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`서버 오류 (${res.status}): ${text.slice(0, 200)}`)
+        const why = await errorText(res)
+        // a refusal (a deployed server keeps generation for listed accounts) is said as the server wrote it
+        throw new Error(res.status === 401 || res.status === 403 ? why : `서버 오류 (${res.status}): ${why}`)
       }
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
