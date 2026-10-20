@@ -16,6 +16,7 @@ import {
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
+import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
@@ -42,6 +43,8 @@ interface ChatAction {
 interface AuthUser {
   id: string
   email: string
+  /** Supabase only: the sign-up mail was confirmed (deploy_guard.ts) */
+  confirmed?: boolean
 }
 
 // Extend Request with optional user
@@ -58,6 +61,10 @@ const supabase = SUPABASE_ENABLED
 
 // fallback local token store (used when Supabase not configured)
 const localTokens = new Map<string, AuthUser>()
+
+// what a deployed server lets a visitor do (deploy_guard.ts)
+const GUARD = guardFromEnv()
+if (GUARD.deployed) console.log(`[guard] deployed: code runs and model calls for ${GUARD.allowed.size} listed account(s)${GUARD.supabase ? '' : ', none until Supabase is set'}`)
 
 // ── Express app ────────────────────────────────────────────────────
 
@@ -94,7 +101,7 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) 
   if (SUPABASE_ENABLED) {
     const { data, error } = await supabase!.auth.getUser(token)
     if (error || !data.user) return res.status(401).json({ error: 'Invalid token' })
-    req.user = { id: data.user.id, email: data.user.email ?? '' }
+    req.user = { id: data.user.id, email: data.user.email ?? '', confirmed: !!data.user.email_confirmed_at }
   } else {
     const user = localTokens.get(token)
     if (!user) return res.status(401).json({ error: 'Invalid token' })
@@ -108,12 +115,19 @@ async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction
   if (token) {
     if (SUPABASE_ENABLED) {
       const { data } = await supabase!.auth.getUser(token)
-      if (data.user) req.user = { id: data.user.id, email: data.user.email ?? '' }
+      if (data.user) req.user = { id: data.user.id, email: data.user.email ?? '', confirmed: !!data.user.email_confirmed_at }
     } else {
       const user = localTokens.get(token)
       if (user) req.user = user
     }
   }
+  next()
+}
+
+/** after optionalAuth or requireAuth: on a deployed server, only listed accounts run code or call the model */
+function requireMember(req: AuthRequest, res: Response, next: NextFunction) {
+  const refusal = memberRefusal(GUARD, req.user)
+  if (refusal) return res.status(refusal.status).json({ error: refusal.error })
   next()
 }
 
@@ -123,6 +137,8 @@ async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction
 app.post('/auth/register', async (req: Request, res: Response) => {
   const { email, password } = req.body
   if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
+  const closed = localLoginRefusal(GUARD)
+  if (closed) return res.status(503).json({ error: closed })
 
   if (SUPABASE_ENABLED) {
     const { data, error } = await supabase!.auth.signUp({ email, password })
@@ -142,6 +158,8 @@ app.post('/auth/register', async (req: Request, res: Response) => {
 app.post('/auth/login', async (req: Request, res: Response) => {
   const { email, password } = req.body
   if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
+  const closed = localLoginRefusal(GUARD)
+  if (closed) return res.status(503).json({ error: closed })
 
   if (SUPABASE_ENABLED) {
     const { data, error } = await supabase!.auth.signInWithPassword({ email, password })
@@ -505,7 +523,7 @@ Question rules:
 
 Output the JSON object and nothing else.`
 
-app.post('/clarify', async (req: Request, res: Response) => {
+app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
@@ -560,7 +578,7 @@ Content rules:
 
 Output the JSON object only. No markdown, no prose.`
 
-app.post('/plan', async (req: Request, res: Response) => {
+app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
@@ -590,7 +608,7 @@ app.post('/plan', async (req: Request, res: Response) => {
 
 // ── POST /chat_edit ────────────────────────────────────────────────
 
-app.post('/chat_edit', async (req: Request, res: Response) => {
+app.post('/chat_edit', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
   const { graph, message, history = [] } = req.body as {
     graph: NetGraph; message: string; history: { role: string; content: string }[]
   }
@@ -718,7 +736,7 @@ changed.`
 
 // ── POST /generate ─────────────────────────────────────────────────
 
-app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Response) => {
+app.post('/generate', optionalAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
   // The '자동 재시도' setting: one model fix for a code error and one for netlist (ERC) errors.
@@ -903,7 +921,7 @@ app.post('/generate', optionalAuth as any, async (req: AuthRequest, res: Respons
 // Runs the code tab's code exactly as sent (untrimmed, so traceback line numbers match the editor)
 // and reports the netlist check. The code is the user's own: no model repair here.
 
-app.post('/test_code', requireAuth as any, async (req: AuthRequest, res: Response) => {
+app.post('/test_code', requireAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const code: string = typeof req.body?.code === 'string' ? req.body.code : ''
   if (!code.trim()) return res.status(400).json({ error: 'No code provided.' })
   let outputPath: string
@@ -961,9 +979,9 @@ app.post('/erc_graph', async (req: Request, res: Response) => {
 // ── GET /download/:filename ────────────────────────────────────────
 
 app.get('/download/:filename', (req: Request, res: Response) => {
-  const filename = basename(req.params['filename'] as string)
+  const filename = safeName(req.params['filename'])
+  if (!filename || !existsSync(join(OUTPUTS_DIR, filename))) return res.status(404).json({ error: 'File not found.' })
   const filePath = join(OUTPUTS_DIR, filename)
-  if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found.' })
   res.download(filePath, 'schematic.net')
 })
 
@@ -1031,7 +1049,7 @@ app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
   if (!graph) return res.status(400).json({ error: 'No graph provided.' })
 
   const uid = randomUUID().slice(0, 8)
-  const netFilename = `${(baseName as string) || 'edited'}_${uid}.net`
+  const netFilename = `${fileStem(baseName)}_${uid}.net`
   const netPath = join(OUTPUTS_DIR, netFilename)
   const pcbFilename = netFilename.replace('.net', '.kicad_pcb')
   const pcbPath = join(OUTPUTS_DIR, pcbFilename)
@@ -1225,13 +1243,18 @@ app.get('/render_board', async (req: Request, res: Response) => {
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
 // Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
 
-app.post('/generate_pcb_stream', (req: Request, res: Response) => {
+app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Response) => {
   const { filename, graph, baseName, style, ai } = req.body || {}
+  if (ai === true) {
+    // the board itself is open to all (the demos); the AI rounds call the model
+    const refusal = memberRefusal(GUARD, req.user)
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error })
+  }
   const useAi = ai === true && (process.env.SF_AI_STUB === '1' || !!process.env.OPENAI_API_KEY)
   let netPath: string
   let pcbFilename: string
   if (graph) {
-    const netFilename = `${(baseName as string) || 'edited'}_${randomUUID().slice(0, 8)}.net`
+    const netFilename = `${fileStem(baseName)}_${randomUUID().slice(0, 8)}.net`
     netPath = join(OUTPUTS_DIR, netFilename)
     writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
     pcbFilename = netFilename.replace('.net', '.kicad_pcb')
@@ -1315,9 +1338,9 @@ app.post('/generate_pcb_stream', (req: Request, res: Response) => {
 // ── GET /download_pcb/:filename ────────────────────────────────────
 
 app.get('/download_pcb/:filename', (req: Request, res: Response) => {
-  const filename = basename(req.params['filename'] as string)
+  const filename = safeName(req.params['filename'])
+  if (!filename || !existsSync(join(OUTPUTS_DIR, filename))) return res.status(404).json({ error: 'File not found.' })
   const filePath = join(OUTPUTS_DIR, filename)
-  if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found.' })
   res.download(filePath, filename)
 })
 
@@ -1452,8 +1475,9 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
 // ── GET /download_gerber_file/:dir/:filename ───────────────────────
 
 app.get('/download_gerber_file/:dir/:filename', (req: Request, res: Response) => {
-  const dir = basename(req.params['dir'] as string)
-  const filename = basename(req.params['filename'] as string)
+  const dir = safeName(req.params['dir'])
+  const filename = safeName(req.params['filename'])
+  if (!dir || !filename) return res.status(404).json({ error: 'File not found.' })
   const filePath = join(OUTPUTS_DIR, dir, filename)
   if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found.' })
   res.download(filePath, filename)

@@ -175,6 +175,11 @@ cd server && npx tsx check_erc_repair.ts
 넷리스트 점검(ERC) 자동 수정 20항목. 고친 코드가 실행되고 오류가 줄어들 때만 받아들이는지(부품을 지우거나 값을 바꾸거나 맞게 이어져 있던 핀을 옮기면 거절), 점검이 돌지 못하면 통과로 세지 않는지, 생성 프롬프트에 LED 색·555 핀 규칙이 있는지, skidl 실행 환경에 키가 들어가지 않고 임시 폴더가 지워지며 오류 출력에 색 코드가 섞이지 않는지, 코드 실행(`/test_code`)에 로그인이 필요한지, 핀 이름 표가 화면 쪽과 같은지. 모델을 호출하지 않는다 (python과 skidl 필요).
 
 ```bash
+cd server && npx tsx check_deploy_guard.ts
+```
+배포 서버(`NODE_ENV=production`)가 막는 것 9항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지. 마지막 항목은 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지 확인한다 (python과 skidl 필요).
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```
