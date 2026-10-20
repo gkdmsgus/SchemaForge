@@ -41,8 +41,11 @@ COPY server/ ./server/
 
 WORKDIR /app/server
 RUN mkdir -p outputs
+# the KiCad image has no 3D model library: the 3D view and assembly need the part bodies,
+# so kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
+    KICAD10_3DMODEL_DIR=/app/server/pcb/3dmodels \
     HOME=/tmp
 EXPOSE 8002
 

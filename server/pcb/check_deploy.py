@@ -12,6 +12,8 @@ Exit code 0 only if every check passes.
   33 board stream finishes with KiCad DRC available, 0 errors, 0 unrouted
   34 gerbers + drill files come out of /generate_gerber
   35 image runs as the Dockerfile says (tsx from node_modules, python from venv)
+  36 the 3D model has the part bodies (vendored models; the KiCad image has none)
+  37 deployed-server guard: the demo is open, generation and the password-free sign-in are refused
 """
 import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
 
@@ -52,6 +54,31 @@ def sse(url, body, timeout=300):
                 events.append((name, json.loads(line[6:])))
                 name = None
     return events
+
+
+# Run inside the container: GLB node count of one board with the 3D models, and with the model folder hidden.
+# Each placed part adds at least one node when its model is found, so the difference counts the bodies.
+GLB_NODES = r'''
+import json, os, struct, subprocess, sys
+def nodes(env):
+    out = '/tmp/sf_glb_check.glb'
+    subprocess.run(['kicad-cli', 'pcb', 'export', 'glb', '--output', out, '--force', sys.argv[1]],
+                   env={**os.environ, **env}, capture_output=True)
+    b = open(out, 'rb').read()
+    return len(json.loads(b[20:20 + struct.unpack('<I', b[12:16])[0]]).get('nodes', []))
+print(nodes({}), nodes({'KICAD10_3DMODEL_DIR': '/nonexistent'}))
+'''
+
+
+def status(url, body=None):
+    """HTTP status of a request (JSON body → POST)."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
 
 
 def main():
@@ -111,6 +138,18 @@ def main():
                    'command -v python; python -c "import skidl, numpy; print(\'ok\')"; ls node_modules/.bin/tsx').stdout.split()
         check('35 runtime wiring', which[:1] == ['/venv/bin/python'] and 'ok' in which and 'node_modules/.bin/tsx' in which,
               ' '.join(which))
+
+        parts = summary.get('components') or 0
+        counts = sh('docker', 'exec', NAME, 'python', '-c', GLB_NODES,
+                    f'/app/server/outputs/{done[-1]["pcbFilename"]}' if done else '/nonexistent', check=False).stdout.split()
+        with_models, without = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (0, 0)
+        check('36 3D part bodies', parts > 0 and with_models - without >= parts,
+              f'GLB nodes {with_models} with models, {without} without, {parts} parts')
+
+        demo = http_json(f'{base}/demo_result/led')
+        codes = {'demo': 200 if demo.get('filename') else 'no filename', 'generate': status(f'{base}/generate', {'description': 'LED'}),
+                 'login': status(f'{base}/auth/login', {'email': 'a@b.c', 'password': 'x'})}
+        check('37 deployed-server guard', codes == {'demo': 200, 'generate': 401, 'login': 503}, json.dumps(codes))
     finally:
         if not args.keep:
             sh('docker', 'rm', '-f', NAME, check=False)

@@ -180,6 +180,11 @@ cd server && npx tsx check_deploy_guard.ts
 배포 서버(`NODE_ENV=production`)가 막는 것 9항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지. 마지막 항목은 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지 확인한다 (python과 skidl 필요).
 
 ```bash
+python server/pcb/check_deploy.py
+```
+배포 이미지 7항목 (Docker 필요, `npm test`에는 넣지 않음). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단을 확인한다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```
