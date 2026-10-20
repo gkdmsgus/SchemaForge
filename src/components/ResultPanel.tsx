@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
-import { addFavorite, removeFavorite, authHeaders, type AuthUser } from '../api'
+import { addFavorite, removeFavorite, authHeaders, errorText, type AuthUser } from '../api'
 import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
@@ -106,6 +106,8 @@ export default function ResultPanel({
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatBoxRef = useRef<HTMLTextAreaElement>(null)
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
+  // why the AI rounds were refused (a deployed server keeps them for listed accounts); the board was built without
+  const [aiNote, setAiNote] = useState<string | null>(null)
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
   const [useAi, setUseAi] = useState(false)
@@ -282,6 +284,11 @@ export default function ResultPanel({
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
+      if (ai && (res.status === 401 || res.status === 403)) {
+        // a deployed server keeps the AI rounds for listed accounts: say why, and build the board without them
+        setAiNote(await errorText(res))
+        return generatePCB({ style, ai: false })
+      }
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -404,8 +411,10 @@ export default function ResultPanel({
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ graph: effectiveGraph, message: msg, history }),
       })
+      // a refusal (a deployed server keeps the AI editor for listed accounts) has no stream: show its reason
+      if (!res.ok || !res.body) throw new Error(await errorText(res))
 
-      const reader = res.body!.getReader()
+      const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
       let streamedText = ''
@@ -808,13 +817,14 @@ export default function ResultPanel({
                 </button>
               )}
               {pcbStatus !== 'loading' && (
-                <button onClick={() => { setUseAi(v => !v); if (pcbStatus === 'done') setPcbStatus(null) }}
+                <button onClick={() => { setUseAi(v => !v); setAiNote(null); if (pcbStatus === 'done') setPcbStatus(null) }}
                   title="AI가 배치·선 굵기에서 고칠 점을 제안합니다. 검사 지표가 좋아질 때만 반영해요 (OpenAI 호출 비용이 듭니다)"
                   style={{ ...ghostBtn, padding: '2px 6px', fontFamily: 'var(--sf-font-mono)', fontSize: 10,
                     color: useAi ? 'var(--sf-violet)' : 'var(--sf-fg-faint)', opacity: useAi ? 1 : 0.6 }}>
                   AI 다듬기 {useAi ? 'ON' : 'OFF'}
                 </button>
               )}
+              {aiNote && !useAi && <StatusChip tone="warn" title={aiNote} testId="ai-note">AI 다듬기는 허용된 계정만</StatusChip>}
               {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={() => generatePCB()} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {/* a board built from a previous circuit: no downloads of files that no longer match */}

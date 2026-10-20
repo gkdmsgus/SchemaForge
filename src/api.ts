@@ -11,6 +11,16 @@ export function authHeaders(): HeadersInit {
   return t ? { Authorization: `Bearer ${t}` } : {}
 }
 
+/** why a request failed, as the server wrote it ({ error }), else its text or status */
+export async function errorText(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '')
+  try {
+    const e = (JSON.parse(text) as { error?: unknown }).error
+    if (typeof e === 'string' && e) return e
+  } catch { /* not JSON */ }
+  return text.trim().slice(0, 200) || `HTTP ${res.status}`
+}
+
 async function post<T>(path: string, body: unknown, auth = false): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
