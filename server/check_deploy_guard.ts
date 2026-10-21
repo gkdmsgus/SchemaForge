@@ -1,7 +1,7 @@
-// Checks D1-D9: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
+// Checks D1-D10: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
 // D7 the names taken from requests, D8 the routes wired to them (index.ts read as text), D9 a real server started
 // in production mode with no Supabase: the demo and its gerbers stay open; model calls, code runs and the
-// password-free sign-in are refused; a ".." folder does not leave outputs/.
+// password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text).
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn } from 'child_process'
@@ -62,6 +62,21 @@ check('D8 routes wired to the guard', guarded.length === 0 && /memberRefusal\(GU
   && !/\$\{\(baseName as string\)/.test(src) && (src.match(/fileStem\(baseName\)/g) ?? []).length === 2
   && !/basename\(req\.params/.test(src),
   guarded.length ? `not guarded: ${guarded.join(', ')}` : '')
+
+// D10. render.yaml (the Render Blueprint, read as text): every secret is declared with sync: false and no value, the
+//      plan is free, the health check is a route the server has, and PORT is the one Render routes to
+{
+  const yaml = readFileSync(join(process.cwd(), '..', 'render.yaml'), 'utf8')
+  const SECRETS = ['OPENAI_API_KEY', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'ALLOWED_EMAILS', 'MOUSER_API_KEY', 'TAVILY_API_KEY']
+  const entries = yaml.split(/\n\s*- key: /).slice(1).map(e => ({ key: e.split(/[\s#]/)[0], body: e.split('\n').slice(1).map(l => l.replace(/#.*/, '').trim()).filter(Boolean).filter(l => !l.startsWith('- ')) }))
+  const secret = entries.filter(e => SECRETS.includes(e.key))
+  const bad = secret.filter(e => !(e.body.length === 1 && e.body[0] === 'sync: false')).map(e => e.key)
+  const health = /healthCheckPath:\s*(\/\S*)/.exec(yaml)?.[1]
+  const port = entries.find(e => e.key === 'PORT')?.body[0]
+  check('D10 render.yaml', secret.length === SECRETS.length && !bad.length && /^\s*plan:\s*free\b/m.test(yaml)
+    && !!health && src.includes(`app.get('${health}'`) && port === 'value: "10000"',
+    `${secret.length}/${SECRETS.length} secrets${bad.length ? `, not sync:false only: ${bad.join(', ')}` : ''}, health ${health}, ${port}`)
+}
 
 // D9. the real server in production mode, no Supabase (an empty value is kept: dotenv never overrides one)
 /** a port the system says is free (a fixed or random one can sit in a range Windows reserves for Hyper-V and Docker) */

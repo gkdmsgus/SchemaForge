@@ -1,0 +1,46 @@
+# Render Blueprint: the public demo as one Docker web service on the free plan.
+# Reference: https://render.com/docs/blueprint-spec
+#
+# Free plan limits that matter here (https://render.com/docs/free):
+# - one instance, spun down after 15 min without inbound traffic; spinning up takes about a minute
+# - every HTTP response counts against the workspace's monthly outbound bandwidth
+#   (Hobby: 5 GB, https://render.com/docs/outbound-bandwidth), builds against its build minutes.
+#   Without a payment method, running out of bandwidth suspends all Free services, and running
+#   out of build minutes disables new builds, for the rest of the month.
+services:
+  - type: web
+    # if the workspace already has a service with this name, Render applies this config to that
+    # service instead of creating a new one
+    name: schemaforge
+    runtime: docker          # builds ./Dockerfile with the repo root as context (both are the defaults)
+    plan: free               # 0.1 CPU, 512 MB, a single instance
+    region: singapore        # the only Asia-Pacific region; can't be changed after creation
+    # HTTP check, 5 s per check. A running instance failing it for 15 s gets no traffic
+    # (with one instance, that is the whole site); at 60 s Render restarts it.
+    # If KiCad work ever starves /health, removing this line falls back to the default TCP check.
+    healthCheckPath: /health
+    # pushes that only touch docs don't start an automatic build
+    # (manual deploys, and render.yaml edits that change this service, still deploy)
+    buildFilter:
+      ignoredPaths:
+        - "**/*.md"          # quoted: a bare leading * is a YAML alias
+        - "docs/**"
+    envVars:
+      # Render's documented port variable (default 10000), set explicitly so the bound port
+      # never depends on port detection (the code default is 8002)
+      - key: PORT
+        value: "10000"
+      # optional secrets: the dashboard asks for these only when the Blueprint is first created;
+      # the demo needs none of them. Never write a value here.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ALLOWED_EMAILS   # comma-separated emails
+        sync: false
+      - key: MOUSER_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false

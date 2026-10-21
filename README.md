@@ -62,7 +62,7 @@ flowchart LR
 | 회로 · 기판 | Python, skidl, 직접 구현한 배치(힘 기반) · 배선(A*) · 회로 점검 |
 | 검사 · 출력 | KiCad 10 `kicad-cli` (DRC, 거버, 3D 모델) |
 | 저장 · 인증 | Supabase |
-| 배포 · CI | Docker (공식 KiCad 이미지 기반), Railway, GitHub Actions (린트 · 타입 · 빌드) |
+| 배포 · CI | Docker (공식 KiCad 이미지 기반), Render (무료 인스턴스), GitHub Actions (린트 · 타입 · 빌드) |
 
 ### 일정과 계획
 시스템 구조 상세, 화면 설명, AI 활용방안, 주 단위 일정은 [docs/project-plan.md](docs/project-plan.md)에 있다.
@@ -177,7 +177,7 @@ cd server && npx tsx check_erc_repair.ts
 ```bash
 cd server && npx tsx check_deploy_guard.ts
 ```
-배포 서버(`NODE_ENV=production`)가 막는 것 9항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지. 마지막 항목은 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지 확인한다 (python과 skidl 필요).
+배포 서버(`NODE_ENV=production`)가 막는 것 10항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지도 확인한다 (python과 skidl 필요).
 
 ```bash
 python server/pcb/check_deploy.py
@@ -270,7 +270,8 @@ dev/board.html        기판 화면만 따로 띄우는 개발용 페이지
 
 ## 배포
 
-Railway + Supabase 기준 순서는 [DEPLOY.md](DEPLOY.md) 참고. 컨테이너에 KiCad가 없으면 DRC·거버·3D가 비활성화된다.
+Render 무료 인스턴스(`render.yaml`) + Supabase 기준 순서는 [DEPLOY.md](DEPLOY.md) 참고. 컨테이너에 KiCad가 없으면 DRC·거버·3D가 비활성화된다.
 
 - 배포 서버(`NODE_ENV=production`)에서는 데모·기판·거버는 누구나 쓰고, 회로 생성·AI 편집·코드 실행은 `ALLOWED_EMAILS`에 있는 계정만 쓴다 (DEPLOY.md 0절).
-- 이미지는 약 4.3 GB(압축 전)로, KiCad 공식 이미지가 대부분이다. Railway Trial·Free 플랜의 이미지 한도(4 GB)를 넘을 수 있어 Hobby 플랜(100 GB)을 쓴다 ([Railway 플랜 표](https://docs.railway.com/pricing/plans). 한도를 압축 전 크기로 재는지는 확인하지 못했다).
+- 무료 인스턴스는 CPU 0.1 · 메모리 512 MB다. 같은 제한(`--cpus=0.1 --memory=512m`)으로 묶은 로컬 컨테이너에서 데모 5개와 화면 시험이 통과했고, 데모 하나(넷리스트 → 기판·DRC → 3D → 거버)에 대략 40~60초 걸렸다. 15분 동안 요청이 없으면 잠들고, 다음 요청에 깨는 데 약 1분 걸린다 ([Render 무료 인스턴스](https://render.com/docs/free)).
+- 이미지는 약 4.3 GB(압축 전, gzip 약 0.97 GB)로 KiCad 공식 이미지가 대부분이다.
