@@ -516,10 +516,14 @@ def write_kicad_pcb(parts, box, path, routing=None, pour=None):
         # The board file carries the zone outline and its rules; KiCad computes the exact fill
         # (thermal reliefs, islands) when the board is opened. The rectangles we compute ourselves
         # are only the on-screen preview, in board.json.
+        # Pads join the pour solid. Thermal spokes (easier hand soldering) failed KiCad's DRC on the SMD test
+        # boards: tracks cut the back pour into islands, and a through-hole ground pad's spokes landed on one
+        # (starved_thermal, 2026-10-29). The gap to other copper is the preview's POUR_CLEARANCE: clearance 0
+        # let KiCad fill up to its 0.2 mm netclass default, closer than the screen showed.
         for net, layer in sorted({(r['net'], r['layer']) for r in pour}):
             body.append(
                 f'\t(zone\n\t\t(net {_q(net)})\n\t\t(net_name {_q(net)})\n\t\t(layer "{layer}")\n'
-                f'\t\t(hatch edge 0.5)\n\t\t(connect_pads yes\n\t\t\t(clearance 0)\n\t\t)\n'
+                f'\t\t(hatch edge 0.5)\n\t\t(connect_pads yes\n\t\t\t(clearance {_fmt(POUR_CLEARANCE)})\n\t\t)\n'
                 f'\t\t(min_thickness {_fmt(POUR_CELL)})\n\t\t(filled_areas_thickness no)\n'
                 f'\t\t(fill yes\n\t\t\t(thermal_gap 0.5)\n\t\t\t(thermal_bridge_width 0.5)\n\t\t)\n'
                 f'\t\t(polygon\n\t\t\t(pts (xy {x1:.4f} {y1:.4f}) (xy {x2:.4f} {y1:.4f}) '

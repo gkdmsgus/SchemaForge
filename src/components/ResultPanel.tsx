@@ -29,7 +29,7 @@ import { applyActions, movedPins } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
-import { STATE_TONE, ercErrorCount } from '../lib/boardChecks'
+import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
 
 const API = ''
@@ -123,7 +123,10 @@ export default function ResultPanel({
     final: BoardModel | null; drc: DrcResult | null; ai: AiRound[]; status: 'streaming' | 'done' | 'error'
   } | null>(null)
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
-  const [gerberInfo, setGerberInfo] = useState<{ dir: string; files?: string[] } | null>(null)
+  const [gerberInfo, setGerberInfo] = useState<GerberInfo | null>(null)
+  const [gerberError, setGerberError] = useState('')
+  // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
+  const gerberReq = useRef(0)
   const [activeTab, setActiveTab] = useState('Netlist')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
@@ -326,6 +329,7 @@ export default function ResultPanel({
     // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
     if (window.innerWidth < 1280) { setEditorOpen(false); setSidebarOpen(false) }
     setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, ai: [], status: 'streaming' })
+    gerberReq.current++
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
@@ -429,6 +433,7 @@ export default function ResultPanel({
 
   async function generateGerber() {
     if (!pcbFilename) return
+    const req = ++gerberReq.current
     setGerberStatus('loading')
     try {
       const res = await fetch(`${API}/generate_gerber`, {
@@ -438,9 +443,12 @@ export default function ResultPanel({
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
-      setGerberInfo({ dir: data.gerberDir as string, files: data.files || [] })
+      if (req !== gerberReq.current) return
+      setGerberInfo({ dir: data.gerberDir as string, files: data.files || [], zip: data.zip as string | undefined })
       setGerberStatus('done')
     } catch (e) {
+      if (req !== gerberReq.current) return
+      setGerberError((e as Error).message)
       setGerberStatus('error')
       console.error('Gerber generation failed:', e)
     }
@@ -900,7 +908,18 @@ export default function ResultPanel({
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
                 {gerberStatus === null && <button onClick={generateGerber} style={ghostBtn}>거버</button>}
                 {gerberStatus === 'loading' && <StatusChip tone="accent" busy>거버 생성 중</StatusChip>}
-                {gerberStatus === 'done' && <StatusChip tone="ok">거버 완료</StatusChip>}
+                {/* done: the zip itself is the "done" sign, so the narrow tab bar does not push it out of view */}
+                {gerberStatus === 'done' && (gerberInfo?.zip
+                  ? <a href={gerberFileUrl(gerberInfo.dir, gerberInfo.zip)} download data-testid="gerber-zip"
+                      title="거버 완료 · PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올립니다"
+                      style={{ ...ghostBtn, textDecoration: 'none', color: TONE_COLOR.ok, borderColor: TONE_COLOR.ok, fontWeight: 600 }}>
+                      ↓ 거버 zip
+                    </a>
+                  : <StatusChip tone="ok">거버 완료</StatusChip>)}
+                {gerberStatus === 'error' && (
+                  <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
+                    style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>
+                )}
               </>}
               {pcbStatus === 'error' && <button onClick={() => generatePCB()} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
             </div>
@@ -1326,8 +1345,13 @@ function TimelineStrip({ versions, currentVersionId, onSelectVersion, onApplyVer
   )
 }
 
-function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) {
-  const { dir, files = [] } = info
+/** /generate_gerber's answer: the fabrication files in outputs/<dir>/ and the zip of all of them */
+type GerberInfo = { dir: string; files?: string[]; zip?: string }
+
+const gerberFileUrl = (dir: string, file: string) => `/download_gerber_file/${dir}/${encodeURIComponent(file)}`
+
+function GerberFilePanel({ info }: { info: GerberInfo }) {
+  const { dir, files = [], zip } = info
   const layerLabels = {
     '.gtl': '상단 동박 (Top Copper)',
     '.gbl': '하단 동박 (Bottom Copper)',
@@ -1335,14 +1359,17 @@ function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) 
     '.gbs': '하단 솔더마스크',
     '.gto': '상단 실크스크린',
     '.gbo': '하단 실크스크린',
-    '.gko': '보드 외곽 (Edge Cuts)',
-    '.gm1': '메커니컬',
-    '.drl': '드릴',
+    '.gko': '기판 외곽선 (Edge Cuts)',
+    '.gm1': '기판 외곽선 (Edge Cuts)',
   }
   function ext(name: string) {
     const m = name.toLowerCase().match(/(\.[a-z0-9]+)$/)
     return m ? m[1] : ''
   }
+  // the drill files are split by plating: component and via holes, and the bare mounting holes
+  const label = (f: string) => /-NPTH\.drl$/i.test(f) ? '드릴 · 도금 없는 구멍 (나사 구멍)'
+    : /\.drl$/i.test(f) ? '드릴 · 도금 구멍 (부품 다리·비아)'
+    : (layerLabels as Record<string, string>)[ext(f)] || '기타'
   return (
     <div style={{
       borderTop: '1px solid var(--sf-line)',
@@ -1358,10 +1385,19 @@ function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) 
           {files.length}개 파일 · 제조사 업로드 가능
         </span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)' }}>
-          /outputs/{dir}/
-        </span>
+        {zip && (
+          <a href={gerberFileUrl(dir, zip)} download data-testid="gerber-zip-panel" style={{
+            padding: '5px 12px', borderRadius: 'var(--sf-r-sm)', border: '1px solid var(--sf-amber-line)',
+            background: 'var(--sf-bg-3)', color: 'var(--sf-amber)', textDecoration: 'none',
+            fontFamily: 'var(--sf-font-mono)', fontSize: 11,
+          }}>↓ zip 한 번에 받기</a>
+        )}
       </div>
+      {zip && (
+        <p style={{ margin: '0 0 10px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--sf-fg-muted)' }}>
+          PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올리면 됩니다. 아래는 zip 안의 파일입니다.
+        </p>
+      )}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
@@ -1369,11 +1405,10 @@ function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) 
       }}>
         {files.map(f => {
           const e = ext(f)
-          const label = (layerLabels as Record<string, string>)[e] || '기타'
           return (
             <a
               key={f}
-              href={`/download_gerber_file/${dir}/${encodeURIComponent(f)}`}
+              href={gerberFileUrl(dir, f)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '8px 12px',
@@ -1394,7 +1429,7 @@ function GerberFilePanel({ info }: { info: { dir: string; files?: string[] } }) 
                 width: 36,
               }}>{e || '—'}</span>
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--sf-fg-muted)', fontSize: 11 }}>
-                {label}
+                {label(f)}
               </span>
               <span style={{ color: 'var(--sf-cyan)', fontSize: 14 }}>↓</span>
             </a>
