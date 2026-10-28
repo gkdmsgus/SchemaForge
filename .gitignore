@@ -45,3 +45,6 @@ server/test_circuits/*.erc
 server/test_circuits/*_sklib.py
 # demo netlists built with the deploy image (server/build_demo_cache.ts)
 server/demo_cache/
+
+# demo videos recorded by scripts/record_demo.mjs
+videos/
