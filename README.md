@@ -6,7 +6,7 @@
 
 위 이미지는 편집하지 않은 실제 출력이다. 저장소에 들어 있는 모터 드라이버 데모 회로(`server/test_circuits/nmos_motor.py`)를 돌린 결과로, 기판 36.7 × 36.4 mm, 배선 14/14 완료, 비아 3개, 트랙 길이 72 mm, KiCad DRC 오류 0이다. OpenAI 키 없이 `/?demo=motor`에서 같은 결과를 만들 수 있다.
 
-배포 데모: https://schemaforge-zuco.onrender.com/?demo=motor (Render 무료 인스턴스. 15분 동안 아무도 쓰지 않으면 잠들어서 첫 접속에 약 1분 걸린다. 데모 하나를 넷리스트 → 기판 → 3D → 거버까지 만드는 데 2026-10-23 측정으로 35~41초)
+배포 데모: https://schemaforge.kro.kr/?demo=motor (Render 기본 주소 https://schemaforge-zuco.onrender.com 도 같은 서버). Render 무료 인스턴스라 15분 동안 아무도 쓰지 않으면 잠들어서 첫 접속에 약 1분 걸린다. 데모 하나를 넷리스트 → 기판 → 3D → 거버까지 만드는 데 2026-10-23 측정으로 35~41초.
 
 ## 프로젝트 개요
 
