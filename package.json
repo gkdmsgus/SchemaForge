@@ -10,7 +10,7 @@
     "server": "cd server && npx tsx index.ts",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "tsc --noEmit && cd server && npm run typecheck && npx tsx check_ai_layout.ts && npx tsx check_erc_repair.ts && npx tsx check_deploy_guard.ts && cd .. && npx tsx scripts/check_code_view.ts && npx tsx scripts/check_bom.ts && npx tsx scripts/check_assembly.ts && npx tsx scripts/check_human_review.ts && npx tsx scripts/check_fixes.ts && python server/pcb/run_checks.py",
+    "test": "tsc --noEmit && cd server && npm run typecheck && npx tsx check_ai_layout.ts && npx tsx check_erc_repair.ts && npx tsx check_deploy_guard.ts && npx tsx check_demo_cache.ts && cd .. && npx tsx scripts/check_code_view.ts && npx tsx scripts/check_bom.ts && npx tsx scripts/check_assembly.ts && npx tsx scripts/check_human_review.ts && npx tsx scripts/check_fixes.ts && python server/pcb/run_checks.py",
     "test:types": "tsc --noEmit && cd server && npm run typecheck"
   },
   "dependencies": {

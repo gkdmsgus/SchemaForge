@@ -182,9 +182,14 @@ cd server && npx tsx check_deploy_guard.ts
 배포 서버(`NODE_ENV=production`)가 막는 것 10항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지도 확인한다 (python과 skidl 필요).
 
 ```bash
+cd server && npx tsx check_demo_cache.ts
+```
+데모 넷리스트 미리 만들기 6항목. 배포 이미지는 빌드할 때 데모 회로를 한 번 실행해 `server/demo_cache/`에 넷리스트를 넣어 두고, 데모를 열면 skidl을 다시 돌리지 않고 그 복사본을 쓴다 (무료 인스턴스에서 7~9초 걸리던 단계). 모든 데모가 만들어지는지, 저장된 넷리스트가 지금 skidl 결과와 같은지(실행마다 바뀌는 날짜·태그 제외), 방문마다 따로 복사되는지, 회로 파일이 바뀌면 다시 실행하는지 확인한다.
+
+```bash
 python server/pcb/check_deploy.py
 ```
-배포 이미지 7항목 (Docker 필요, `npm test`에는 넣지 않음). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단을 확인한다.
+배포 이미지 8항목 (Docker 필요, `npm test`에는 넣지 않음). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지를 확인한다.
 
 ```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
