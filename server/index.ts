@@ -16,7 +16,7 @@ import {
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
-import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
+import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
@@ -24,7 +24,7 @@ import {
 } from './erc_repair'
 import { tavily } from '@tavily/core'
 import axios from 'axios'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, isAuthRetryableFetchError, type AuthError, type Session } from '@supabase/supabase-js'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -51,14 +51,30 @@ interface AuthUser {
 // Extend Request with optional user
 interface AuthRequest extends Request {
   user?: AuthUser
+  /** optionalAuth: a token came but did not check out, so requireMember can say why instead of "log in" */
+  authFailed?: 'expired' | 'unreachable'
 }
 
 // ── Supabase (optional) ────────────────────────────────────────────
 
 const SUPABASE_ENABLED = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
-const supabase = SUPABASE_ENABLED
-  ? createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+/** keep no session and refresh nothing: a client that signed someone in would send their token from then on */
+const AUTH_OPTIONS = { auth: { persistSession: false, autoRefreshToken: false } }
+/** the service-key client: tables (.from), auth.getUser(token) and auth.admin only, never a sign-in */
+const db = SUPABASE_ENABLED
+  ? createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!, AUTH_OPTIONS)
   : null
+/** a fresh client for one sign-up, sign-in or refresh, dropped with the request, so no user session sticks to db */
+const authClient = () => createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!, AUTH_OPTIONS)
+
+/** the auth server was not reached or failed on its side (a paused free project, an outage): 503, not "wrong password" */
+const authDown = (e: AuthError) => isAuthRetryableFetchError(e) || !e.status || e.status >= 500
+
+const LOGIN_REQUIRED = '로그인해야 쓸 수 있습니다.'
+const AUTH_EXPIRED = '로그인이 만료되었습니다. 다시 로그인하세요.'
+const SUPABASE_DOWN = '로그인 서버(Supabase)에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'
+const RATE_LIMITED = '요청이 너무 잦습니다. 잠시 뒤 다시 시도하세요.'
+const NOT_FOUND = '기록을 찾지 못했습니다.'
 
 // fallback local token store (used when Supabase not configured)
 const localTokens = new Map<string, AuthUser>()
@@ -95,56 +111,98 @@ if (!existsSync(OUTPUTS_DIR)) mkdirSync(OUTPUTS_DIR)
 
 // ── Auth Middleware ────────────────────────────────────────────────
 
-async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace('Bearer ', '')
-  if (!token) return res.status(401).json({ error: 'No token' })
+const bearer = (req: Request) => req.headers.authorization?.replace(/^Bearer\s+/i, '').trim() || ''
 
-  if (SUPABASE_ENABLED) {
-    const { data, error } = await supabase!.auth.getUser(token)
-    if (error || !data.user) return res.status(401).json({ error: 'Invalid token' })
-    req.user = { id: data.user.id, email: data.user.email ?? '', confirmed: !!data.user.email_confirmed_at }
-  } else {
-    const user = localTokens.get(token)
-    if (!user) return res.status(401).json({ error: 'Invalid token' })
-    req.user = user
+/** whose token this is (Supabase's auth server decides, or the local fallback's own list), else why not */
+async function userOf(token: string): Promise<AuthUser | 'expired' | 'unreachable'> {
+  if (!db) return localTokens.get(token) ?? 'expired'
+  try {
+    const { data, error } = await db.auth.getUser(token)
+    if (error) return authDown(error) ? 'unreachable' : 'expired'
+    if (!data.user) return 'expired'
+    return { id: data.user.id, email: data.user.email ?? '', confirmed: !!data.user.email_confirmed_at }
+  } catch {
+    return 'unreachable'
+  }
+}
+
+/** no token: 401 login_required; a token that is invalid or expired: 401 auth_expired; Supabase unreachable: 503 */
+async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
+  const token = bearer(req)
+  if (!token) return res.status(401).json({ error: LOGIN_REQUIRED, code: 'login_required' })
+  const who = await userOf(token)
+  if (who === 'unreachable') return res.status(503).json({ error: SUPABASE_DOWN })
+  if (who === 'expired') return res.status(401).json({ error: AUTH_EXPIRED, code: 'auth_expired' })
+  req.user = who
+  next()
+}
+
+/** a token that does not check out leaves the visitor signed out, with the reason kept for requireMember */
+async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction) {
+  const token = bearer(req)
+  if (token) {
+    const who = await userOf(token)
+    if (typeof who === 'string') req.authFailed = who
+    else req.user = who
   }
   next()
 }
 
-async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace('Bearer ', '')
-  if (token) {
-    if (SUPABASE_ENABLED) {
-      const { data } = await supabase!.auth.getUser(token)
-      if (data.user) req.user = { id: data.user.id, email: data.user.email ?? '', confirmed: !!data.user.email_confirmed_at }
-    } else {
-      const user = localTokens.get(token)
-      if (user) req.user = user
-    }
-  }
-  next()
+/**
+ * Send the guard's refusal. A visitor whose token failed to check is told why (log in again, or Supabase is down)
+ * rather than "log in", so the front end can renew the token (/auth/refresh) or wait instead of asking for a login.
+ */
+function refuse(req: AuthRequest, res: Response, refusal: Refusal) {
+  if (!req.user && req.authFailed === 'unreachable') return res.status(503).json({ error: SUPABASE_DOWN })
+  if (!req.user && req.authFailed === 'expired') return res.status(401).json({ error: AUTH_EXPIRED, code: 'auth_expired' })
+  return res.status(refusal.status).json({ error: refusal.error, code: refusal.code })
 }
 
 /** after optionalAuth or requireAuth: on a deployed server, only listed accounts run code or call the model */
 function requireMember(req: AuthRequest, res: Response, next: NextFunction) {
   const refusal = memberRefusal(GUARD, req.user)
-  if (refusal) return res.status(refusal.status).json({ error: refusal.error })
+  if (refusal) return refuse(req, res, refusal)
   next()
 }
 
 // ── Auth Routes ────────────────────────────────────────────────────
 
+/** what the front end keeps after a sign-in: the user, the access token and the token that renews it */
+const signedIn = (s: Session) => ({ user: { id: s.user.id, email: s.user.email ?? '' }, token: s.access_token, refresh_token: s.refresh_token })
+
+/** Supabase's sign-up refusals as [status, Korean text] by error.code; any other code is named in the message */
+const SIGNUP_ERRORS: Record<string, [number, string]> = {
+  email_address_invalid: [400, '이 이메일 주소로는 가입할 수 없습니다. 주소를 다시 확인하세요.'],
+  weak_password: [400, '비밀번호가 너무 짧거나 쉽습니다. 더 길게 정하세요.'],
+  over_email_send_rate_limit: [429, '가입 확인 메일을 너무 자주 보냈습니다. 잠시 뒤(최대 1시간) 다시 시도하세요.'],
+  email_address_not_authorized: [403, '이 주소로는 가입 확인 메일을 보낼 수 없습니다. 허용된 주소로 가입하세요.'],
+  user_already_exists: [409, '이미 가입한 이메일입니다. 로그인하세요.'],
+  email_exists: [409, '이미 가입한 이메일입니다. 로그인하세요.'],
+  signup_disabled: [403, '지금은 새로 가입할 수 없습니다.'],
+}
+
 // POST /auth/register
 app.post('/auth/register', async (req: Request, res: Response) => {
-  const { email, password } = req.body
+  const { email, password } = req.body || {}
   if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
   const closed = localLoginRefusal(GUARD)
   if (closed) return res.status(503).json({ error: closed })
 
   if (SUPABASE_ENABLED) {
-    const { data, error } = await supabase!.auth.signUp({ email, password })
-    if (error) return res.status(400).json({ error: error.message })
-    res.json({ user: { id: data.user?.id, email: data.user?.email }, session: data.session })
+    const { data, error } = await authClient().auth.signUp({ email: String(email), password: String(password) })
+    if (error) {
+      if (authDown(error)) return res.status(503).json({ error: SUPABASE_DOWN })
+      const [status, text] = SIGNUP_ERRORS[error.code ?? ''] ?? (error.status === 429 ? [429, RATE_LIMITED]
+        : [error.status && error.status < 500 ? error.status : 400, `가입하지 못했습니다 (${error.code ?? error.status})`])
+      return res.status(status).json({ error: text })
+    }
+    // an address already signed up and confirmed comes back as a stand-in user with no identities, and no mail goes out
+    if (!data.session && Array.isArray(data.user?.identities) && data.user.identities.length === 0) {
+      return res.status(409).json({ error: SIGNUP_ERRORS.user_already_exists[1] })
+    }
+    // "Confirm email" on: no session until the link in the mail is opened, so no token either
+    if (!data.session) return res.json({ needsConfirm: true, message: `${email}로 가입 확인 메일을 보냈습니다. 메일의 링크를 누른 뒤 로그인하세요.` })
+    res.json(signedIn(data.session))
   } else {
     // 로컬 fallback: 간단한 인메모리 유저 저장
     const id = randomUUID()
@@ -157,15 +215,23 @@ app.post('/auth/register', async (req: Request, res: Response) => {
 
 // POST /auth/login
 app.post('/auth/login', async (req: Request, res: Response) => {
-  const { email, password } = req.body
+  const { email, password } = req.body || {}
   if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
   const closed = localLoginRefusal(GUARD)
   if (closed) return res.status(503).json({ error: closed })
 
   if (SUPABASE_ENABLED) {
-    const { data, error } = await supabase!.auth.signInWithPassword({ email, password })
-    if (error) return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' })
-    res.json({ user: { id: data.user?.id, email: data.user?.email }, token: data.session?.access_token })
+    const { data, error } = await authClient().auth.signInWithPassword({ email: String(email), password: String(password) })
+    if (error) {
+      if (authDown(error)) return res.status(503).json({ error: SUPABASE_DOWN })
+      if (error.code === 'email_not_confirmed') {
+        return res.status(403).json({ error: '가입 확인 메일의 링크를 누른 뒤에 로그인할 수 있습니다. 메일이 없으면 스팸함을 확인하세요.', code: 'email_not_confirmed' })
+      }
+      if (error.code === 'invalid_credentials') return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' })
+      if (error.status === 429 || /rate_limit/.test(error.code ?? '')) return res.status(429).json({ error: RATE_LIMITED })
+      return res.status(400).json({ error: `로그인하지 못했습니다 (${error.code ?? error.status})` })
+    }
+    res.json(signedIn(data.session))
   } else {
     // 로컬 fallback: 이메일로 토큰 발급 (비밀번호 무검증 - 데모용)
     const id = randomUUID()
@@ -178,10 +244,11 @@ app.post('/auth/login', async (req: Request, res: Response) => {
 
 // POST /auth/logout
 app.post('/auth/logout', async (req: AuthRequest, res: Response) => {
-  const token = req.headers.authorization?.replace('Bearer ', '')
+  const token = bearer(req)
   if (token) {
-    if (SUPABASE_ENABLED) {
-      await supabase!.auth.admin.signOut(token)
+    if (db) {
+      // Supabase's default scope: the sign-in ends on every device. An expired token or an outage changes nothing here.
+      await db.auth.admin.signOut(token).catch(() => {})
     } else {
       localTokens.delete(token)
     }
@@ -189,94 +256,172 @@ app.post('/auth/logout', async (req: AuthRequest, res: Response) => {
   res.json({ ok: true })
 })
 
-// GET /auth/me
+// POST /auth/refresh — a new access token (Supabase's last about an hour) from the refresh token login gave
+app.post('/auth/refresh', async (req: Request, res: Response) => {
+  const refreshToken = typeof req.body?.refresh_token === 'string' ? req.body.refresh_token : ''
+  // the local fallback has no refresh token: its tokens last until the server restarts
+  if (!SUPABASE_ENABLED || !refreshToken) return res.status(401).json({ error: AUTH_EXPIRED, code: 'auth_expired' })
+  const { data, error } = await authClient().auth.refreshSession({ refresh_token: refreshToken })
+  if (error && authDown(error)) return res.status(503).json({ error: SUPABASE_DOWN })
+  if (error || !data.session) return res.status(401).json({ error: AUTH_EXPIRED, code: 'auth_expired' })
+  res.json({ token: data.session.access_token, refresh_token: data.session.refresh_token })
+})
+
+// GET /auth/me — canGenerate: whether this account may generate here (deploy_guard.ts), known before typing
 app.get('/auth/me', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  res.json({ user: req.user })
+  res.json({ user: req.user, canGenerate: memberRefusal(GUARD, req.user) === null })
 })
 
 // ── Session Routes (DB persistence) ───────────────────────────────
+// Every query names the caller's user_id: the server holds the service key, which RLS does not stop.
+
+/** a row id from a request: Supabase's ids are UUIDs, anything else is no row (not a Postgres error) */
+const isId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+
+/** a failed table call: 503 when Supabase was not reached or failed on its side, else 500 with PostgREST's code */
+function dbFail(res: Response, r: { error: { message: string; code?: string } | null; status: number }) {
+  console.error('[db]', r.status, r.error?.code, r.error?.message)
+  if (!r.status || r.status >= 500) return res.status(503).json({ error: SUPABASE_DOWN })
+  return res.status(500).json({ error: `기록을 저장소에서 읽거나 쓰지 못했습니다 (${r.error?.code || r.status}).` })
+}
+
+/** whether session `id` is the caller's: a missing row and someone else's both come back as not own (404) */
+async function ownSession(id: unknown, uid: string) {
+  if (!isId(id)) return { own: false, fail: null }
+  const r = await db!.from('sessions').select('id').eq('id', id).eq('user_id', uid).maybeSingle()
+  return { own: !!r.data, fail: r.error ? r : null }
+}
+
+/** what PATCH /sessions/:id may change: the name the history shows, and what an AI edit or a Code tab run made */
+function sessionPatch(b: Record<string, unknown>) {
+  const patch: Record<string, unknown> = {}
+  if ('name' in b) patch.name = typeof b.name === 'string' && b.name.trim() ? b.name.trim().slice(0, 100) : null
+  if ('graph' in b) patch.graph = b.graph ?? null
+  for (const k of ['code', 'guide', 'filename']) if (k in b) patch[k] = typeof b[k] === 'string' ? b[k] : null
+  return patch
+}
 
 // GET /sessions — 유저 세션 목록
 app.get('/sessions', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  if (!supabase) return res.json({ sessions: [] })
-  const { data, error } = await supabase
+  if (!db) return res.json({ sessions: [] })
+  const r = await db
     .from('sessions')
-    .select('id, prompt, code, guide, graph, filename, created_at')
+    .select('id, name, prompt, code, guide, graph, filename, created_at')
     .eq('user_id', req.user!.id)
     .order('created_at', { ascending: false })
     .limit(50)
-  if (error) return res.status(500).json({ error: error.message })
-  res.json({ sessions: data })
+  if (r.error) return dbFail(res, r)
+  res.json({ sessions: r.data })
 })
 
 // POST /sessions — 세션 저장
-app.post('/sessions', optionalAuth as any, async (req: AuthRequest, res: Response) => {
-  const { prompt, code, guide, graph, filename } = req.body
+app.post('/sessions', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  const { prompt, code, guide, graph, filename } = req.body || {}
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
-  if (!supabase) return res.json({ id: randomUUID() })
+  if (!db) return res.json({ id: randomUUID() })
 
-  const row = { user_id: req.user?.id ?? null, prompt, code: code ?? null, guide: guide ?? null, graph: graph ?? null, filename: filename ?? null }
-  const { data, error } = await supabase.from('sessions').insert(row).select('id').single()
-  if (error) return res.status(500).json({ error: error.message })
-  res.json({ id: data.id })
+  const row = { user_id: req.user!.id, prompt: String(prompt), code: code ?? null, guide: guide ?? null, graph: graph ?? null, filename: filename ?? null }
+  const r = await db.from('sessions').insert(row).select('id').single()
+  if (r.error) return dbFail(res, r)
+  res.json({ id: r.data.id })
 })
 
-// DELETE /sessions/:id
-app.delete('/sessions/:id', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  if (!supabase) return res.json({ ok: true })
-  const { error } = await supabase.from('sessions').delete().eq('id', req.params.id).eq('user_id', req.user!.id)
-  if (error) return res.status(500).json({ error: error.message })
+// PATCH /sessions/:id — 이름 바꾸기, AI 편집·Code 탭 결과 저장
+app.patch('/sessions/:id', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  const patch = sessionPatch(req.body || {})
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'name, graph, code, guide or filename required' })
+  if (!db) return res.json({ ok: true })
+  if (!isId(req.params.id)) return res.status(404).json({ error: NOT_FOUND })
+  const r = await db.from('sessions').update(patch).eq('id', req.params.id).eq('user_id', req.user!.id).select('id')
+  if (r.error) return dbFail(res, r)
+  if (!r.data.length) return res.status(404).json({ error: NOT_FOUND })
   res.json({ ok: true })
+})
+
+// DELETE /sessions/:id — its messages and favorite go with it (ON DELETE CASCADE)
+app.delete('/sessions/:id', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  if (!db) return res.json({ ok: true })
+  if (!isId(req.params.id)) return res.status(404).json({ error: NOT_FOUND })
+  const r = await db.from('sessions').delete().eq('id', req.params.id).eq('user_id', req.user!.id).select('id')
+  if (r.error) return dbFail(res, r)
+  if (!r.data.length) return res.status(404).json({ error: NOT_FOUND })
+  res.json({ ok: true })
+})
+
+// DELETE /sessions — 기록 전체 삭제: every session of the caller, nobody else's
+app.delete('/sessions', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  if (!db) return res.json({ deleted: 0 })
+  const r = await db.from('sessions').delete().eq('user_id', req.user!.id).select('id')
+  if (r.error) return dbFail(res, r)
+  res.json({ deleted: r.data.length })
 })
 
 // GET /sessions/:id/messages — 채팅 메시지
 app.get('/sessions/:id/messages', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  if (!supabase) return res.json({ messages: [] })
-  const { data: session } = await supabase.from('sessions').select('id').eq('id', req.params.id).eq('user_id', req.user!.id).single()
-  if (!session) return res.status(404).json({ error: 'Session not found' })
+  if (!db) return res.json({ messages: [] })
+  const s = await ownSession(req.params.id, req.user!.id)
+  if (s.fail) return dbFail(res, s.fail)
+  if (!s.own) return res.status(404).json({ error: NOT_FOUND })
 
-  const { data, error } = await supabase.from('chat_messages').select('id, role, content, actions, created_at').eq('session_id', req.params.id).order('created_at')
-  if (error) return res.status(500).json({ error: error.message })
-  res.json({ messages: data })
+  const r = await db.from('chat_messages').select('role, content, actions, created_at').eq('session_id', req.params.id).order('created_at')
+  if (r.error) return dbFail(res, r)
+  res.json({ messages: r.data })
 })
 
 // POST /sessions/:id/messages — 채팅 메시지 저장
-app.post('/sessions/:id/messages', optionalAuth as any, async (req: AuthRequest, res: Response) => {
-  const { role, content, actions } = req.body
-  if (!role || !content) return res.status(400).json({ error: 'role and content required' })
-  if (!supabase) return res.json({ ok: true })
+app.post('/sessions/:id/messages', requireAuth as any, async (req: AuthRequest, res: Response) => {
+  const { role, content, actions } = req.body || {}
+  if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string' || !content) {
+    return res.status(400).json({ error: 'role (user or assistant) and content required' })
+  }
+  if (!db) return res.json({ ok: true })
+  const s = await ownSession(req.params.id, req.user!.id)
+  if (s.fail) return dbFail(res, s.fail)
+  if (!s.own) return res.status(404).json({ error: NOT_FOUND })
 
-  const { error } = await supabase.from('chat_messages').insert({ session_id: req.params.id, role, content, actions: actions ?? null })
-  if (error) return res.status(500).json({ error: error.message })
+  const r = await db.from('chat_messages').insert({ session_id: req.params.id, role, content, actions: actions ?? null })
+  if (r.error) return dbFail(res, r)
   res.json({ ok: true })
 })
 
 // ── Favorites Routes ───────────────────────────────────────────────
 
-// GET /favorites
+/** a favorites row with its session embedded (favorites.session_id → sessions) */
+interface FavoriteRow { id: string; session_id: string; created_at: string; sessions: { prompt: string; graph: unknown; filename: string | null } | null }
+
+// GET /favorites — in the shape src/api.ts reads (DbFavorite)
 app.get('/favorites', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  if (!supabase) return res.json({ favorites: [] })
-  const { data, error } = await supabase.from('favorites').select('id, session_id, sessions(prompt, graph, created_at)').eq('user_id', req.user!.id).order('created_at', { ascending: false })
-  if (error) return res.status(500).json({ error: error.message })
-  res.json({ favorites: data })
+  if (!db) return res.json({ favorites: [] })
+  const r = await db.from('favorites').select('id, session_id, created_at, sessions(prompt, graph, filename)')
+    .eq('user_id', req.user!.id).order('created_at', { ascending: false })
+  if (r.error) return dbFail(res, r)
+  res.json({
+    favorites: (r.data as unknown as FavoriteRow[]).map(f => ({
+      id: f.id, sessionId: f.session_id, prompt: f.sessions?.prompt ?? '', graph: f.sessions?.graph ?? null,
+      filename: f.sessions?.filename ?? '', createdAt: f.created_at,
+    })),
+  })
 })
 
-// POST /favorites
+// POST /favorites — only the caller's own session; a second star on it gives back the same row
 app.post('/favorites', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  const { session_id } = req.body
+  const { session_id } = req.body || {}
   if (!session_id) return res.status(400).json({ error: 'session_id required' })
-  if (!supabase) return res.json({ id: randomUUID() })
+  if (!db) return res.json({ id: randomUUID() })
+  const s = await ownSession(session_id, req.user!.id)
+  if (s.fail) return dbFail(res, s.fail)
+  if (!s.own) return res.status(404).json({ error: NOT_FOUND })
 
-  const { data, error } = await supabase.from('favorites').upsert({ user_id: req.user!.id, session_id }, { onConflict: 'user_id,session_id' }).select('id').single()
-  if (error) return res.status(500).json({ error: error.message })
-  res.json({ id: data.id })
+  const r = await db.from('favorites').upsert({ user_id: req.user!.id, session_id }, { onConflict: 'user_id,session_id' }).select('id').single()
+  if (r.error) return dbFail(res, r)
+  res.json({ id: r.data.id })
 })
 
-// DELETE /favorites/:id
+// DELETE /favorites/:id — the caller's only; one already gone gets the same answer
 app.delete('/favorites/:id', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  if (!supabase) return res.json({ ok: true })
-  const { error } = await supabase.from('favorites').delete().eq('id', req.params.id).eq('user_id', req.user!.id)
-  if (error) return res.status(500).json({ error: error.message })
+  if (!db || !isId(req.params.id)) return res.json({ ok: true })
+  const r = await db.from('favorites').delete().eq('id', req.params.id).eq('user_id', req.user!.id)
+  if (r.error) return dbFail(res, r)
   res.json({ ok: true })
 })
 
@@ -955,18 +1100,21 @@ app.post('/test_code', requireAuth as any, requireMember as any, async (req: Aut
 /** a name as the netlist can carry it inside its quotes: no quote, backslash or line break, at most 64 characters */
 const netName = (v: unknown) => String(v ?? '').replace(/["\\\r\n\t]/g, '').trim().slice(0, 64)
 
-app.post('/erc_graph', async (req: Request, res: Response) => {
-  const g = (req.body || {}).graph as NetGraph | undefined
+/** a graph from a request as graphToNetlist can write it, or null when it is not one or is too big */
+function cleanGraph(g: NetGraph | undefined): NetGraph | null {
   if (!g || !Array.isArray(g.components) || !Array.isArray(g.nets) || g.components.length > 300 || g.nets.length > 600
-    || g.nets.some(n => !Array.isArray(n?.nodes) || n.nodes.length > 300)) {
-    return res.status(400).json({ error: 'graph with components and nets required' })
-  }
+    || g.nets.some(n => !Array.isArray(n?.nodes) || n.nodes.length > 300)) return null
   // names an AI edit wrote ("LED (red)", pin "+") are cleaned, not refused; empty refs and nets are dropped
-  const clean: NetGraph = {
+  return {
     components: g.components.map(c => ({ ref: netName(c?.ref), value: netName(c?.value), ...(c?.name ? { name: netName(c.name) } : {}) })).filter(c => c.ref),
     nets: g.nets.map(n => ({ name: netName(n.name), nodes: n.nodes.map(nd => ({ ref: netName(nd?.ref), pin: netName(nd?.pin) })).filter(nd => nd.ref && nd.pin) }))
       .filter(n => n.name && n.nodes.length),
   }
+}
+
+app.post('/erc_graph', async (req: Request, res: Response) => {
+  const clean = cleanGraph((req.body || {}).graph)
+  if (!clean) return res.status(400).json({ error: 'graph with components and nets required' })
   const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
   try {
     writeFileSync(netPath, graphToNetlist(clean), 'utf8')
@@ -984,6 +1132,32 @@ app.get('/download/:filename', (req: Request, res: Response) => {
   if (!filename || !existsSync(join(OUTPUTS_DIR, filename))) return res.status(404).json({ error: 'File not found.' })
   const filePath = join(OUTPUTS_DIR, filename)
   res.download(filePath, 'schematic.net')
+})
+
+// ── POST /netlist/restore ──────────────────────────────────────────
+// Render's disk is wiped on a restart or sleep, so a circuit opened from the history can name a netlist outputs/
+// no longer has. The front end sends the session's filename and graph, and the file is written back under that
+// name. Open like /generate_pcb_from_graph (a netlist from a graph, nothing runs); a file that is there stays.
+
+const NETLIST_NAME = /^[A-Za-z0-9_-]{1,80}\.net$/
+
+app.post('/netlist/restore', (req: Request, res: Response) => {
+  const { filename, graph } = req.body || {}
+  if (typeof filename !== 'string' || !NETLIST_NAME.test(filename)) {
+    return res.status(400).json({ error: 'filename: letters, digits, _ and - only, ending in .net' })
+  }
+  const netPath = join(OUTPUTS_DIR, filename)
+  if (existsSync(netPath)) return res.json({ ok: true, written: false })
+  const clean = cleanGraph(graph)
+  if (!clean || !clean.components.length) return res.status(400).json({ error: 'graph with components and nets required' })
+  try {
+    // 'wx' fails if the file appeared meanwhile: never overwrite
+    writeFileSync(netPath, graphToNetlist(clean), { encoding: 'utf8', flag: 'wx' })
+    res.json({ ok: true, written: true })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return res.json({ ok: true, written: false })
+    res.status(500).json({ error: (e as Error).message })
+  }
 })
 
 // ── POST /generate_pcb ─────────────────────────────────────────────
@@ -1249,7 +1423,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
   if (ai === true) {
     // the board itself is open to all (the demos); the AI rounds call the model
     const refusal = memberRefusal(GUARD, req.user)
-    if (refusal) return res.status(refusal.status).json({ error: refusal.error })
+    if (refusal) return refuse(req, res, refusal)
   }
   const useAi = ai === true && (process.env.SF_AI_STUB === '1' || !!process.env.OPENAI_API_KEY)
   let netPath: string
