@@ -1,27 +1,43 @@
 import { useState, useEffect, useRef } from 'react'
 import { login, register, saveAuth, type AuthUser } from '../api'
 
+/** a line shown above the form when it opens: the sign-up mail was confirmed, its link failed, or the login ran out */
+export interface AuthNotice { tone: 'info' | 'error'; text: string }
+
 interface AuthModalProps {
   open: boolean
   onClose: () => void
   onSuccess: (user: AuthUser, token: string) => void
+  notice?: AuthNotice | null
 }
 
 type Mode = 'login' | 'register'
 
-export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) {
+// a mail address as Supabase takes it: something@domain.tld
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export default function AuthModal({ open, onClose, onSuccess, notice = null }: AuthModalProps) {
   const [mode, setMode]         = useState<Mode>('login')
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm]   = useState('')
-  const [name, setName]         = useState('')
   const [error, setError]       = useState('')
+  const [info, setInfo]         = useState('')
   const [loading, setLoading]   = useState(false)
   const [success, setSuccess]   = useState(false)
   const emailRef = useRef<HTMLInputElement>(null)
 
+  // a notice opens the login tab (after the mail link, or when the login ran out)
   useEffect(() => {
-    if (open) { setError(''); setSuccess(false); setTimeout(() => emailRef.current?.focus(), 100) }
+    if (!open) return
+    setSuccess(false)
+    setError(notice?.tone === 'error' ? notice.text : '')
+    setInfo(notice?.tone === 'info' ? notice.text : '')
+    if (notice) setMode('login')
+  }, [open, notice])
+
+  useEffect(() => {
+    if (open) setTimeout(() => emailRef.current?.focus(), 100)
   }, [open, mode])
 
   useEffect(() => {
@@ -33,17 +49,45 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
 
   if (!open) return null
 
+  function switchMode(m: Mode) {
+    setMode(m)
+    setError('')
+    setInfo('')
+  }
+
+  /** a login with a token: kept in this browser, then the app goes on (a waiting generation runs) */
+  function finish(user: AuthUser, token: string, refreshToken?: string) {
+    if (!saveAuth(user, token, refreshToken)) { setError('로그인 응답에 토큰이 없습니다. 잠시 후 다시 시도하세요.'); return }
+    setSuccess(true)
+    setTimeout(() => { onSuccess(user, token); onClose() }, 800)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    setInfo('')
+    const addr = email.trim()
+    if (!EMAIL_RE.test(addr)) { setError('메일 주소 형식이 아닙니다. 예: you@example.com'); return }
     if (mode === 'register' && password !== confirm) { setError('비밀번호가 일치하지 않습니다.'); return }
     setLoading(true)
     try {
-      const { user, token } = await (mode === 'login' ? login : register)(email, password)
-      saveAuth(user, token)
-      setSuccess(true)
-      setTimeout(() => { onSuccess(user, token); onClose() }, 800)
+      if (mode === 'register') {
+        const r = await register(addr, password)
+        if (r.needsConfirm) {
+          // not logged in yet: the mail's link confirms the address, then the person logs in here
+          // (onSuccess is not called, so a generation waiting for the login still waits)
+          setConfirm('')
+          setMode('login')
+          setInfo(r.message)
+          return
+        }
+        finish(r.user, r.token, r.refresh_token)
+      } else {
+        const r = await login(addr, password)
+        finish(r.user, r.token, r.refresh_token)
+      }
     } catch (err) {
+      // the server's sentence, e.g. 403 email_not_confirmed: open the mail's link first
       setError((err as Error).message)
     } finally {
       setLoading(false)
@@ -51,6 +95,7 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
   }
 
   const isLogin = mode === 'login'
+  const emailOk = EMAIL_RE.test(email.trim())
 
   return (
     <>
@@ -113,8 +158,8 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
             <div className="auth-form-wrap">
               {/* Tab switcher */}
               <div className="auth-tabs">
-                <button className={`auth-tab ${isLogin ? 'active' : ''}`} onClick={() => { setMode('login'); setError('') }}>로그인</button>
-                <button className={`auth-tab ${!isLogin ? 'active' : ''}`} onClick={() => { setMode('register'); setError('') }}>회원가입</button>
+                <button className={`auth-tab ${isLogin ? 'active' : ''}`} onClick={() => switchMode('login')}>로그인</button>
+                <button className={`auth-tab ${!isLogin ? 'active' : ''}`} onClick={() => switchMode('register')}>회원가입</button>
               </div>
 
               <div className="auth-form-header">
@@ -123,27 +168,20 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
               </div>
 
               <form onSubmit={handleSubmit} className="auth-form">
-                {!isLogin && (
-                  <FloatingInput
-                    label="이름 (선택)"
-                    type="text"
-                    value={name}
-                    onChange={setName}
-                    placeholder="홍길동"
-                  />
-                )}
                 <FloatingInput
                   ref={emailRef}
-                  label="아이디"
-                  type="text"
+                  label="이메일"
+                  type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={setEmail}
-                  placeholder="아이디 입력"
+                  placeholder="you@example.com"
                   required
                 />
                 <FloatingInput
                   label="비밀번호"
                   type="password"
+                  autoComplete={isLogin ? 'current-password' : 'new-password'}
                   value={password}
                   onChange={setPassword}
                   placeholder={isLogin ? '••••••••' : '6자 이상 입력'}
@@ -154,12 +192,17 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
                   <FloatingInput
                     label="비밀번호 확인"
                     type="password"
+                    autoComplete="new-password"
                     value={confirm}
                     onChange={setConfirm}
                     placeholder="비밀번호 재입력"
                     required
                     error={confirm.length > 0 && confirm !== password ? '비밀번호가 일치하지 않아요' : ''}
                   />
+                )}
+
+                {info && !error && (
+                  <div className="auth-info" role="status">{info}</div>
                 )}
 
                 {error && (
@@ -187,19 +230,14 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
                 </button>
               </form>
 
-              {/* Password hint */}
-              {isLogin && (
-                <div className="auth-forgot">
-                  <button type="button">비밀번호를 잊으셨나요?</button>
-                </div>
-              )}
+              {/* no password reset yet: the '비밀번호를 잊으셨나요?' link comes back with that flow */}
 
               {/* Register checklist */}
               {!isLogin && (
                 <div className="auth-checklist">
+                  <CheckItem done={emailOk}>메일 주소 형식</CheckItem>
                   <CheckItem done={password.length >= 6}>6자 이상</CheckItem>
                   <CheckItem done={confirm.length > 0 && confirm === password}>비밀번호 일치</CheckItem>
-                  <CheckItem done={email.length >= 4}>아이디 4자 이상</CheckItem>
                 </div>
               )}
 
@@ -208,7 +246,7 @@ export default function AuthModal({ open, onClose, onSuccess }: AuthModalProps) 
               <div className="auth-switch">
                 {isLogin ? '처음이신가요?' : '이미 계정이 있으신가요?'}
                 {' '}
-                <button onClick={() => { setMode(isLogin ? 'register' : 'login'); setError('') }}>
+                <button onClick={() => switchMode(isLogin ? 'register' : 'login')}>
                   {isLogin ? '회원가입 →' : '로그인 →'}
                 </button>
               </div>
@@ -226,8 +264,8 @@ import React from 'react'
 
 const FloatingInput = React.forwardRef<HTMLInputElement, {
   label: string; type: string; value: string; onChange: (v: string) => void
-  placeholder?: string; required?: boolean; minLength?: number; error?: string
-}>(({ label, type, value, onChange, placeholder, required, minLength, error }, ref) => {
+  placeholder?: string; required?: boolean; minLength?: number; error?: string; autoComplete?: string
+}>(({ label, type, value, onChange, placeholder, required, minLength, error, autoComplete }, ref) => {
   const [focused, setFocused] = useState(false)
   const raised = focused || value.length > 0
   return (
@@ -241,6 +279,8 @@ const FloatingInput = React.forwardRef<HTMLInputElement, {
         placeholder={focused ? placeholder : ''}
         required={required}
         minLength={minLength}
+        autoComplete={autoComplete}
+        aria-label={label}
         className="fi-input"
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
@@ -593,15 +633,16 @@ const STYLES = `
 }
 .auth-check-item.done .auth-check-dot { background: #1d7a6a; }
 
-/* ── Forgot / divider / switch ── */
-.auth-forgot { text-align: right; margin-top: -4px; }
-.auth-forgot button {
-  background: none; border: none; cursor: pointer;
-  font-size: 12px; color: #8a8270;
+/* ── Notice (mail sent, link confirmed) ── */
+.auth-info {
+  padding: 10px 14px; border-radius: 10px;
+  background: rgba(29,122,106,0.08);
+  border: 1px solid rgba(29,122,106,0.25);
+  font-size: 13px; color: #16594d; line-height: 1.5;
   font-family: 'Space Grotesk', sans-serif;
-  transition: color 0.15s;
 }
-.auth-forgot button:hover { color: #c87515; }
+
+/* ── Divider / switch ── */
 .auth-divider {
   display: flex; align-items: center; gap: 12px;
   margin: 16px 0 14px;

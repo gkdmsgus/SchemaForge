@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react'
-import { authHeaders } from '../api'
+import { authFetch } from '../api'
 import type { ErcFinding, NetGraph } from '../types'
 import { indentLines, lineRange, summarizeError, toLF, tokenizePython, type CodeEdit } from '../lib/pythonCode'
 import { ercErrorCount } from '../lib/boardChecks'
@@ -126,9 +126,10 @@ export default function CodeEditor({
     setEdit({ text: sent, error: null, running: true })
     const fail = (headline: string, detail = '') => setEdit({ text: sent, error: { headline, detail, line: null } })
     try {
-      const res = await fetch(`${API}/test_code`, {
+      // an expired token is renewed once and the run sent again (api.ts)
+      const res = await authFetch(`${API}/test_code`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: sent }),
       })
       if (res.status === 401) {

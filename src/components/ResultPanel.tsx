@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
-import { addFavorite, removeFavorite, authHeaders, errorText, type AuthUser } from '../api'
+import {
+  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText,
+  type AuthUser, type SessionPatch,
+} from '../api'
 import CircuitCanvas from './CircuitCanvas'
 import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
@@ -106,8 +109,11 @@ export default function ResultPanel({
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatBoxRef = useRef<HTMLTextAreaElement>(null)
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
-  // why the AI rounds were refused (a deployed server keeps them for listed accounts); the board was built without
-  const [aiNote, setAiNote] = useState<string | null>(null)
+  // why the AI rounds were refused (a deployed server keeps them for listed accounts); the board was built without.
+  // login: the refusal was 401 (no login, or it ran out), so the chip says to log in
+  const [aiNote, setAiNote] = useState<{ text: string; login: boolean } | null>(null)
+  // a change that did not reach the saved session (chat, circuit, favourite): said in the top bar
+  const [syncError, setSyncError] = useState<string | null>(null)
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
   const [useAi, setUseAi] = useState(false)
@@ -126,7 +132,11 @@ export default function ResultPanel({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => initialChatSession?.messages || [])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
-  const [localGraph, setLocalGraph] = useState<NetGraph | null>(() => initialChatSession?.graph || null)
+  // a session opened from history whose saved circuit is an AI edit: held as an edit (its own copy, so aiEdited
+  // holds) that 초기화 goes back to, until a code run replaces the circuit
+  const [savedEdit, setSavedEdit] = useState<NetGraph | null>(() =>
+    (initialChatSession?.aiEdited && result.graph ? structuredClone(result.graph) : null))
+  const [localGraph, setLocalGraph] = useState<NetGraph | null>(() => savedEdit ?? initialChatSession?.graph ?? null)
   const [isFavorited, setIsFavorited] = useState(false)
   const [favId, setFavId] = useState<string | null>(null)
   const [favLoading, setFavLoading] = useState(false)
@@ -146,7 +156,8 @@ export default function ResultPanel({
   const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
-  // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph)
+  // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph,
+  // or with savedEdit when its saved circuit is an AI edit)
   const aiEdited = !!localGraph && localGraph !== result?.graph
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
@@ -181,6 +192,20 @@ export default function ResultPanel({
     }, 300)
     return () => { off = true; clearTimeout(timer) }
   }, [aiEdited, localGraph, ercRetry])
+  // a session opened again (history, favourites) may already be a favourite: the star starts filled
+  useEffect(() => {
+    if (!authUser || !sessionId) return
+    let off = false
+    getFavorites()
+      .then(list => {
+        if (off) return
+        const fav = list.find(f => f.sessionId === sessionId)
+        setIsFavorited(!!fav)
+        setFavId(fav?.id ?? null)
+      })
+      .catch(() => { /* the star stays empty; adding it again is harmless (the server keeps one per session) */ })
+    return () => { off = true }
+  }, [authUser, sessionId])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
@@ -244,14 +269,40 @@ export default function ResultPanel({
     setGraphHistory(prev => [...prev.slice(-19), g])
   }
 
+  /** the saved session (logged in) follows the circuit on screen: reopened from history it is the latest one */
+  function saveToSession(patch: SessionPatch) {
+    if (!sessionId || !authUser) return
+    updateSession(sessionId, patch)
+      .then(() => setSyncError(null))
+      .catch(e => setSyncError(`바뀐 회로를 기록에 저장하지 못했습니다: ${(e as Error).message}`))
+  }
+
+  /** each AI-editor exchange is kept with the saved session, so the chat comes back when it is opened again */
+  function saveChat(question: string, reply: ChatMessage) {
+    if (!sessionId || !authUser) return
+    const sid = sessionId
+    // one after the other: the server orders a session's messages by when they arrived
+    saveMessage(sid, 'user', question)
+      .then(() => saveMessage(sid, 'assistant', reply.content || '...', reply.actions ?? []))
+      .then(() => setSyncError(null))
+      .catch(e => setSyncError(`AI 편집 대화를 기록에 저장하지 못했습니다: ${(e as Error).message}`))
+  }
+
   function undoGraph() {
-    setGraphHistory(prev => {
-      if (!prev.length) return prev
-      const next = [...prev]
-      const restored = next.pop()
-      setLocalGraph(restored ?? null)
-      return next
-    })
+    const restored = graphHistory[graphHistory.length - 1]
+    if (!restored) return
+    setGraphHistory(prev => prev.slice(0, -1))
+    setLocalGraph(restored)
+    saveToSession({ graph: restored })
+  }
+
+  /** 초기화: back to the circuit as generated (or as last saved, for a session opened from history; a saved AI edit stays one) */
+  function resetGraph() {
+    const back = savedEdit ?? result?.graph
+    const changed = effectiveGraph !== back
+    setLocalGraph(savedEdit)
+    setGraphHistory([])
+    if (changed && back) saveToSession({ graph: back })
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
@@ -279,14 +330,17 @@ export default function ResultPanel({
     setGerberInfo(null)
     setViewMode('pcb')
     try {
-      const res = await fetch(`${API}/generate_pcb_stream`, {
+      const res = await authFetch(`${API}/generate_pcb_stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       if (ai && (res.status === 401 || res.status === 403)) {
         // a deployed server keeps the AI rounds for listed accounts: say why, and build the board without them
-        setAiNote(await errorText(res))
+        // (401: no login, or it ran out and could not be renewed, so the app also asks for the login)
+        const login = res.status === 401
+        setAiNote({ text: await errorText(res), login })
+        if (login) onAuthExpired?.()
         return generatePCB({ style, ai: false })
       }
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
@@ -359,10 +413,12 @@ export default function ResultPanel({
     const patch = { code: run.code, filename: run.filename, graph: run.graph, codeEdited: true }
     setResult(p => p && { ...withoutErc(p), ...patch })
     setLocalGraph(null)
+    setSavedEdit(null)
     setGraphHistory([])
     setGraphDiff(diff)
     setTimeout(() => setGraphDiff(null), 3000)
     updateSavedResult(lastPrompt, patch)
+    saveToSession({ graph: run.graph, code: run.code, filename: run.filename })
     const refs = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     setCodeRun({
       filename: run.filename, parts: run.graph.components.length, nets: run.graph.nets.length,
@@ -406,11 +462,16 @@ export default function ResultPanel({
 
     try {
       const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
-      const res = await fetch(`${API}/chat_edit`, {
+      const res = await authFetch(`${API}/chat_edit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ graph: effectiveGraph, message: msg, history }),
       })
+      if (res.status === 401) {
+        // no login, or it ran out: the app asks for it, and the request goes back in the box to send again
+        setChatInput(msg)
+        onAuthExpired?.()
+      }
       // a refusal (a deployed server keeps the AI editor for listed accounts) has no stream: show its reason
       if (!res.ok || !res.body) throw new Error(await errorText(res))
 
@@ -465,6 +526,8 @@ export default function ResultPanel({
               updateSavedResultChat(lastPrompt, next, newGraph)
               return next
             })
+            saveChat(msg, assistantMsg)
+            if (newGraph && newGraph !== snapshot) saveToSession({ graph: newGraph })
           } else if (evt === 'error') {
             const { message } = JSON.parse(raw)
             setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${message as string}`, actions: [] }])
@@ -493,6 +556,7 @@ export default function ResultPanel({
       }
     } catch (e) {
       console.error(e)
+      setSyncError(`즐겨찾기를 바꾸지 못했습니다: ${(e as Error).message}`)
     } finally {
       setFavLoading(false)
     }
@@ -592,6 +656,8 @@ export default function ResultPanel({
 
         <div style={{ flex: 1 }} />
 
+        {syncError && <StatusChip tone="warn" title={syncError} testId="sync-error">기록 저장 실패</StatusChip>}
+
         {/* actions */}
         {authUser && sessionId && (
           <button
@@ -653,8 +719,8 @@ export default function ResultPanel({
                   padding: '2px 6px', cursor: 'pointer',
                 }}>↩ 되돌리기</button>
               )}
-              {localGraph && (
-                <button onClick={() => { setLocalGraph(null); setGraphHistory([]) }} style={{
+              {localGraph && localGraph !== savedEdit && (
+                <button onClick={resetGraph} style={{
                   fontSize: 9, fontFamily: 'var(--sf-font-mono)', color: 'var(--sf-fg-faint)',
                   background: 'none', border: 'none', cursor: 'pointer',
                 }}>초기화</button>
@@ -824,7 +890,9 @@ export default function ResultPanel({
                   AI 다듬기 {useAi ? 'ON' : 'OFF'}
                 </button>
               )}
-              {aiNote && !useAi && <StatusChip tone="warn" title={aiNote} testId="ai-note">AI 다듬기는 허용된 계정만</StatusChip>}
+              {aiNote && !useAi && <StatusChip tone="warn" title={aiNote.text} testId="ai-note">
+                {aiNote.login ? 'AI 다듬기는 로그인 후' : 'AI 다듬기는 허용된 계정만'}
+              </StatusChip>}
               {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={() => generatePCB()} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {/* a board built from a previous circuit: no downloads of files that no longer match */}
