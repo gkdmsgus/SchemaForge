@@ -182,6 +182,16 @@ cd server && npx tsx check_deploy_guard.ts
 배포 서버(`NODE_ENV=production`)가 막는 것 10항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지도 확인한다 (python과 skidl 필요).
 
 ```bash
+cd server && npx tsx check_auth_flow.ts
+```
+로그인과 기록 23항목. 가짜 Supabase(인증 서버와 표 API)를 띄우고 실제 서버를 배포 모드로 돌린다. 가입하면 확인 메일 안내만 오는지, 확인 전 로그인·이미 가입한 주소·잘못된 비밀번호·Supabase 중단(503)의 안내, 토큰 갱신과 만료(401 auth_expired), 허용 목록, 기록·대화·즐겨찾기의 주인 확인(남의 것은 404), 누가 로그인한 뒤에도 표 요청이 늘 서버 키로 나가는지, `/netlist/restore`, Supabase 없는 개발 모드를 확인한다.
+
+```bash
+npx tsx scripts/check_api_client.ts
+```
+화면 쪽 API 클라이언트 35항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양을 확인한다.
+
+```bash
 cd server && npx tsx check_demo_cache.ts
 ```
 데모 넷리스트 미리 만들기 6항목. 배포 이미지는 빌드할 때 데모 회로를 한 번 실행해 `server/demo_cache/`에 넷리스트를 넣어 두고, 데모를 열면 skidl을 다시 돌리지 않고 그 복사본을 쓴다 (무료 인스턴스에서 7~9초 걸리던 단계). 모든 데모가 만들어지는지, 저장된 넷리스트가 지금 skidl 결과와 같은지(실행마다 바뀌는 날짜·태그 제외), 방문마다 따로 복사되는지, 회로 파일이 바뀌면 다시 실행하는지 확인한다.
