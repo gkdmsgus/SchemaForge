@@ -381,8 +381,6 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
           />
         ) : (
           <div
-            onDoubleClick={startEdit}
-            title={!isFavorite && dbId ? '더블클릭으로 이름 수정' : undefined}
             style={{
               fontSize: 12, color: hovered ? '#c0cce8' : '#8090b0',
               fontFamily: SANS, lineHeight: 1.4,
@@ -395,6 +393,23 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
           {time}{msgCount > 0 ? ` · 대화 ${msgCount}개` : ''}
         </div>
       </div>
+      {/* a button, not a double-click: the first click of a double-click already opened the circuit and closed the drawer */}
+      {!isFavorite && onRename && dbId && !editing && (
+        <button
+          onClick={startEdit}
+          title="이름 바꾸기"
+          aria-label="이름 바꾸기"
+          style={{
+            flexShrink: 0,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: hovered ? '#3a4055' : 'transparent',
+            fontSize: 13, lineHeight: 1, padding: '2px 4px',
+            borderRadius: 4, transition: 'color 0.1s, background 0.1s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#a78bfa'; e.currentTarget.style.background = '#15122a' }}
+          onMouseLeave={e => { e.currentTarget.style.color = hovered ? '#3a4055' : 'transparent'; e.currentTarget.style.background = 'none' }}
+        >✎</button>
+      )}
       <button
         onClick={onDelete}
         style={{

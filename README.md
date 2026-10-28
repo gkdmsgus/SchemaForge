@@ -207,6 +207,11 @@ node scripts/check_live.mjs https://schemaforge.kro.kr
 배포된 서버를 브라우저로 쓰는 7항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지. 주소를 바꾸면 로컬 컨테이너(`http://localhost:8002`)에도 쓸 수 있다.
 
 ```bash
+node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
+```
+로그인한 사용자의 기록 서랍 5항목 (로그인과 기록 API는 브라우저 안에서 흉내 낸다). ✎ 버튼이 서랍을 연 채 이름 칸을 여는지, Enter가 새 이름으로 `PATCH /sessions/:id`를 보내는지, Esc는 아무것도 보내지 않는지, 항목을 누르면 회로가 열리고 서랍이 닫히는지, 즐겨찾기에는 ✎가 없는지 확인한다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```
