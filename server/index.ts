@@ -1255,7 +1255,8 @@ async function runDrc(pcbPath: string): Promise<DrcResult> {
   const seconds = () => Math.round((Date.now() - t0) / 100) / 10
   try {
     // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--output', out, pcbPath], 'DRC', 90000)
+    // The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
@@ -1634,18 +1635,41 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
   if (!existsSync(pcbPath)) return res.status(404).json({ error: 'PCB file not found.' })
 
   const gerberDir = join(OUTPUTS_DIR, basename(pcbFilename as string, '.kicad_pcb') + '_gerber')
-  if (!existsSync(gerberDir)) mkdirSync(gerberDir)
-
-  try {
-    await runKicadCli(['pcb', 'export', 'gerbers', '--output', gerberDir, pcbPath], 'Gerber export')
-    await runKicadCli(['pcb', 'export', 'drill', '--output', gerberDir + '/', pcbPath], 'Drill export')
-
-    const files = readdirSync(gerberDir)
-    res.json({ gerberDir: basename(gerberDir), files, message: 'Gerber files generated' })
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+  // fab_export.py empties the folder first, so a second request for the same board waits for the running one
+  let job = gerberJobs.get(gerberDir)
+  if (!job) {
+    job = exportFab(pcbPath, gerberDir).finally(() => gerberJobs.delete(gerberDir))
+    gerberJobs.set(gerberDir, job)
   }
+  const r = await job
+  res.status(r.status).json(r.body)
 })
+
+const gerberJobs = new Map<string, Promise<{ status: number; body: Record<string, unknown> }>>()
+
+/** pcb/fab_export.py writes what a PCB maker takes (seven layers with the ground pour filled, plated and
+ *  non-plated drill files, one zip of them); the board checks call the same function. */
+function exportFab(pcbPath: string, gerberDir: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise(resolve => {
+    const proc = spawn('python', [join(process.cwd(), 'pcb', 'fab_export.py'), pcbPath, gerberDir, '--cli', KICAD_CLI])
+    let out = ''
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
+    proc.stderr.on('data', () => { /* drained; fab_export.py prints its own error as JSON */ })
+    // python gives each kicad-cli call 60 s and kills it on time out; this only stops a python that hangs
+    // past both (it exits on SIGTERM through Python, so a running kicad-cli is killed with it)
+    const timer = setTimeout(() => proc.kill(), 150000)
+    proc.on('error', (e: Error) => { clearTimeout(timer); resolve({ status: 500, body: { error: e.message } }) })
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer)
+      let r: { files?: string[]; zip?: string; error?: string } = {}
+      try { r = JSON.parse(out.trim().split('\n').pop() || '{}') } catch { /* no JSON: killed or crashed */ }
+      if (code !== 0 || !r.files || !r.zip) {
+        return resolve({ status: 500, body: { error: r.error || (code === null ? 'Gerber export timed out' : 'Gerber export failed') } })
+      }
+      resolve({ status: 200, body: { gerberDir: basename(gerberDir), files: r.files, zip: r.zip, message: 'Gerber files generated' } })
+    })
+  })
+}
 
 // ── GET /download_gerber_file/:dir/:filename ───────────────────────
 

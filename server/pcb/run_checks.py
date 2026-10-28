@@ -14,6 +14,7 @@ from board import generate, netlist_check, parse_netlist, BOARD_MARGIN  # noqa: 
 from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
+from fab_export import export_fab, FAB_SUFFIXES  # noqa: E402
 
 CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor']
 STYLES = ['smd', 'tht']
@@ -122,9 +123,10 @@ def check_one(name, style, work, cli):
                        p['courtyard'][2] <= ox2 and p['courtyard'][3] <= oy2)]
     res['4 courtyard'] = (not overlap and not outside, f'overlap={overlap} outside={outside}')
 
-    # 5. KiCad DRC: loads, 0 violations, unconnected = connections still to route
+    # 5. KiCad DRC: loads, 0 violations, unconnected = connections still to route.
+    # The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
     drc = os.path.join(work, f'{name}_{style}.drc.json')
-    p = subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--output', drc, pcb], capture_output=True)
+    p = subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--refill-zones', '--output', drc, pcb], capture_output=True)
     if p.returncode != 0 or not os.path.exists(drc):
         res['5 drc'] = (False, p.stderr.decode('utf-8', 'replace')[-200:])
         unconn = viol = None
@@ -137,14 +139,42 @@ def check_one(name, style, work, cli):
         res['5 drc'] = (not viol and unconn == 0,
                         f'violations={viol} unconnected={unconn} (before routing: {expected})')
 
-    # 6. gerbers + drill export
+    # 6. gerbers + drill export, by the same function as the server's /generate_gerber
     gdir = os.path.join(work, f'{name}_{style}_gerber')
-    os.makedirs(gdir, exist_ok=True)
-    g = subprocess.run([cli, 'pcb', 'export', 'gerbers', '--output', gdir, pcb], capture_output=True)
-    dr = subprocess.run([cli, 'pcb', 'export', 'drill', '--output', gdir + os.sep, pcb], capture_output=True)
-    files = os.listdir(gdir)
-    res['6 gerber'] = (g.returncode == 0 and dr.returncode == 0 and any(f.endswith('.drl') for f in files),
-                       f'{len(files)} files')
+    try:
+        fab = export_fab(cli, pcb, gdir)
+        files = fab['files']
+        res['6 gerber'] = (len(files) == len(FAB_SUFFIXES), f'{len(files)} files')
+    except Exception as e:
+        fab, files = None, []
+        res['6 gerber'] = (False, str(e)[-200:])
+
+    # 6b. what a PCB maker gets: the zip holds exactly those files, the drill files split plated from
+    # non-plated holes, the copper gerbers carry the filled ground pour (G36 regions) on the layers the
+    # preview pours, and pads join the pour through thermal spokes with the preview's clearance
+    fab_bad = []
+    if fab:
+        import zipfile
+        with zipfile.ZipFile(os.path.join(gdir, fab['zip'])) as z:
+            if sorted(z.namelist()) != sorted(files) or z.testzip() is not None:
+                fab_bad.append(f'zip={sorted(z.namelist())}')
+        drl = {s: open(os.path.join(gdir, next(f for f in files if f.endswith(s))), encoding='utf-8').read()
+               for s in ('-PTH.drl', '-NPTH.drl')}
+        if 'FileFunction,Plated,' not in drl['-PTH.drl'] or 'FileFunction,NonPlated,' not in drl['-NPTH.drl']:
+            fab_bad.append('drill files not split by plating')
+        layer_file = {'F.Cu': '-F_Cu.gtl', 'B.Cu': '-B_Cu.gbl'}
+        pour_layers = sorted({r['layer'] for r in model.get('pour', [])})
+        if not pour_layers:   # every test circuit has a GND net: no pour at all means board.py stopped pouring
+            fab_bad.append('no ground pour')
+        for layer in pour_layers:
+            g = open(os.path.join(gdir, next(f for f in files if f.endswith(layer_file[layer]))), encoding='utf-8').read()
+            if 'G36*' not in g:
+                fab_bad.append(f'no pour in {layer} gerber')
+        # one zone per poured layer, at the preview's 0.5 mm from other copper (0 let KiCad fill to 0.2 mm)
+        pads_rule = re.findall(r'\(connect_pads([^()]*)\(clearance ([\d.]+)\)', open(pcb, encoding='utf-8').read())
+        if len(pads_rule) != len(pour_layers) or any(float(gap) != 0.5 for _, gap in pads_rule):
+            fab_bad.append(f'zone pad rules {pads_rule}')
+    res['6b fab files'] = (fab is not None and not fab_bad, '; '.join(fab_bad) or f"{fab['zip'] if fab else ''}")
 
     # ── stage 1: placement ──
     # 8. placement beats the stage-0 shelf layout

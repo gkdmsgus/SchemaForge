@@ -31,7 +31,7 @@
 | 검사 | KiCad DRC + 회로 점검(전원 누락, 연결 안 된 핀). 결과를 숫자로 표시 |
 | 2D · 3D 보기 | KiCad 색 2D와 KiCad가 내보낸 3D 모델을 나란히 |
 | AI 기판 다듬기 (선택) | AI가 배치·선 굵기 수정을 제안하고, 검사 점수가 좋아질 때만 반영 |
-| 내보내기 · 부품 | `.net`, `.kicad_pcb`, 거버 내려받기, 부품 목록(BOM: 같은 부품을 묶은 수량·패키지, CSV)과 Mouser 부품 검색 |
+| 내보내기 · 부품 | `.net`, `.kicad_pcb`, 거버 zip(PCB 업체에 그대로 올리는 7개 층 + 도금·비도금 드릴, GND 동박 포함), 부품 목록(BOM: 같은 부품을 묶은 수량·패키지, CSV)과 Mouser 부품 검색. 실제 주문·조립 순서는 [docs/fabrication-guide.md](docs/fabrication-guide.md) |
 
 ### 화면
 | 홈 — 설명 입력 | 결과 — 기판 2D · 3D |
@@ -164,7 +164,7 @@ npm run dev      # 화면(vite 3000) + API(8080) 동시 실행
 ```bash
 python server/pcb/run_checks.py
 ```
-테스트 회로 4개를 SMD·THT 두 방식으로, 즉 기판 8개를 만들어 각각 19항목을 확인한다 (풋프린트 매핑, 패드 좌표가 KiCad와 같은지, 극성, 코트야드 겹침, DRC, 거버, 배선 완료, 회로 점검, PCB 전 넷리스트 점검이 기판 점검과 같은지 등). 여기에 더해 일부러 망가뜨린 회로(`broken_floating.py`)를 잡아내는지, 풋프린트 표가 맞는지도 확인한다.
+테스트 회로 4개를 SMD·THT 두 방식으로, 즉 기판 8개를 만들어 각각 20항목을 확인한다 (풋프린트 매핑, 패드 좌표가 KiCad와 같은지, 극성, 코트야드 겹침, GND 동박을 채운 DRC, 거버, 배선 완료, 회로 점검, PCB 전 넷리스트 점검이 기판 점검과 같은지 등). 거버는 서버와 같은 `server/pcb/fab_export.py`로 만들고, zip에 7개 층과 드릴 2개만 들었는지, 드릴이 도금·비도금으로 나뉘었는지, 동박이 거버에 들어갔는지, 동박이 다른 구리에서 0.5 mm 떨어지는지 본다. 여기에 더해 일부러 망가뜨린 회로(`broken_floating.py`)를 잡아내는지, 풋프린트 표가 맞는지도 확인한다.
 
 ```bash
 cd server && npx tsx check_ai_layout.ts
@@ -204,7 +204,7 @@ python server/pcb/check_deploy.py
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
 ```
-배포된 서버를 브라우저로 쓰는 7항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지. 주소를 바꾸면 로컬 컨테이너(`http://localhost:8002`)에도 쓸 수 있다.
+배포된 서버를 브라우저로 쓰는 7항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지. 주소를 바꾸면 로컬 컨테이너(`http://localhost:8002`)에도 쓸 수 있다.
 
 ```bash
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로

@@ -10,7 +10,7 @@ Exit code 0 only if every check passes.
   31 health reports KiCad 10 inside the container
   32 no secrets baked into the image (.env absent)
   33 board stream finishes with KiCad DRC available, 0 errors, 0 unrouted
-  34 gerbers + drill files come out of /generate_gerber
+  34 /generate_gerber gives the seven fabrication layers, plated and non-plated drill files and their zip
   35 image runs as the Dockerfile says (tsx from node_modules, python from venv)
   36 the 3D model has the part bodies (vendored models; the KiCad image has none)
   37 deployed-server guard: the demo is open, generation and the password-free sign-in are refused
@@ -21,6 +21,9 @@ import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
 ROOT = os.path.dirname(SERVER)
+sys.path.insert(0, HERE)
+from fab_export import FAB_SUFFIXES  # noqa: E402
+
 IMAGE = 'schemaforge:stage6'
 NAME = 'sf-deploy-check'
 NET = os.path.join(SERVER, 'outputs', 'stage0_ne555.net')
@@ -130,10 +133,14 @@ def main():
 
         g = http_json(f'{base}/generate_gerber', {'pcbFilename': done[-1]['pcbFilename']} if done else {})
         files = g.get('files') or []
-        gbr = [f for f in files if f.lower().endswith('.gbr')]
-        drl = [f for f in files if f.lower().endswith('.drl')]
-        check('34 gerbers + drill', len(gbr) >= 4 and len(drl) >= 1,
-              f'{len(files)} files, gerber-like {len(gbr)}, drill {len(drl)}' + (f', error={g.get("error")}' if g.get('error') else ''))
+        have = [s for s in FAB_SUFFIXES if any(f.endswith(s) for f in files)]
+        zip_head = b''
+        if g.get('zip'):
+            with urllib.request.urlopen(f'{base}/download_gerber_file/{g["gerberDir"]}/{g["zip"]}', timeout=60) as r:
+                zip_head = r.read()[:2]
+        check('34 fab files + zip', len(have) == len(FAB_SUFFIXES) == len(files) and zip_head == b'PK',
+              f'{len(files)} files, fab layers+drills {len(have)}/{len(FAB_SUFFIXES)}, zip {g.get("zip")} {zip_head!r}'
+              + (f', error={g.get("error")}' if g.get('error') else ''))
 
         which = sh('docker', 'exec', NAME, 'sh', '-c',
                    'command -v python; python -c "import skidl, numpy; print(\'ok\')"; ls node_modules/.bin/tsx').stdout.split()
