@@ -17,6 +17,7 @@ import {
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
+import { DEMOS, cachedDemo } from './demo_cache'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
@@ -1487,23 +1488,17 @@ app.get('/download_gerber_file/:dir/:filename', (req: Request, res: Response) =>
 // Loads one of the checked-in test circuits without calling OpenAI. This keeps
 // the interactive 2D/3D board demo usable on development machines with no API
 // key while still exercising the real SKiDL → placement → routing pipeline.
+// The netlist comes from demo_cache/ when the image built it (demo_cache.ts); else skidl runs here.
+const DEMO_CACHE_DIR = join(process.cwd(), 'demo_cache')
+
 app.get('/demo_result/:name', async (req: Request, res: Response) => {
-  const demos: Record<string, string> = {
-    led: 'led_basic',
-    ne555: 'ne555_blink',
-    relay: 'npn_relay',
-    motor: 'nmos_motor',
-    // the same circuits with one deliberate fault each, for the operating check
-    led_bad: 'led_bad',
-    ne555_bad: 'ne555_bad',
-    relay_bad: 'relay_bad',
-  }
-  const fixture = demos[String(req.params['name'] || '')]
+  const name = String(req.params['name'] || '')
+  const fixture = Object.hasOwn(DEMOS, name) ? DEMOS[name] : undefined
   if (!fixture) return res.status(404).json({ error: 'Unknown demo circuit.' })
 
   try {
     const code = readFileSync(join(process.cwd(), 'test_circuits', `${fixture}.py`), 'utf8')
-    const outputPath = await runSkidl(code)
+    const outputPath = cachedDemo(fixture, code, DEMO_CACHE_DIR, OUTPUTS_DIR) ?? await runSkidl(code)
     const filename = basename(outputPath)
     const graph = parseNetlist(readFileSync(outputPath, 'utf8'))
     res.json({ filename, graph, code, guide: '내장 검증 회로 — OpenAI API 키 없이 실행됩니다.' })

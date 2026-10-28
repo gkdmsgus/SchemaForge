@@ -14,6 +14,7 @@ Exit code 0 only if every check passes.
   35 image runs as the Dockerfile says (tsx from node_modules, python from venv)
   36 the 3D model has the part bodies (vendored models; the KiCad image has none)
   37 deployed-server guard: the demo is open, generation and the password-free sign-in are refused
+  38 the demo netlists are built into the image (demo_cache/), so a demo opens without running skidl
 """
 import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
 
@@ -150,6 +151,13 @@ def main():
         codes = {'demo': 200 if demo.get('filename') else 'no filename', 'generate': status(f'{base}/generate', {'description': 'LED'}),
                  'login': status(f'{base}/auth/login', {'email': 'a@b.c', 'password': 'x'})}
         check('37 deployed-server guard', codes == {'demo': 200, 'generate': 401, 'login': 503}, json.dumps(codes))
+
+        cached = sh('docker', 'exec', NAME, 'sh', '-c', 'ls /app/server/demo_cache | wc -l', check=False).stdout.strip()
+        t = time.time()
+        motor = http_json(f'{base}/demo_result/motor')
+        took = time.time() - t
+        check('38 demo netlists in the image', cached == '14' and bool(motor.get('filename')) and took < 3,
+              f'{cached} files in demo_cache (7 circuits x .net/.json), /demo_result/motor {took:.2f} s')
     finally:
         if not args.keep:
             sh('docker', 'rm', '-f', NAME, check=False)

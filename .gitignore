@@ -43,3 +43,5 @@ __pycache__/
 server/test_circuits/*.net
 server/test_circuits/*.erc
 server/test_circuits/*_sklib.py
+# demo netlists built with the deploy image (server/build_demo_cache.ts)
+server/demo_cache/
