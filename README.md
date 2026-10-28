@@ -192,6 +192,11 @@ python server/pcb/check_deploy.py
 배포 이미지 8항목 (Docker 필요, `npm test`에는 넣지 않음). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지를 확인한다.
 
 ```bash
+node scripts/check_live.mjs https://schemaforge.kro.kr
+```
+배포된 서버를 브라우저로 쓰는 7항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지. 주소를 바꾸면 로컬 컨테이너(`http://localhost:8002`)에도 쓸 수 있다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```

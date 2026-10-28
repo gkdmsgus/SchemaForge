@@ -35,7 +35,9 @@
 2. 대시보드에서 **New → Blueprint**를 누르고 `gkdmsgus/SchemaForge` 저장소를 연결한 뒤 브랜치 `master`를 고른다. Blueprint Path는 비워 둔다.
 3. 변경 목록에서 `schemaforge`가 **새로 만드는** 서비스이고 Free · Singapore · Docker인지 확인한다. Singapore에서 Free를 받지 않으면 `render.yaml`의 `region`을 `oregon`으로 바꿔 다시 푸시한다 (리전은 만든 뒤 바꿀 수 없다).
 4. 비밀값 6개(`sync: false`)를 묻는 화면이 나오면 비워 둔다. 데모에는 필요 없다. 나중에 넣는 값은 서비스의 **Environment** 페이지에서 넣는다.
-5. 첫 빌드는 KiCad 이미지를 받느라 몇 분 걸린다. 끝나면 `https://<주소>.onrender.com/health`에서 `kicad` 버전이 나오는지 → `/?demo=motor` → PCB → 3D → 거버 내려받기를 확인한다.
+5. 첫 빌드는 KiCad 이미지를 받느라 몇 분 걸린다. 끝나면 `node scripts/check_live.mjs https://<주소>`로 `/health` → `/?demo=motor` → PCB → 3D → 거버 내려받기를 한 번에 확인한다.
+
+이 Blueprint는 GitHub 앱 연결 없이 공개 저장소 주소로 만들어서 자동 배포가 없다. 새 코드는 서비스 화면의 **Manual Deploy → Deploy latest commit**, `render.yaml` 변경은 Blueprint 화면의 **Manual sync**로 반영한다 (사용자 도메인 `schemaforge.kro.kr`도 이 동기화로 추가했다. 무료 인스턴스 대시보드에는 도메인 추가 칸이 없다).
 
 ## 2. 로그인과 회로 생성 열기
 
