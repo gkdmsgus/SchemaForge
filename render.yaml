@@ -19,6 +19,10 @@ services:
     # (with one instance, that is the whole site); at 60 s Render restarts it.
     # If KiCad work ever starves /health, removing this line falls back to the default TCP check.
     healthCheckPath: /health
+    # the short address, served over HTTPS by Render's own certificate. Let's Encrypt (GitHub Pages)
+    # refused it: kro.kr's name servers often time out on the CAA lookup a CA must make first
+    domains:
+      - schemaforge.kro.kr
     # pushes that only touch docs don't start an automatic build
     # (manual deploys, and render.yaml edits that change this service, still deploy)
     buildFilter:
