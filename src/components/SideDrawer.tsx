@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import type { SavedSession, ChatMessage, NetGraph, GenerateResult } from '../types'
-import { getSessions, deleteSession as dbDeleteSession, getFavorites, removeFavorite, renameSession, type AuthUser, type DbFavorite } from '../api'
+import {
+  getSessions, deleteSession as dbDeleteSession, deleteAllSessions, getFavorites, removeFavorite, renameSession,
+  type AuthUser, type DbFavorite,
+} from '../api'
 
 interface StoredEntry {
   id: number
@@ -39,6 +42,7 @@ function groupByDate(items: StoredEntry[]): [string, StoredEntry[]][] {
 }
 
 function formatTime(ts: number) {
+  if (!Number.isFinite(ts)) return ''
   const d = new Date(ts), now = new Date()
   const sameDay = d.toDateString() === now.toDateString()
   return sameDay
@@ -60,15 +64,18 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
   const [savedResults, setSavedResults] = useState<StoredEntry[]>([])
   const [favorites, setFavorites] = useState<DbFavorite[]>([])
   const [dbMode, setDbMode] = useState(false)
+  // why a server action failed (list, delete, rename): shown above the list instead of failing silently
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
+    setNotice(null)
     if (user) {
       setDbMode(true)
       getSessions().then(sessions => {
         const entries: StoredEntry[] = sessions.map((s, i) => ({
           id: i,
-          name: s.name ?? s.prompt,
+          name: s.name || s.prompt,
           prompt: s.prompt,
           result: s.graph
             ? { graph: s.graph as NetGraph, filename: s.filename ?? '', code: s.code ?? undefined, guide: s.guide ?? undefined }
@@ -78,8 +85,16 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
           _dbId: s.id,
         }))
         setSavedResults(entries)
-      }).catch(() => setSavedResults(getSavedResults()))
-      getFavorites().then(setFavorites).catch(() => {})
+      }).catch(e => {
+        // the server list did not come: this browser's records are shown, and deletes act on them
+        setDbMode(false)
+        setSavedResults(getSavedResults())
+        setNotice(`서버 기록을 불러오지 못해 이 브라우저의 기록을 보여 줍니다. (${(e as Error).message})`)
+      })
+      getFavorites().then(setFavorites).catch(e => {
+        setFavorites([])
+        setNotice(`즐겨찾기를 불러오지 못했습니다. (${(e as Error).message})`)
+      })
     } else {
       setDbMode(false)
       setTab('history')
@@ -87,19 +102,75 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
     }
   }, [open, user])
 
-  function deleteSaved(e: React.MouseEvent, id: number) {
+  async function deleteSaved(e: React.MouseEvent, id: number) {
     e.stopPropagation()
-    if (dbMode) {
-      const entry = savedResults.find(s => s.id === id) as (StoredEntry & { _dbId?: string }) | undefined
-      if (entry?._dbId) {
-        dbDeleteSession(entry._dbId).catch(() => {})
-      }
-      setSavedResults(prev => prev.filter(s => s.id !== id))
-    } else {
+    if (!dbMode) {
       const next = getSavedResults().filter(s => s.id !== id)
       localStorage.setItem('sf_saved_results', JSON.stringify(next))
       setSavedResults(next)
+      return
     }
+    const entry = savedResults.find(s => s.id === id)
+    if (!entry) return
+    setSavedResults(prev => prev.filter(s => s.id !== id))
+    if (!entry._dbId) return
+    try {
+      await dbDeleteSession(entry._dbId)
+      // the server drops the session's favourites with it
+      setFavorites(prev => prev.filter(f => f.sessionId !== entry._dbId))
+    } catch (err) {
+      // not deleted on the server: the record goes back where it was (newest first)
+      setSavedResults(prev => [...prev, entry].sort((a, b) => b.time - a.time))
+      setNotice(`기록을 삭제하지 못했습니다: ${(err as Error).message}`)
+    }
+  }
+
+  async function deleteAll() {
+    if (!confirm(dbMode ? '서버에 저장된 기록을 모두 삭제할까요? 되돌릴 수 없습니다.' : '모든 저장 기록을 삭제할까요?')) return
+    if (dbMode) {
+      try {
+        await deleteAllSessions()
+      } catch (err) {
+        // nothing is cleared: the list stays as the server has it
+        setNotice(`기록을 삭제하지 못했습니다: ${(err as Error).message}`)
+        return
+      }
+      setFavorites([])
+    }
+    localStorage.removeItem('sf_saved_results')
+    setSavedResults([])
+  }
+
+  async function renameSaved(entry: StoredEntry, name: string) {
+    if (!entry._dbId) return
+    const before = entry.name
+    setSavedResults(prev => prev.map(x => x.id === entry.id ? { ...x, name } : x))
+    try {
+      await renameSession(entry._dbId, name)
+    } catch (err) {
+      // the server kept the old name: show that one again
+      setSavedResults(prev => prev.map(x => x.id === entry.id ? { ...x, name: before } : x))
+      setNotice(`이름을 바꾸지 못했습니다: ${(err as Error).message}`)
+    }
+  }
+
+  async function unfavorite(e: React.MouseEvent, f: DbFavorite) {
+    e.stopPropagation()
+    try {
+      await removeFavorite(f.id)
+      setFavorites(prev => prev.filter(x => x.id !== f.id))
+    } catch (err) {
+      setNotice(`즐겨찾기를 해제하지 못했습니다: ${(err as Error).message}`)
+    }
+  }
+
+  /** a favourite opens the whole session from the history list when it is there (code, guide), else its circuit */
+  function openFavorite(f: DbFavorite) {
+    const full = savedResults.find(x => x._dbId === f.sessionId)
+    const result = full?.result ?? (f.graph ? { graph: f.graph as NetGraph, filename: f.filename ?? '' } : undefined)
+    if (!result?.graph) return
+    onLoadSession({ prompt: f.prompt, graph: result.graph, circuitName: f.prompt, messages: [], result, dbId: f.sessionId || undefined })
+    onClose()
   }
 
   const groups = groupByDate(savedResults)
@@ -164,30 +235,33 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0 8px' }}>
+          {notice && (
+            <div role="alert" data-testid="drawer-notice" style={{
+              margin: '8px 12px 4px', padding: '6px 8px 6px 10px', borderRadius: 6,
+              border: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', background: 'var(--sf-bg-1)',
+              fontFamily: SANS, fontSize: 11, lineHeight: 1.5, display: 'flex', alignItems: 'flex-start', gap: 6,
+            }}>
+              <span style={{ flex: 1 }}>{notice}</span>
+              <button onClick={() => setNotice(null)} aria-label="알림 닫기" style={{
+                background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0,
+              }}>×</button>
+            </div>
+          )}
           {tab === 'favorites' && user ? (
             favorites.length === 0 ? (
               <p style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--sf-fg-dim)', fontSize: 11, fontFamily: SANS }}>
                 즐겨찾기한 회로가 없어요<br/>
                 <span style={{ fontSize: 10, opacity: 0.6 }}>결과 화면 상단의 북마크 버튼으로 추가하세요</span>
               </p>
-            ) : favorites.map((f, i) => (
+            ) : favorites.map(f => (
               <SessionItem
                 key={f.id}
-                title={f.prompt}
-                time={new Date(f.createdAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}
+                title={savedResults.find(x => x._dbId === f.sessionId)?.name || f.prompt || '이름 없는 회로'}
+                time={formatTime(new Date(f.createdAt).getTime())}
                 msgCount={0}
                 isFavorite
-                onClick={() => {
-                  if (f.graph) {
-                    onLoadSession({ prompt: f.prompt, graph: f.graph as NetGraph, circuitName: f.prompt, messages: [], result: { graph: f.graph as NetGraph, filename: f.filename ?? '' } })
-                    onClose()
-                  }
-                }}
-                onDelete={async (e) => {
-                  e.stopPropagation()
-                  await removeFavorite(f.id).catch(() => {})
-                  setFavorites(prev => prev.filter(x => x.id !== f.id))
-                }}
+                onClick={() => openFavorite(f)}
+                onDelete={e => unfavorite(e, f)}
               />
             ))
           ) : (
@@ -210,13 +284,11 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
                     msgCount={s.messages?.length || 0}
                     dbId={s._dbId}
                     onClick={() => {
-                      onLoadSession({ prompt: s.prompt, graph: s.result?.graph ?? undefined, circuitName: s.prompt, messages: s.messages || [], result: s.result })
+                      onLoadSession({ prompt: s.prompt, graph: s.result?.graph ?? undefined, circuitName: s.prompt, messages: s.messages || [], result: s.result, dbId: s._dbId })
                       onClose()
                     }}
                     onDelete={(e) => deleteSaved(e, s.id)}
-                    onRename={(newName) => {
-                      setSavedResults(prev => prev.map(x => x.id === s.id ? { ...x, name: newName } : x))
-                    }}
+                    onRename={(newName) => renameSaved(s, newName)}
                   />
                 ))}
               </div>
@@ -227,12 +299,7 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
         {/* Footer */}
         <div style={{ padding: '10px 12px', borderTop: '1px solid #151821' }}>
           <button
-            onClick={() => {
-              if (confirm('모든 저장 기록을 삭제할까요?')) {
-                localStorage.removeItem('sf_saved_results')
-                setSavedResults([])
-              }
-            }}
+            onClick={deleteAll}
             style={{
               width: '100%', padding: '6px', borderRadius: 6,
               border: '1px solid #1c2030', background: 'transparent',
@@ -271,10 +338,8 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
 
   function commitEdit() {
     const trimmed = editVal.trim()
-    if (trimmed && trimmed !== title && dbId) {
-      renameSession(dbId, trimmed).catch(() => {})
-      onRename?.(trimmed)
-    }
+    // the drawer sends it to the server and puts the old name back if that fails
+    if (trimmed && trimmed !== title && dbId) onRename?.(trimmed)
     setEditing(false)
   }
 
@@ -306,6 +371,8 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
             onBlur={commitEdit}
             onKeyDown={onKeyDown}
             onClick={e => e.stopPropagation()}
+            maxLength={100}
+            aria-label="기록 이름"
             style={{
               width: '100%', background: '#0a0d14', border: '1px solid #2a3555',
               borderRadius: 4, color: '#c0cce8', fontFamily: SANS, fontSize: 12,

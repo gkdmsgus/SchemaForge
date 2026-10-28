@@ -211,6 +211,8 @@ export interface Version {
   result: GenerateResult
   time: number
   label: string
+  /** the server session this generation was saved as (logged in); none until the save comes back */
+  sessionId?: string
 }
 
 // ── 설정 ──────────────────────────────────────────────────────────────────────
@@ -290,11 +292,15 @@ export interface SavedSession {
   graph?: NetGraph
   circuitName?: string
   messages?: ChatMessage[]
+  /** the server's session id (history or favourites while logged in); none for a record kept only in this browser */
+  dbId?: string
 }
 
 export interface ChatSession {
   messages: ChatMessage[]
   graph: NetGraph | null
+  /** the saved circuit (result.graph) is an AI edit: the session's code and netlist file are of the circuit before it */
+  aiEdited?: boolean
 }
 
 export interface PendingCached {
