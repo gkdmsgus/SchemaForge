@@ -20,16 +20,19 @@ export function guardFromEnv(env: NodeJS.ProcessEnv = process.env): Guard {
 
 const DEMO = '데모(?demo=motor)는 로그인 없이 쓸 수 있습니다.'
 
+/** a refusal as the server sends it; code tells the front end what to do (log in, confirm the mail, nothing) */
+export interface Refusal { status: number; error: string; code: 'login_required' | 'email_not_confirmed' | 'not_allowed' }
+
 /**
  * Why this visitor may not run code or call the model here, or null when they may. On a deployed server that is
  * a Supabase account whose mail address was confirmed (an unconfirmed sign-up could name anyone's address) and
  * is listed in ALLOWED_EMAILS; with ALLOWED_EMAILS empty nobody is.
  */
-export function memberRefusal(g: Guard, user: Member | undefined): { status: number; error: string } | null {
+export function memberRefusal(g: Guard, user: Member | undefined): Refusal | null {
   if (!g.deployed) return null
-  if (!g.supabase || !user) return { status: 401, error: `이 서버에서 회로 생성·AI 편집·코드 실행은 허용된 계정으로 로그인해야 쓸 수 있습니다. ${DEMO}` }
-  if (!user.confirmed) return { status: 403, error: `가입 확인 메일의 링크를 누른 뒤에 쓸 수 있습니다. ${DEMO}` }
-  if (!g.allowed.has(user.email.trim().toLowerCase())) return { status: 403, error: `이 계정은 아직 회로 생성·AI 편집·코드 실행을 쓸 수 없습니다. ${DEMO}` }
+  if (!g.supabase || !user) return { status: 401, code: 'login_required', error: `이 서버에서 회로 생성·AI 편집·코드 실행은 허용된 계정으로 로그인해야 쓸 수 있습니다. ${DEMO}` }
+  if (!user.confirmed) return { status: 403, code: 'email_not_confirmed', error: `가입 확인 메일의 링크를 누른 뒤에 쓸 수 있습니다. ${DEMO}` }
+  if (!g.allowed.has(user.email.trim().toLowerCase())) return { status: 403, code: 'not_allowed', error: `이 계정은 아직 회로 생성·AI 편집·코드 실행을 쓸 수 없습니다. ${DEMO}` }
   return null
 }
 
