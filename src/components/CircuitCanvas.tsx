@@ -359,6 +359,8 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
       const base = prev ? [...prev] : nets.map(n => ({ ...n, nodes: [...n.nodes] }))
       const i1 = base.findIndex(n => n.nodes.some(nd => nd.ref===ref1 && String(nd.pin)===String(pin1)))
       const i2 = base.findIndex(n => n.nodes.some(nd => nd.ref===ref2 && String(nd.pin)===String(pin2)))
+      // already on one net: nothing to join (it used to add the second pin to that net again)
+      if (i1>=0 && i1===i2) return prev
       if (i1>=0 && i2>=0 && i1!==i2) {
         const merged = [...base]
         merged[i1] = { ...merged[i1], nodes: [...merged[i1].nodes, ...merged[i2].nodes] }
@@ -497,9 +499,10 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', background:BG, position:'relative' }}>
 
-      {/* toolbar */}
+      {/* toolbar: one line, always. A wrapped line pushed the schematic down while a pin was pressed, so the
+          release landed beside the pin and the wire was dropped at once (2026-10-29) */}
       <div style={{
-        display:'flex', alignItems:'center', gap:6, padding:'6px 14px',
+        display:'flex', alignItems:'center', gap:6, padding:'6px 14px', whiteSpace:'nowrap',
         background:'var(--sf-bg-1)', borderBottom:'2px solid var(--sf-line-strong)', flexShrink:0,
       }}>
         <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:TEXT_DIM, letterSpacing:'0.1em' }}>
@@ -519,12 +522,13 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           if (!net) return null
           const color = NET_COLORS[selectedNet % NET_COLORS.length]
           return (
-            <span style={{ display:'flex', alignItems:'center', gap:8, padding:'2px 10px', borderRadius:4,
+            <span style={{ display:'flex', alignItems:'center', gap:8, padding:'1px 10px', borderRadius:4, minWidth:0,
               background:'rgba(167,139,250,0.1)', border:'1px solid rgba(167,139,250,0.3)',
               fontFamily:'var(--sf-font-mono)', fontSize:10 }}>
-              <span style={{ width:6, height:6, borderRadius:'50%', background:color }} />
+              <span style={{ width:6, height:6, borderRadius:'50%', background:color, flexShrink:0 }} />
               <span style={{ color }}>{net.name}</span>
-              <span style={{ color:TEXT_DIM }}>
+              {/* a long net's pin list gives way first, so 삭제 and the zoom buttons stay on the line */}
+              <span style={{ color:TEXT_DIM, minWidth:0, overflow:'hidden', textOverflow:'ellipsis' }}>
                 {net.nodes.map(n => `${n.ref}[${n.pin}]`).join(' → ')}
               </span>
               <span style={{ color:TEXT_DIM, margin:'0 2px' }}>·</span>
@@ -554,9 +558,12 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
             fontFamily:'var(--sf-font-mono)', fontSize:10,
           }}>↺ 선 초기화</button>
         )}
-        <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:TEXT_DIM }}>
-          드래그·이동 · 핀클릭·연결 · 선드래그·경로변경 · 더블클릭·값편집
-        </span>
+        {/* the wire and net chips say what to do next; the help gives them its room and shrinks before anything else */}
+        {!wireState && selectedNet === null && (
+          <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:TEXT_DIM, minWidth:0, overflow:'hidden', textOverflow:'ellipsis' }}>
+            드래그·이동 · 핀클릭·연결 · 선드래그·경로변경 · 더블클릭·값편집
+          </span>
+        )}
         <div style={{ display:'flex', gap:2 }}>
           {([['−', -0.15], ['+', 0.15], ['⌂', 0]] as [string, number][]).map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
@@ -611,10 +618,11 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           onContextMenu={e => e.preventDefault()}
           onClick={e => {
             if (didPanRef.current) { didPanRef.current = false; return }
+            // a started wire is not dropped here: a press on empty space already drops it (onSvgPointerDown), and
+            // a click whose release lands a little beside the pin it pressed would drop it at once
             if (!(e.target as Element).closest?.('g[data-comp]') && !(e.target as Element).closest?.('g[data-net]')) {
               setSelected(null)
               setSelectedNet(null)
-              if (wireState) setWireState(null)
             }
           }}
         >
