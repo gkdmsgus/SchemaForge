@@ -10,11 +10,12 @@ import { useEffect, useState } from 'react'
 import FormComposer from './FormComposer.tsx'
 import { Button, Spinner } from './primitives.tsx'
 import type { LogLine } from '../types'
+import { useModelName } from '../lib/modelName'
 
 // The server streams status lines (server/index.ts /generate); App's detectStep maps each one to a phase.
 const STEPS = [
   { key: 'analyzing', label: '요구사항 정리', note: '설명을 회로 사양으로 풀어 씁니다' },
-  { key: 'routing',   label: '회로 작성',     note: 'GPT-4o가 부품과 연결을 skidl 코드로 씁니다' },
+  { key: 'routing',   label: '회로 작성',     note: '모델({model})이 부품과 연결을 skidl 코드로 씁니다' },
   { key: 'placing',   label: '넷리스트 생성', note: '코드를 실행해 .net을 만들고 연결을 점검(ERC)합니다. 코드 오류나 연결 안 된 핀이 있으면 한 번 고쳐 다시 점검합니다' },
 ]
 
@@ -37,6 +38,7 @@ export default function WizardPanel({ phase = 'composer', currentPrompt = '', on
 function Generating({ phase, prompt, onCancel, lines }: { phase: string; prompt: string; onCancel?: () => void; lines: LogLine[] }) {
   const current = Math.max(0, STEPS.findIndex(s => s.key === phase))
   const seconds = useElapsed()
+  const { model } = useModelName()
   const [head, ...rest] = (prompt.trim() || '회로 생성').split('\n')
   const detail = rest.join('\n').trim()
 
@@ -59,7 +61,7 @@ function Generating({ phase, prompt, onCancel, lines }: { phase: string; prompt:
               <span className="mark">{state === 'active' ? <Spinner size={12} color="var(--sf-amber)" /> : state === 'done' ? '완료' : `${i + 1}`}</span>
               <div>
                 <strong>{s.label}</strong>
-                <p>{s.note}</p>
+                <p>{s.note.replace('{model}', model)}</p>
               </div>
             </li>
           )

@@ -1,5 +1,6 @@
 ﻿import { useState } from 'react'
 import { Button, Chip, IconWand } from './primitives.tsx'
+import { useModelName } from '../lib/modelName'
 
 const EXAMPLE_PROMPTS = [
   '9V로 LED 3개 점멸',
@@ -521,6 +522,7 @@ function fieldValueString(field: {key: string; multi?: boolean}, values: Record<
 }
 
 export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, typeKey?: string) => void }) {
+  const { model, provider } = useModelName()
   const [typeKey, setTypeKey] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [customs, setCustoms] = useState<Record<string, string>>({})
@@ -712,7 +714,7 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
                 <tr key={step}>
                   <th scope="row">{step}</th>
                   <td>{what}</td>
-                  <td className="tool">{tool}</td>
+                  <td className="tool">{tool.replace('{model}', model).replace('{provider}', provider)}</td>
                 </tr>
               ))}
             </tbody>
@@ -732,11 +734,11 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
 }
 
 const PIPELINE: [string, string, string][] = [
-  ['회로', '설명이나 고른 사양에서 부품과 연결을 정하고 넷리스트를 씁니다.', 'GPT-4o, skidl'],
+  ['회로', '설명이나 고른 사양에서 부품과 연결을 정하고 넷리스트를 씁니다.', '{model}, skidl'],
   ['배치', '부품마다 KiCad 풋프린트를 붙이고, 연결된 부품끼리 가까워지도록 자리를 잡습니다.', '힘 기반 배치'],
   ['배선', '두 층에 선을 긋고 막히면 비아로 층을 바꿉니다. 전원선은 굵게 긋습니다.', 'A* 경로 탐색'],
   ['검사', 'KiCad 설계 규칙 검사와 회로 점검(전원 누락, 연결 안 된 핀)을 돌립니다.', 'kicad-cli DRC'],
-  ['다듬기', '선택 사항. AI가 위치·선 폭 수정을 제안하고, 검사 수치가 좋아질 때만 반영합니다.', 'OpenAI'],
+  ['다듬기', '선택 사항. AI가 위치·선 폭 수정을 제안하고, 검사 수치가 좋아질 때만 반영합니다.', '{provider}'],
 ]
 
 function TypeRow({ active, label, desc, onClick }: { active: boolean; label: string; desc: string; onClick: () => void }) {

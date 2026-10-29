@@ -11,10 +11,11 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
+import { MODEL_BASE, MODEL_MINI, modelExtra } from './model'
 
-// SF_AI_MODEL picks another model (e.g. behind an OpenAI-compatible gateway set with OPENAI_BASE_URL).
+// SF_AI_MODEL picks another model than the server's SF_MODEL_MINI (the provider is OPENAI_BASE_URL, model.ts).
 // SF_AI_JSON=1 is for gateways that drop `tools`: the model answers with the same object as plain JSON.
-export const AI_MODEL = process.env.SF_AI_MODEL || 'gpt-4o-mini'
+export const AI_MODEL = process.env.SF_AI_MODEL || MODEL_MINI
 const JSON_MODE = process.env.SF_AI_JSON === '1'
 export const MAX_ROUNDS = 3
 
@@ -480,10 +481,10 @@ export function stubEdit(round: number): BoardEdit {
 
 export async function askModel(prompt: string, history: string[]): Promise<BoardEdit> {
   if (process.env.SF_AI_STUB === '1') return stubEdit(history.length + 1)
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
   if (JSON_MODE) return askModelJson(openai, prompt, history)
   const res = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: AI_MODEL, ...modelExtra(),
     temperature: 0.2,
     messages: [
       { role: 'system', content: SYSTEM },
@@ -504,7 +505,7 @@ async function askModelJson(openai: OpenAI, prompt: string, history: string[]): 
     'Reply with ONLY one JSON object, no prose and no code fence, matching this JSON schema:\n' +
     JSON.stringify(TOOL.function.parameters))
   const res = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: AI_MODEL, ...modelExtra(),
     messages: [
       { role: 'system', content: system },
       ...history.map(h => ({ role: 'assistant' as const, content: h })),

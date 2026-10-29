@@ -18,6 +18,7 @@ import {
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
+import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
@@ -537,8 +538,8 @@ After the separator: the Korean guide.`
  */
 async function askErcFix(userMsg: string, code: string, guide: string, feedback: string, signal: AbortSignal): Promise<string> {
   if (process.env.SF_AI_STUB === '1') return stubErcFix(code)
-  const r = await axios.post('https://api.openai.com/v1/chat/completions', {
-    model: 'gpt-4o',
+  const r = await axios.post(`${MODEL_BASE}/chat/completions`, {
+    model: MODEL, ...modelExtra(),
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userMsg },
@@ -673,9 +674,9 @@ app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Requ
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: MODEL_MINI, ...modelExtra(),
       messages: [
         { role: 'system', content: CLARIFY_SYSTEM_PROMPT },
         { role: 'user', content: description },
@@ -728,9 +729,9 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: MODEL_MINI, ...modelExtra(),
       messages: [
         { role: 'system', content: PLAN_SYSTEM_PROMPT },
         { role: 'user', content: description },
@@ -833,9 +834,9 @@ changed.`
   const timeout = setTimeout(() => abort.abort(), 25000)
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
     const stream = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: MODEL_MINI, ...modelExtra(),
       messages,
       tools,
       tool_choice: { type: 'function', function: { name: 'edit_circuit' } },
@@ -910,7 +911,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     const sourceUrls: string[] = []
 
     if (abort.signal.aborted) return res.end()
-    res.write(sse('status', '🤖 GPT-4o is analysing and generating the circuit...'))
+    res.write(sse('status', `🤖 ${modelLabel(MODEL)} is analysing and generating the circuit...`))
     const userMsg =
       `Circuit request: ${description}\n\n` +
       'Design this to standard professional practice. Include every component the board ' +
@@ -926,8 +927,8 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     const genTimeout = setTimeout(() => abort.abort(), 90000)
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const axiosRes = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-4o',
+        const axiosRes = await axios.post(`${MODEL_BASE}/chat/completions`, {
+          model: MODEL, ...modelExtra(),
           messages,
           temperature: 0.1,
           max_tokens: 2500,
@@ -978,8 +979,8 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
         const retryTimeout = setTimeout(() => abort.abort(), 45000)
         let fixAxiosRes
         try {
-          fixAxiosRes = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: 'gpt-4o', messages: fixMessages, temperature: 0.05, max_tokens: 2500,
+          fixAxiosRes = await axios.post(`${MODEL_BASE}/chat/completions`, {
+            model: MODEL, ...modelExtra(), messages: fixMessages, temperature: 0.05, max_tokens: 2500,
           }, {
             headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
             timeout: 43000,
@@ -1719,7 +1720,9 @@ let kicadVersion: string | null = null
 }
 
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion })
+  // model: the circuit model's name for the screen (never the key), provider: who runs it
+  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
+    model: modelLabel(MODEL), provider: modelProvider() })
 })
 
 // ── SPA fallback ───────────────────────────────────────────────────

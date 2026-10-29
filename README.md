@@ -154,10 +154,13 @@ npm run dev      # 화면(vite 3000) + API(8080) 동시 실행
 | 변수 | 쓰임 |
 |---|---|
 | `PORT` | API 포트 (기본 8080) |
-| `SF_AI_MODEL` | AI 다듬기에 쓸 모델 이름 |
+| `OPENAI_BASE_URL` | OpenAI 호환 API 주소. 모든 모델 호출이 이 주소로 간다 (예: xAI Grok `https://api.x.ai/v1`, 키는 `OPENAI_API_KEY`에) |
+| `SF_MODEL` | 회로 코드와 ERC 자동 수정에 쓸 모델 (기본 `gpt-4o`). 화면 위쪽과 생성 단계에 이 이름이 나온다 |
+| `SF_MODEL_MINI` | 되묻기·설계 계획·AI 편집에 쓸 모델 (기본 `gpt-4o-mini`) |
+| `SF_REASONING_EFFORT` | 모든 모델 호출에 `reasoning_effort`로 보낸다. 추론형 모델은 추론 토큰이 답 길이 한도를 먹으니 `grok-4.3`이면 `none` |
+| `SF_AI_MODEL` | AI 다듬기에 쓸 모델 이름 (기본 `SF_MODEL_MINI`) |
 | `SF_AI_JSON=1` | function calling 대신 JSON 응답으로 받기 (게이트웨이가 도구 호출을 지원하지 않을 때) |
 | `SF_AI_STUB=1` | 모델 대신 고정된 제안을 쓰는 검사용 모드 |
-| `OPENAI_BASE_URL` | OpenAI 호환 게이트웨이 주소 |
 
 ## 검사
 
@@ -185,6 +188,11 @@ cd server && npx tsx check_deploy_guard.ts
 cd server && npx tsx check_auth_flow.ts
 ```
 로그인과 기록 23항목. 가짜 Supabase(인증 서버와 표 API)를 띄우고 실제 서버를 배포 모드로 돌린다. 가입하면 확인 메일 안내만 오는지, 확인 전 로그인·이미 가입한 주소·잘못된 비밀번호·Supabase 중단(503)의 안내, 토큰 갱신과 만료(401 auth_expired), 허용 목록, 기록·대화·즐겨찾기의 주인 확인(남의 것은 404), 누가 로그인한 뒤에도 표 요청이 늘 서버 키로 나가는지, `/netlist/restore`, Supabase 없는 개발 모드를 확인한다.
+
+```bash
+cd server && npx tsx check_model_config.ts
+```
+모델 설정 6항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, `/health`가 화면에 보일 모델 이름을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다.
 
 ```bash
 npx tsx scripts/check_api_client.ts

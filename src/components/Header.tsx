@@ -38,7 +38,7 @@ interface HeaderProps {
 
 export default function Header({
   variant = 'app',
-  modelLabel = 'GPT-4o',
+  modelLabel = 'AI',
   modelStatus = 'ready',
   onSettingsClick,
   onLogoClick,

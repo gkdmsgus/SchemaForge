@@ -56,7 +56,11 @@
 
 | 변수 | 필요 | 설명 |
 |---|---|---|
-| `OPENAI_API_KEY` | 회로 생성 | 없으면 데모만 동작 |
+| `OPENAI_API_KEY` | 회로 생성 | 없으면 데모만 동작. 다른 회사 모델을 쓰면 그 회사 키 |
+| `OPENAI_BASE_URL` | 선택 | OpenAI 대신 OpenAI 호환 API. xAI Grok은 `https://api.x.ai/v1` |
+| `SF_MODEL` | 선택 | 회로 코드 모델 (기본 `gpt-4o`). Grok이면 예: `grok-4.3` |
+| `SF_MODEL_MINI` | 선택 | 되묻기·계획·AI 편집·AI 다듬기 모델 (기본 `gpt-4o-mini`). Grok이면 예: `grok-4.3` |
+| `SF_REASONING_EFFORT` | 선택 | 모든 모델 호출에 보내는 `reasoning_effort`. `grok-4.3`이면 `none` (추론 토큰이 답 길이 한도를 먹지 않게) |
 | `SUPABASE_URL` | 로그인 | 프로젝트 첫 화면이나 Connect 창의 `https://<ref>.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | 로그인 | Settings → API Keys의 Secret key (`sb_secret_…`, 비밀). 서버는 이 키로만 표에 접근한다 |
 | `ALLOWED_EMAILS` | 회로 생성 | 쉼표로 구분한 메일 주소. 대소문자·공백은 무시 |

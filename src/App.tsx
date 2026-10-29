@@ -19,6 +19,7 @@ import type {
   Version, ChatSession, PendingCached, GenerateResult,
   ClarifyApiResponse, SavedSession,
 } from './types'
+import { useModelName } from './lib/modelName'
 import './styles/main.scss'
 
 const API = ''
@@ -75,6 +76,7 @@ function nowTs() {
 }
 
 export default function App() {
+  const modelName = useModelName()
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadAuth()?.user ?? null)
   // the login as of now: callbacks made before a login (the modal's onSuccess, its timers) read this
   const authRef = useRef(authUser)
@@ -513,7 +515,7 @@ export default function App() {
       />
       <Header
         variant={headerVariant}
-        modelLabel="GPT-4o"
+        modelLabel={modelName.model}
         modelStatus={modelStatus}
         onSettingsClick={() => setSettingsOpen(true)}
         onLogoClick={goHome}
