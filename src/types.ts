@@ -218,8 +218,6 @@ export interface Version {
 // ── 설정 ──────────────────────────────────────────────────────────────────────
 
 export interface AppSettings {
-  layout: '2col' | '1col'
-  skeleton: boolean
   autoRetry: boolean
   clarify: boolean
   plan: boolean

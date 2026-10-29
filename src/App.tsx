@@ -28,10 +28,16 @@ const API = ''
 const LEGAL_PAGE: 'terms' | 'privacy' | null =
   window.location.pathname === '/terms' ? 'terms' : window.location.pathname === '/privacy' ? 'privacy' : null
 
-const DEFAULT_SETTINGS: AppSettings = { layout: '2col', skeleton: true, autoRetry: true, clarify: true, plan: true }
+const DEFAULT_SETTINGS: AppSettings = { autoRetry: true, clarify: true, plan: true }
 
+// only the known switches: older saves also carry layout and skeleton, which no screen reads
 function getSettings(): AppSettings {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('sf_settings') || '{}') } } catch { return DEFAULT_SETTINGS }
+  try {
+    const saved = JSON.parse(localStorage.getItem('sf_settings') || '{}')
+    const s = { ...DEFAULT_SETTINGS }
+    for (const k of Object.keys(s) as (keyof AppSettings)[]) if (typeof saved?.[k] === 'boolean') s[k] = saved[k]
+    return s
+  } catch { return DEFAULT_SETTINGS }
 }
 
 function detectStep(msg: string): number {

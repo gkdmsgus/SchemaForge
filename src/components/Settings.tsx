@@ -1,12 +1,6 @@
-﻿import { useState, ReactNode, CSSProperties, Dispatch, SetStateAction } from 'react'
-import { Button, IconClose, IconCheck } from './primitives.tsx'
+﻿import { CSSProperties, Dispatch, SetStateAction } from 'react'
+import { Button, IconClose } from './primitives.tsx'
 import type { AppSettings } from '../types'
-
-interface Favorite { icon: string; name: string }
-
-function getFavorites(): Favorite[] {
-  try { return JSON.parse(localStorage.getItem('sf_favorites') || '[]') } catch { return [] }
-}
 
 const overlay: CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 100,
@@ -27,26 +21,6 @@ const label = {
   textTransform: 'uppercase', color: 'var(--sf-fg-dim)', marginBottom: 12,
 }
 const desc = { fontSize: 12, color: 'var(--sf-fg-dim)', marginTop: 2 }
-
-function OptionButton({ active, onClick, children, icon }: { active: boolean; onClick: () => void; children?: ReactNode; icon?: ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: 8, padding: '10px 14px',
-        background: active ? 'var(--sf-amber-soft)' : 'var(--sf-bg-3)',
-        border: `1px solid ${active ? 'var(--sf-amber-line)' : 'var(--sf-line-strong)'}`,
-        color: active ? 'var(--sf-amber)' : 'var(--sf-fg-muted)',
-        borderRadius: 'var(--sf-r-sm)',
-        fontSize: 13, fontFamily: 'var(--sf-font-sans)', fontWeight: 500,
-        cursor: 'pointer', transition: 'all var(--sf-dur) var(--sf-ease)',
-      }}
-    >
-      {icon}{children}
-    </button>
-  )
-}
 
 function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
@@ -70,47 +44,14 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   )
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children?: ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '6px 14px',
-        background: active ? 'var(--sf-amber-soft)' : 'var(--sf-bg-3)',
-        border: `1px solid ${active ? 'var(--sf-amber-line)' : 'var(--sf-line-strong)'}`,
-        color: active ? 'var(--sf-amber)' : 'var(--sf-fg-muted)',
-        borderRadius: 'var(--sf-r-pill)',
-        fontSize: 12, fontFamily: 'var(--sf-font-mono)', fontWeight: 500,
-        cursor: 'pointer', transition: 'all var(--sf-dur) var(--sf-ease)',
-      }}
-    >{children}</button>
-  )
-}
-
 interface SettingsProps {
   open: boolean
   onClose: () => void
   settings: AppSettings
   setSettings: Dispatch<SetStateAction<AppSettings>>
-  onClearFavorites?: () => void
 }
 
-export default function Settings({ open, onClose, settings, setSettings, onClearFavorites }: SettingsProps) {
-  const [favs, setFavs] = useState(getFavorites)
-
-  function removeFav(name: string) {
-    const next = favs.filter(f => f.name !== name)
-    setFavs(next)
-    localStorage.setItem('sf_favorites', JSON.stringify(next))
-    if (onClearFavorites) onClearFavorites()
-  }
-
-  function clearAllFavs() {
-    setFavs([])
-    localStorage.removeItem('sf_favorites')
-    if (onClearFavorites) onClearFavorites()
-  }
-
+export default function Settings({ open, onClose, settings, setSettings }: SettingsProps) {
   if (!open) return null
 
   return (
@@ -127,24 +68,8 @@ export default function Settings({ open, onClose, settings, setSettings, onClear
           <Button variant="ghost" size="sm" icon={<IconClose size={14} />} onClick={onClose} aria-label="닫기" />
         </div>
 
-        {/* Layout */}
-        <div style={section}>
-          <div style={label}>결과 레이아웃</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <OptionButton active={settings.layout === '2col'} onClick={() => setSettings(s => ({ ...s, layout: '2col' }))}>▥ 2컬럼</OptionButton>
-            <OptionButton active={settings.layout === '1col'} onClick={() => setSettings(s => ({ ...s, layout: '1col' }))}>▤ 1컬럼</OptionButton>
-          </div>
-        </div>
-
         {/* Toggles */}
         <div style={section}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ ...label, marginBottom: 0 }}>로딩 스켈레톤</div>
-              <div style={desc}>생성 중 미리보기 애니메이션</div>
-            </div>
-            <Toggle on={settings.skeleton} onChange={() => setSettings(s => ({ ...s, skeleton: !s.skeleton }))} />
-          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ flex: 1 }}>
               <div style={{ ...label, marginBottom: 0 }}>자동 재시도</div>
@@ -166,32 +91,6 @@ export default function Settings({ open, onClose, settings, setSettings, onClear
             </div>
             <Toggle on={settings.plan !== false} onChange={() => setSettings(s => ({ ...s, plan: !(s.plan !== false) }))} />
           </div>
-        </div>
-
-        {/* Data */}
-        <div style={section}>
-          <div style={label}>데이터 관리</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Button variant="danger" size="md" onClick={clearAllFavs}>즐겨찾기 전체 삭제</Button>
-          </div>
-          {favs.length > 0 && (
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {favs.map((f, i) => (
-                <div key={i} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '8px 12px', background: 'var(--sf-bg-3)',
-                  border: '1px solid var(--sf-line)', borderRadius: 'var(--sf-r-sm)',
-                  fontSize: 13, color: 'var(--sf-fg-muted)',
-                }}>
-                  <span>{f.icon} {f.name}</span>
-                  <button onClick={() => removeFav(f.name)} style={{
-                    background: 'none', border: 'none', color: 'var(--sf-fg-dim)',
-                    cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1,
-                  }}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         <div style={{
