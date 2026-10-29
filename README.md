@@ -225,6 +225,11 @@ node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로
 저장된 결과 안내 2항목 (로그인과 API는 브라우저 안에서 흉내 낸다). 아래쪽 회로 종류 패널에서 이미 만든 사양으로 다시 만들 때 "이 회로의 저장된 결과가 있어요" 안내가 화면 안으로 오는지, 불러오기가 계획·생성 요청 없이 저장된 회로를 여는지 확인한다.
 
 ```bash
+node scripts/check_schematic_wiring.mjs     # npm run dev 를 켠 채로
+```
+회로도 선 긋기 5항목 (모터 데모, 로그인 없음). 핀을 한 번 누르면 선 긋기가 시작되고 회로도가 움직이지 않는지, 다른 연결의 핀을 누르면 두 연결이 합쳐지는지, 빈 곳을 누르면 취소되는지, 이미 같은 연결인 두 핀을 이어도 핀이 두 번 들어가지 않는지, 연결을 골라도 도구 줄 높이와 확대 버튼이 그대로인지 확인한다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```
