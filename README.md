@@ -220,6 +220,11 @@ node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
 로그인한 사용자의 기록 서랍 5항목 (로그인과 기록 API는 브라우저 안에서 흉내 낸다). ✎ 버튼이 서랍을 연 채 이름 칸을 여는지, Enter가 새 이름으로 `PATCH /sessions/:id`를 보내는지, Esc는 아무것도 보내지 않는지, 항목을 누르면 회로가 열리고 서랍이 닫히는지, 즐겨찾기에는 ✎가 없는지 확인한다.
 
 ```bash
+node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로
+```
+저장된 결과 안내 2항목 (로그인과 API는 브라우저 안에서 흉내 낸다). 아래쪽 회로 종류 패널에서 이미 만든 사양으로 다시 만들 때 "이 회로의 저장된 결과가 있어요" 안내가 화면 안으로 오는지, 불러오기가 계획·생성 요청 없이 저장된 회로를 여는지 확인한다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```

@@ -103,6 +103,7 @@ export default function App() {
   const [initialChatSession, setInitialChatSession] = useState<ChatSession | null>(null)
   const [resultKey, setResultKey] = useState(0)
   const [pendingCached, setPendingCached] = useState<PendingCached | null>(null)
+  const cachedOfferRef = useRef<HTMLDivElement>(null)
   const pendingGenerateRef = useRef<PendingRun | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   // bumped whenever another circuit takes the screen (history open, version pick, new generation, home):
@@ -171,6 +172,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('sf_settings', JSON.stringify(settings))
   }, [settings])
+
+  // the offer sits at the top of the page: asked from the circuit-type panel further down, it appeared out of
+  // view and the make button seemed to do nothing (2026-10-29)
+  useEffect(() => {
+    if (pendingCached) cachedOfferRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [pendingCached])
 
   function goHome() {
     setResult(null)
@@ -566,7 +573,7 @@ export default function App() {
       {LEGAL_PAGE && <LegalPage kind={LEGAL_PAGE} />}
 
       {!LEGAL_PAGE && pendingCached && !result && !loading && (
-        <div style={{ maxWidth: 760, margin: '24px auto 0', padding: '0 24px' }}>
+        <div ref={cachedOfferRef} style={{ maxWidth: 760, margin: '24px auto 0', padding: '0 24px' }}>
           <div style={{
             background: 'var(--sf-bg-2)',
             border: '1px solid var(--sf-amber-line)',
