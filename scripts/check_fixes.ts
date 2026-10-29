@@ -11,7 +11,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, withFixes } from '../src/lib/fixes.ts'
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
-import { applyActions, movedPins, pinNumber } from '../src/lib/graphEdit.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { applyActions, movedPins, pinNumber, skippedAdds } from '../src/lib/graphEdit.ts'
+import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
+import PCBLayout from '../src/components/PCBLayout.tsx'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
 
 let failed = 0, skipped = 0
@@ -158,6 +162,29 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   check('G4 moved pins are reported', JSON.stringify(movedPins(g, after)) === JSON.stringify([{ pin: 'J2.1', from: '+12V', to: 'MOTOR' }])
     && JSON.stringify(movedPins(g, gone)) === JSON.stringify([{ pin: 'BT1.1', from: '+12V', to: null }, { pin: 'J2.1', from: '+12V', to: null }])
     && movedPins(g, applyActions(g, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'Q1', pin: '3' }] }])).length === 0, JSON.stringify(movedPins(g, after)))
+}
+
+// G5. an add with no reference (live, 2026-10-29: "출력 쪽에 100nF 커패시터를 하나 추가해줘" saved a part with ref "",
+// and the schematic stopped drawing whenever that history entry was opened) is left out and told; a net does not
+// take a pin with no reference; a taken reference is told too
+{
+  const g: NetGraph = { components: [{ ref: 'C1', value: '10uF', name: 'C' }, { ref: 'U1', value: 'LM7805', name: 'REG' }], nets: [net('VOUT', 'U1.3')] }
+  const acts = [{ type: 'add_component' as const, name: 'C', value: '100nF' }, { type: 'add_component' as const, ref: ' ', name: 'C', value: '1nF' },
+    { type: 'add_component' as const, ref: 'C1', name: 'C', value: '1uF' },
+    { type: 'add_net' as const, name: 'VOUT', nodes: [{ ref: '', pin: '1' }, { ref: 'C1', pin: '1' }] }]
+  const out = applyActions(g, acts)
+  check('G5 no part without a reference, no net pin without one, and the chat is told',
+    out.components.map(c => c.ref).join() === 'C1,U1' && JSON.stringify(out.nets) === JSON.stringify([net('VOUT', 'U1.3', 'C1.1')])
+    && skippedAdds(g, acts).join(' | ') === 'C 100nF (부품 기호 없음) | C 1nF (부품 기호 없음) | C1 (이미 있는 기호)', skippedAdds(g, acts).join(' | '))
+}
+
+// G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
+// render and blanked the whole result screen)
+{
+  const bad: NetGraph = { components: [{ ref: 'C1', value: '10uF', name: 'C' }, { ref: '', value: '100nF', name: 'C' }], nets: [net('VOUT', 'C1.1', '.1')] }
+  const draws = (el: Parameters<typeof createElement>[0]) => { try { return renderToStaticMarkup(createElement(el, { graph: bad })).length > 0 } catch (e) { return String(e) } }
+  const schem = draws(CircuitCanvas), pcb = draws(PCBLayout)
+  check('G6 a part with an empty reference draws instead of blanking the screen', schem === true && pcb === true, `schematic ${schem}, pcb ${pcb}`)
 }
 
 // F9b. where the target is not known the instruction asks the AI editor to ask, not guess

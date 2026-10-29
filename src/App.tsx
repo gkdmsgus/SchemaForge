@@ -20,6 +20,7 @@ import type {
   ClarifyApiResponse, SavedSession,
 } from './types'
 import { useModelName } from './lib/modelName'
+import ErrorBoundary from './components/ErrorBoundary'
 import './styles/main.scss'
 
 const API = ''
@@ -676,6 +677,7 @@ export default function App() {
       )}
 
       {result && (
+        <ErrorBoundary key={resultKey} onReset={goHome}>
         <ResultPanel
           key={resultKey}
           result={result}
@@ -691,6 +693,7 @@ export default function App() {
           authUser={authUser}
           sessionId={currentSessionId}
         />
+        </ErrorBoundary>
       )}
     </div>
   )
