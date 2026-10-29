@@ -26,8 +26,9 @@ interface PinDef { x: number; y: number; side: 'L' | 'R' | 'T' | 'B' }
 interface Layout { w: number; h: number; pins: Record<string, PinDef> }
 interface Pos { x: number; y: number }
 
+// ref[0] ?? '': a part saved with an empty reference must still draw (it stopped the whole screen before)
 function compColor(ref: string): string {
-  return (COMP_COLORS as Record<string, string>)[ref[0].toUpperCase()] || '#64748b'
+  return (COMP_COLORS as Record<string, string>)[(ref[0] ?? '').toUpperCase()] || '#64748b'
 }
 
 function getMaxPin(ref: string, nets: NetEntry[]): number {
@@ -37,7 +38,7 @@ function getMaxPin(ref: string, nets: NetEntry[]): number {
 }
 
 function getPinLayout(ref: string, pinCount: number): Layout {
-  const t = ref[0].toUpperCase()
+  const t = (ref[0] ?? '').toUpperCase()
   const PIN_STUB = 14
   if (t === 'Q') {
     return { w: 72, h: 80,

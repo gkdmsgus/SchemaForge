@@ -31,7 +31,7 @@ function getMaxPin(ref: string, nets: NetEntry[]): number {
 
 // PCB-style footprint sizes (different from schematic — flatter, wider)
 function getFootprint(ref: string, pinCount: number): Footprint {
-  const t = ref[0].toUpperCase()
+  const t = (ref[0] ?? '').toUpperCase()   // a part saved with an empty reference must still draw
   if (t === 'R' || t === 'D' || t === 'L') {
     // 2-pin SMD-like: two pads at ends
     return {
@@ -565,7 +565,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
                 const p = positions[c.ref]
                 const fp = footprints[c.ref]
                 if (!p || !fp) return null
-                const t = c.ref[0].toUpperCase()
+                const t = (c.ref[0] ?? '').toUpperCase()
                 const dim = hoveredNet != null && !effectiveNets[hoveredNet]?.nodes.some(nd => nd.ref === c.ref)
                 const editedValue = c.value || ''
 

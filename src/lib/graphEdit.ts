@@ -26,14 +26,18 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
   const same = (a: { ref: string; pin: string }, b: { ref: string; pin: string }) => a.ref === b.ref && String(a.pin) === String(b.pin)
   for (const a of actions) {
     if (a.type === 'add_component') {
-      if (!comps.find(c => c.ref === a.ref)) comps = [...comps, { ref: a.ref || '', name: a.name || a.ref || '', value: a.value || '' }]
+      // a part needs its reference: one added with ref "" (seen live, 2026-10-29) was saved to the history and
+      // stopped the schematic from drawing whenever it was opened. skippedAdds tells the chat about it.
+      const ref = (a.ref || '').trim()
+      if (ref && !comps.find(c => c.ref === ref)) comps = [...comps, { ref, name: a.name || ref, value: a.value || '' }]
     } else if (a.type === 'remove_component') {
       comps = comps.filter(c => c.ref !== a.ref)
       nets = nets.map(n => ({ ...n, nodes: n.nodes.filter(nd => nd.ref !== a.ref) })).filter(n => n.nodes.length > 0)
     } else if (a.type === 'modify_component') {
       comps = comps.map(c => (c.ref === a.ref ? { ...c, ...(a.value !== undefined ? { value: a.value } : {}) } : c))
     } else if (a.type === 'add_net') {
-      const add = (a.nodes || []).map(nd => ({ ref: nd.ref, pin: pinNumber(comps.find(c => c.ref === nd.ref)?.name, String(nd.pin)) }))
+      const add = (a.nodes || []).filter(nd => (nd.ref || '').trim())
+        .map(nd => ({ ref: nd.ref.trim(), pin: pinNumber(comps.find(c => c.ref === nd.ref.trim())?.name, String(nd.pin)) }))
         .filter((nd, i, all) => all.findIndex(x => same(x, nd)) === i)
       // the model sometimes leaves the name out (seen with gpt-4o-mini on "connect D1 K to GND"): the net its
       // listed pins already share is the one meant; with none, a fresh name (never an empty one)
@@ -59,6 +63,21 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
  * Pins an edit took off the net they were on (moved to another net, or left on none): a guess by the model can
  * re-wire a pin that was right (seen live: a motor's + pin moved off +12V), so the chat says so under the reply.
  */
+/** the part additions applyActions left out: no reference (ref), or a reference the circuit already has */
+export function skippedAdds(graph: NetGraph, actions: ChatAction[]): string[] {
+  const taken = new Set((graph.components || []).map(c => c.ref))
+  const out: string[] = []
+  for (const a of actions) {
+    if (a.type !== 'add_component') continue
+    const ref = (a.ref || '').trim()
+    const what = [a.name, a.value].filter(Boolean).join(' ') || '부품'
+    if (!ref) out.push(`${what} (부품 기호 없음)`)
+    else if (taken.has(ref)) out.push(`${ref} (이미 있는 기호)`)
+    else taken.add(ref)
+  }
+  return out
+}
+
 export function movedPins(before: NetGraph, after: NetGraph): { pin: string; from: string; to: string | null }[] {
   const netOf = (g: NetGraph) => new Map(g.nets.flatMap(n => n.nodes.map(nd => [`${nd.ref}.${nd.pin}`, n.name] as const)))
   const a = netOf(after), refs = new Set(after.components.map(c => c.ref))
