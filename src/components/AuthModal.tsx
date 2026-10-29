@@ -378,7 +378,7 @@ const LOGIN_FEATURES = [
 ]
 
 const REGISTER_FEATURES = [
-  { icon: <IcCircuit />,  title: 'AI 회로 설계', text: 'GPT-4o 기반 자동 회로 생성' },
+  { icon: <IcCircuit />,  title: 'AI 회로 설계', text: 'AI 기반 자동 회로 생성' },
   { icon: <IcHistory />,  title: '세션 저장',    text: '모든 설계 히스토리 자동 보관' },
   { icon: <IcBookmark />, title: '즐겨찾기',    text: '나만의 회로 라이브러리 구축' },
 ]
