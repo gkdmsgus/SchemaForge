@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, withFixes } from '../src/lib/fixes.ts'
+import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, splitWarnings, withFixes } from '../src/lib/fixes.ts'
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -90,6 +90,26 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   check('F5 pinout rebuild style', JSON.stringify(got) === JSON.stringify(['tht', null, 'tht', 'smd', 'smd', null]), JSON.stringify(got))
   check('F5b a bridge named for the SMD part rebuilds in SMD', pinoutStyleFix('Bridge', 'MB6S', 'tht') === 'smd'
     && pinoutStyleFix('Bridge', 'DF06M', 'smd') === 'tht' && pinoutStyleFix('Bridge', 'DB107', 'tht') === null)
+}
+
+// F5c. legs with no pad (board.py: "D1 pin 3 has no pad in ..."): one banner item per part, the count of legs in words,
+// no pad number, pin number, footprint or net up front; the generator's lines kept whole for 자세히; other warnings untouched.
+// The diode case is the AC supply seen live: a bridge rectifier written as a 'D' with four pins.
+{
+  const warnings = ['D1 pin 3 has no pad in Diode_SMD:D_SOD-123', 'Q1 (BS170): wired with the 2N7002 pinout for SMD',
+    'D1 pin 4 has no pad in Diode_SMD:D_SOD-123', 'U9 pin 5 has no pad in Package_TO_SOT_SMD:SOT-223-3_TabPin2']
+  const parts = [{ ref: 'D1', part: 'D' }, { ref: 'Q1', part: 'Q_NMOS' }, { ref: 'U9', part: 'REG' }]
+  const { legs, rest } = splitWarnings(warnings, parts)
+  const d1 = legs.find(m => m.ref === 'D1'), u9 = legs.find(m => m.ref === 'U9')
+  check('F5c one item per part, other warnings kept', legs.length === 2 && JSON.stringify(rest) === JSON.stringify([warnings[1]])
+    && JSON.stringify(d1?.raw) === JSON.stringify([warnings[0], warnings[2]]) && JSON.stringify(d1?.pins) === '[3,4]', JSON.stringify(legs.map(m => m.ref)))
+  check('F5d words: the part, how many legs, what it means', !!d1 && d1.text.startsWith('D1(다이오드)의 다리 2개가') && d1.text.includes('연결이 기판에서 빠졌습니다')
+    && !!u9 && u9.text.startsWith('U9(레귤레이터)의 다리 1개가'), d1?.text)
+  const words = legs.flatMap(m => [m.text, m.fix])
+  check('F5e nothing a beginner cannot read first', !words.some(s => /pin|pad|has no|SOD|SOT|패드|\d번|AC\d|GND/i.test(s)), words.join(' | '))
+  check('F5f a four-legged diode points at the bridge rectifier; another part does not', !!d1?.fix.includes('브리지 정류기')
+    && !!u9 && !u9.fix.includes('브리지') && u9.fix.includes('부품 종류를 확인'), `${d1?.fix} | ${u9?.fix}`)
+  check('F5g no board parts: the kind comes from the reference', splitWarnings([warnings[0]]).legs[0]?.text.startsWith('D1(다이오드)'))
 }
 
 // F6. particles and values as written in the fix text

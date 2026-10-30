@@ -197,8 +197,9 @@ if (boards.some(x => x.b.style === 'smd' && x.b.parts.some(p => p.part === 'Q_NM
   check('H7 warning attached to its item, item first', !!it.warning && it.warning.includes('BS170이라고') && it.warning.includes('2N7002를')
     && items[0].ref === q.ref, it.warning)
   const rows = checkRows(clean, b, { items, reviewed: new Set() })
-  const left = rows.find(r => r.id === 'pinout_assumed')
-  check('H7b only the other warning stays', !!left && left.count === 1 && left.detail[0].includes('has no pad'))
+  const legsRow = rows.find(r => r.id === 'legs_unmapped')
+  check('H7b the leg warning gets its own row in words, nothing left over', !rows.some(r => r.id === 'pinout_assumed')
+    && !!legsRow && legsRow.count === 1 && !!legsRow.items?.[0].summary.includes(`${q.ref}(N-MOSFET)의 다리 1개`))
 } else skip('H7 pinout warning in its item', 'no SMD board with an N-MOSFET in server/outputs', 2)
 
 // H8. the words follow the board: a chip LED or an SMD electrolytic has no legs to talk about
@@ -296,6 +297,18 @@ if (boards.some(x => x.b.style === 'smd' && x.b.parts.some(p => p.part === 'Q_NM
     if (it.kind !== 'pinout' || !it.what.includes(style === 'smd' ? 'MB6S를' : 'DF06M을') || !it.what.includes('+ 자리를 꼭 확인')) bad.push(`${style}: ${it.what}`)
   }
   check('H14 bridge rectifier labels and words', bad.length === 0, bad.join(' | ') || item(handBoard('smd'), 'D3').what)
+}
+
+// H15. a leg the footprint has no pad for ("D1 pin 3 has no pad in ...", server/pcb/board.py): the check list says it in
+// words, as an error (its connections are not on the board), and the generator's English is not what a beginner reads
+{
+  const b: BoardModel = { ...handBoard('smd'), warnings: ['D2 pin 3 has no pad in Diode_SMD:D_SOD-123', 'D2 pin 4 has no pad in Diode_SMD:D_SOD-123'] }
+  const rows = checkRows(clean, b)
+  const shown = rows.flatMap(r => [r.label, ...r.detail, ...(r.items ?? []).flatMap(i => [i.summary, i.fix ?? ''])])
+  const row = rows.find(r => [...r.detail, ...(r.items ?? []).map(i => i.summary)].some(s => s.includes('D2')))
+  check('H15 no-pad legs in words, one error per part', !shown.some(s => /has no pad|SOD-123/.test(s)) && !!row && row.state === 'error'
+    && row.count === 1 && !!row.items?.[0].summary.includes('D2(다이오드)의 다리 2개') && overall(summarize(rows)).tone === 'bad',
+    row ? `${row.id} ${row.state} ${row.count}: ${row.items?.[0]?.summary ?? row.detail[0]}` : 'no row names D2')
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)
