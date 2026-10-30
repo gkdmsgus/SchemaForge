@@ -444,7 +444,7 @@ Hard rules. Violating any one of these makes the output unusable:
 Reference designators — use ONLY these ref_prefix values. Any other prefix gets the
 wrong PCB footprint downstream:
   R  resistor          C  capacitor           L  inductor
-  D  diode / LED       Q  transistor / FET    U  IC / regulator / timer
+  D  diode / LED / bridge rectifier           Q  transistor / FET    U  IC / regulator / timer
   SW switch / button   K  relay               LS buzzer / speaker
   BT battery / cell    J  connector, header, USB, power jack, screw terminal
   Y  crystal / oscillator
@@ -489,6 +489,7 @@ Part templates — copy verbatim, changing only name, value and the pin list:
 - Inductor: Part(tool=SKIDL, name='L', ref_prefix='L', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - LED: Part(tool=SKIDL, name='LED', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
 - Diode: Part(tool=SKIDL, name='D', ref_prefix='D', pins=[Pin(num=1,name='A',func=Pin.types.PASSIVE), Pin(num=2,name='K',func=Pin.types.PASSIVE)])
+- Bridge rectifier (AC in, DC out, one four-legged part): Part(tool=SKIDL, name='Bridge', ref_prefix='D', pins=[Pin(num=1,name='AC1',func=Pin.types.PASSIVE), Pin(num=2,name='AC2',func=Pin.types.PASSIVE), Pin(num=3,name='+',func=Pin.types.PWROUT), Pin(num=4,name='-',func=Pin.types.PASSIVE)])
 - NPN: Part(tool=SKIDL, name='Q_NPN', ref_prefix='Q', pins=[Pin(num=1,name='B',func=Pin.types.INPUT), Pin(num=2,name='C',func=Pin.types.PASSIVE), Pin(num=3,name='E',func=Pin.types.PASSIVE)])
 - N-MOSFET: Part(tool=SKIDL, name='Q_NMOS', ref_prefix='Q', pins=[Pin(num=1,name='G',func=Pin.types.INPUT), Pin(num=2,name='D',func=Pin.types.PASSIVE), Pin(num=3,name='S',func=Pin.types.PASSIVE)])
 - Op-Amp: Part(tool=SKIDL, name='OpAmp', ref_prefix='U', pins=[Pin(num=1,name='IN+',func=Pin.types.INPUT), Pin(num=2,name='IN-',func=Pin.types.INPUT), Pin(num=3,name='OUT',func=Pin.types.OUTPUT), Pin(num=4,name='V+',func=Pin.types.PWRIN), Pin(num=5,name='V-',func=Pin.types.PWRIN)])
@@ -500,6 +501,9 @@ Part templates — copy verbatim, changing only name, value and the pin list:
 - Battery: Part(tool=SKIDL, name='Battery', ref_prefix='BT', pins=[Pin(num=1,name='+',func=Pin.types.PWROUT), Pin(num=2,name='-',func=Pin.types.PWROUT)])
 - Connector / power inlet: Part(tool=SKIDL, name='Conn_01x02', ref_prefix='J', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Crystal: Part(tool=SKIDL, name='Crystal', ref_prefix='Y', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
+
+A 'D' always has exactly two pins: a one-part bridge rectifier is the 'Bridge' template above,
+with its part number as the value ('MB6S'), never a 'D' with four pins.
 
 For a part not listed here, follow the same shape: real pin names from its datasheet,
 Pin.types.PWRIN / PWROUT for supply pins, INPUT / OUTPUT for signals, PASSIVE otherwise.
@@ -1553,6 +1557,7 @@ const MOUSER_MAX_LINES = 60
 // same words as src/lib/bom.ts SEARCH_WORD (the server image does not ship src/)
 const MOUSER_WORD: Record<string, string> = {
   R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
+  Bridge: 'bridge rectifier',
   Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
   Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal',
 }
