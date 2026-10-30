@@ -1,6 +1,7 @@
 import type { BoardModel, ErcFinding, NetGraph } from '../types'
 import { operatingChecks, parseOhms, type OpCircuit, type OpResult, type OpState } from './operatingCheck'
 import { ASSUMED, PIN_NAMES, josa } from './humanReview'
+import { typeLabel } from './bom'
 
 // A fix next to a warning: what to change, in plain words, and where the code can do it the skidl lines
 // that make the change (the Code tab runs them and the checks judge the result; nothing is applied here).
@@ -251,4 +252,46 @@ export function pinoutStyleFix(part: string, value: string, style: 'smd' | 'tht'
   if (!assumed) return null
   const family = /xx$/i.test(assumed) ? new RegExp(`${assumed.slice(0, -2).replace(/^[A-Z]+/i, '')}\\d\\d`, 'i') : null
   return (family ? family.test(value) : value.toUpperCase().includes(assumed.toUpperCase())) ? other : null
+}
+
+/** A part whose footprint has no place for some of its legs, from "D1 pin 3 has no pad in Diode_SMD:D_SOD-123". */
+export interface MissingLegs {
+  ref: string
+  pins: number[]      // template pins with no pad
+  raw: string[]       // the generator's own lines, for 자세히
+  text: string        // the part and how many legs, never a pad number or a net
+  fix: string
+}
+
+/**
+ * server/pcb/board.py's no-pad warnings, one item per part. The board is missing every connection of those
+ * legs, so the words say so. A diode with more than two legs is a bridge rectifier written as a plain diode
+ * (seen live on an AC supply): its fix names the bridge part the generator now has.
+ */
+export function missingLegs(warnings: string[] | undefined, parts: Pick<BoardModel['parts'][number], 'ref' | 'part'>[] = []): MissingLegs[] {
+  const by = new Map<string, { pins: number[]; raw: string[] }>()
+  for (const w of warnings || []) {
+    const m = /^(\S+) pin (\d+) has no pad in \S+$/.exec(w)
+    if (!m) continue
+    const g = by.get(m[1]) ?? { pins: [], raw: [] }
+    g.pins.push(Number(m[2]))
+    g.raw.push(w)
+    by.set(m[1], g)
+  }
+  return [...by].map(([ref, g]) => {
+    const part = parts.find(p => p.ref === ref)?.part ?? ''
+    return {
+      ref, pins: g.pins, raw: g.raw,
+      text: `${ref}(${typeLabel(part, ref)})의 다리 ${g.pins.length}개가 기판에 놓인 부품 모양에 없습니다. 그 다리로 가야 할 연결이 기판에서 빠졌습니다.`,
+      fix: part === 'D'
+        ? '다리가 2개보다 많은 다이오드는 보통 브리지 정류기입니다. 회로를 다시 생성해 브리지 정류기 부품으로 받은 뒤 PCB를 만듭니다.'
+        : '제작 전에 부품 종류를 확인합니다. 다리 수가 같은 부품 모양이어야 모든 연결이 기판에 들어갑니다.',
+    }
+  })
+}
+
+/** The warnings as the banner lists them: one item per part with missing legs, then every other warning. */
+export function splitWarnings(warnings: string[], parts?: Pick<BoardModel['parts'][number], 'ref' | 'part'>[]): { legs: MissingLegs[]; rest: string[] } {
+  const legs = missingLegs(warnings, parts)
+  return { legs, rest: warnings.filter(w => !legs.some(m => m.raw.includes(w))) }
 }

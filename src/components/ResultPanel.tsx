@@ -26,7 +26,7 @@ import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
 import { actionLabel, applyActions, movedPins, skippedAdds, withRefs } from '../lib/graphEdit'
-import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
+import { draftWith, ercFixes, opFixes, pinoutStyleFix, splitWarnings, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
@@ -880,11 +880,14 @@ export default function ResultPanel({
                   풋프린트 없음 {pcbSummary.unmapped.length} · {pcbSummary.unmapped.map(u => u.ref).join(', ')}
                 </StatusChip>
               )}
-              {pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (
-                <StatusChip tone="bad" testId="pcb-pinout" title={pcbSummary.warnings.join('\n')}>
-                  부품 확인 {pcbSummary.warnings.length}
-                </StatusChip>
-              )}
+              {pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (() => {
+                const { legs, rest } = splitWarnings(pcbSummary.warnings, board?.final?.parts)
+                return (
+                  <StatusChip tone="bad" testId="pcb-pinout" title={[...legs.map(m => m.text), ...rest].join('\n')}>
+                    부품 확인 {legs.length + rest.length}
+                  </StatusChip>
+                )
+              })()}
               {opResults.length > 0 && (
                 <button type="button" data-testid="op-toggle" aria-expanded={opOpen && viewMode === 'schematic'} aria-controls="operating-panel"
                   onClick={() => { if (viewMode !== 'schematic') { setViewMode('schematic'); setOpOpen(true) } else setOpOpen(o => !o) }}
@@ -944,11 +947,23 @@ export default function ResultPanel({
           {viewMode !== 'schematic' && pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (() => {
             const parsed = board?.final ? pinoutWarnings(board.final) : new Map()
             const built = (board?.final?.style ?? pcbStyle) === 'tht' ? 'tht' : 'smd'
+            const { legs, rest } = splitWarnings(pcbSummary.warnings, board?.final?.parts)
             return (
               <div role="alert" data-testid="pcb-pinout-banner" style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--sf-bg-2)',
                 borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
                 <strong>제작 전 부품 확인 필요</strong>
-                {pcbSummary.warnings.map((warning, index) => {
+                {/* legs with no pad: plain words first, the generator's own lines folded under 자세히 */}
+                {legs.map(m => (
+                  <div key={m.ref} data-pinout-warning={m.ref} data-legs-warning={m.ref} style={{ marginTop: 3 }}>
+                    <div>{m.text}</div>
+                    <div style={{ color: 'var(--sf-fg-muted)' }}>해결: {m.fix}</div>
+                    <details style={{ color: 'var(--sf-fg-muted)' }}>
+                      <summary style={{ cursor: 'pointer' }}>자세히</summary>
+                      {m.raw.map(r => <div key={r} style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10 }}>{r}</div>)}
+                    </details>
+                  </div>
+                ))}
+                {rest.map((warning, index) => {
                   const ref = /^(\S+)/.exec(warning)?.[1] ?? ''
                   const w = [...parsed.values()].find(x => x.raw === warning)
                   const part = board?.final?.parts.find(p => p.ref === ref)

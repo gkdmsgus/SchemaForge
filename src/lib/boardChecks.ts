@@ -1,5 +1,6 @@
 import type { BoardModel, DrcResult } from '../types'
 import { pinoutWarnings, type ReviewItem } from './humanReview'
+import { missingLegs } from './fixes'
 import { OP_RULES, type OpResult, type OpState } from './operatingCheck'
 
 // Every check the board went through, one row per rule, so a passed rule is visible
@@ -120,6 +121,8 @@ export function drcCounts(drc: DrcResult | null): { errors: number; warnings: nu
 
 /** Row id of the person's own checks; BoardView draws its body (checkboxes) itself. */
 export const HUMAN_ROW = 'human_review'
+/** Row id of parts with legs their footprint has no pad for. */
+export const LEGS_ROW = 'legs_unmapped'
 
 export function checkRows(
   drc: DrcResult | null, final: BoardModel | null,
@@ -131,7 +134,7 @@ export function checkRows(
   for (const r of rows) {
     if (r.group) continue
     r.group = r.id.startsWith('kicad_') || r.id === 'routing' ? GROUP.board
-      : r.id === 'footprint_map' || r.id === HUMAN_ROW || r.id === 'pinout_assumed' ? GROUP.parts
+      : r.id === 'footprint_map' || r.id === LEGS_ROW || r.id === HUMAN_ROW || r.id === 'pinout_assumed' ? GROUP.parts
       : GROUP.circuit
   }
   return rows
@@ -221,6 +224,16 @@ function checkRowsBase(
       note: `${done}/${total} 확인`, detail: [], findings: [],
     })
   }
+
+  // legs with no pad: their connections are not on the board at all, so an error, one item per part in plain words
+  const legs = final ? missingLegs(final.warnings, final.parts) : []
+  if (legs.length) {
+    rows.push({
+      id: LEGS_ROW, label: '부품 다리 자리', state: 'error', count: legs.length, detail: [], findings: [],
+      items: legs.map(m => ({ ref: m.ref, state: 'error', summary: m.text, detail: [], fix: m.fix })),
+    })
+  }
+  for (const m of legs) for (const w of m.raw) covered.add(w)
 
   // pinouts the generator had to assume: only a person with the datasheet can confirm these
   const left = (final?.warnings || []).filter(w => !covered.has(w))
