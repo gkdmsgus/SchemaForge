@@ -84,6 +84,9 @@ interface Props {
 
 /** width of the assembly list beside the board (it sits next to the drawing, never over it) */
 const ASSEMBLY_W = 300
+/** width of the open checks list: a column beside the drawing too. Floating over it, it covered most of the 3D
+ *  half of 나란히 and the right third of a zoomed 2D board (frame review of 2026-10-30) */
+const CHECKS_W = 300
 
 interface Finding {
   id: string
@@ -466,6 +469,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   // an all-pass list stays folded to its header so it does not cover the 3D view
   // (it opens by itself only for errors; reviews and warnings show in the header chip)
   const listOpen = panelOpen ?? (!checkSum.pending && checkHead.tone === 'bad')
+  const docked = placed && !assembly && listOpen
   const checksRef = useRef<HTMLDivElement>(null)
   // a part picked in 3D scrolls its review item into view
   useEffect(() => {
@@ -668,9 +672,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   return (
     <div style={{ position: 'absolute', inset: 0, background: SHEET, overflow: 'hidden',
       display: 'flex', flexDirection: 'column' }}>
-      {/* drawing area: 2D and 3D panes with the panels floating over them */}
+      {/* drawing area: 2D and 3D panes with the panels floating over them, and the open checks list beside them */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, bottom: 0, right: docked ? CHECKS_W : 0, display: 'flex' }}>
       <div style={{ flex: 1, minWidth: 0, display: (view3d === '3d' && !assembly) || (asm3d && placed) ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
@@ -853,15 +857,6 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
-          {pcbFilename && placed && (
-            <button data-testid="board-real3d-toggle"
-              onClick={() => setReal3d(v => !v)}
-              style={{ position: 'absolute', left: 8, top: 8, padding: '4px 10px', borderRadius: 6,
-                border: `1px solid ${UI_LINE}`, background: real3d ? UI_FG : UI_BG, color: real3d ? '#fff' : UI_FG,
-                fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
-              {real3d ? '도형 보기' : '실제 3D'}
-            </button>
-          )}
           {/* one line always (cut with … on narrow panes) so the checks panel can stop just above it */}
           <div title={real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
             style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
@@ -874,7 +869,19 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       </div>
 
       {frames.length > 0 && (
-        <div style={{ position: 'absolute', right: assembly ? ASSEMBLY_W + 12 : 12, top: 12, display: 'flex', gap: 6 }}>
+        // the 3D view's own toggle sits in this row too: in the 3D pane's corner it was under these buttons once
+        // the open checks list made the pane narrower; a narrow drawing wraps the row instead of hiding it
+        <div style={{ position: 'absolute', right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 12, top: 12, display: 'flex', gap: 6,
+          flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: `calc(100% - ${(assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 24}px)` }}>
+          {!assembly && view3d !== '2d' && pcbFilename && placed && (
+            <button data-testid="board-real3d-toggle"
+              onClick={() => setReal3d(v => !v)}
+              style={{ padding: '4px 10px', borderRadius: 6,
+                border: `1px solid ${UI_LINE}`, background: real3d ? UI_FG : UI_BG, color: real3d ? '#fff' : UI_FG,
+                fontFamily: 'var(--sf-font-mono)', fontSize: 11, cursor: 'pointer' }}>
+              {real3d ? '도형 보기' : '실제 3D'}
+            </button>
+          )}
           {!assembly && (['2d', 'both', '3d'] as const).map(v => (
             <button key={v} onClick={() => setView3d(v)} data-testid={`view-${v}`}
               title={v === '2d' ? '평면' : v === 'both' ? '평면 + 3D' : '3D'}
@@ -977,13 +984,14 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         </div>
       )}
 
-      {/* checks: one row per rule, passed rules included; failed rows open to their findings */}
+      {/* checks: one row per rule, passed rules included; failed rows open to their findings. Open, the list is a
+          column beside the drawing; folded, its one-line header sits in the corner under the view buttons */}
       {placed && !assembly && (
-        <div ref={checksRef} data-testid="board-checks" style={{ position: 'absolute', right: 12, top: 48, width: 300, maxWidth: '48%',
-          // stops above the 3D hint in the bottom-right corner
-          maxHeight: 'calc(100% - 92px)', display: 'flex', flexDirection: 'column',
-          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
-          fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
+        <div ref={checksRef} data-testid="board-checks" data-docked={docked ? '1' : '0'} style={{ position: 'absolute', display: 'flex',
+          flexDirection: 'column', background: UI_BG, color: UI_FG, fontFamily: MONO, fontSize: 11, overflow: 'hidden',
+          ...(docked
+            ? { top: 0, right: 0, bottom: 0, width: CHECKS_W, boxSizing: 'border-box', borderLeft: `1px solid ${UI_LINE}` }
+            : { right: 12, top: 48, borderRadius: 8, border: `1px solid ${UI_LINE}` }) }}>
           <button type="button" onClick={() => setPanelOpen(!listOpen)} aria-expanded={listOpen}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', flexShrink: 0,
               border: 'none', background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit' }}>

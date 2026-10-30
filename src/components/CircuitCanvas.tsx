@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
 import type { NetGraph, NetEntry } from '../types'
+import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
 
 // ── Color palette ─────────────────────────────────────────────
 const NET_COLORS = ['#6a4cb5','#1d7a6a','#c87515','#2563eb','#b04826','#0891b2','#c2410c','#4d7c0f']
@@ -103,32 +104,110 @@ function isPowerNet(name: string): boolean {
     || /^12V/.test(n) || /^V3\d/.test(n) || /^V5\d/.test(n) || /^\d+V\d*$/.test(n)
 }
 
-function PowerSymbol({ x, y, name, color }: { x: number; y: number; name: string; color: string }) {
-  const isGnd = /GND|EARTH|VSS|VEE/i.test(name)
-  if (isGnd) {
-    return (
-      <g pointerEvents="none">
-        <line x1={x} y1={y} x2={x} y2={y+16} stroke={color} strokeWidth="1.5" />
-        <line x1={x-10} y1={y+16} x2={x+10} y2={y+16} stroke={color} strokeWidth="1.5" />
-        <line x1={x-6}  y1={y+21} x2={x+6}  y2={y+21} stroke={color} strokeWidth="1.2" />
-        <line x1={x-2}  y1={y+26} x2={x+2}  y2={y+26} stroke={color} strokeWidth="1" />
-        <text x={x} y={y+38} textAnchor="middle" fill={color} fontSize="9"
-              fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
-      </g>
-    )
+const isGround = (name: string) => /GND|EARTH|VSS|VEE/i.test(name)
+
+type SymDir = 'up' | 'down' | 'left' | 'right'
+
+// which way a power symbol points from its pin. On a side with other pins (an IC) it points away from the part:
+// drawn up or down it ran over the next pins, and NE555's GND and VCC labels landed on each other, as did
+// LM1117's VOUT and GND (frame review of 2026-10-30). On a part's top or bottom it points away from the part too.
+function powerDir(name: string, l: Layout | undefined, pin: string): SymDir {
+  const pn = l && (l.pins[pin] || l.pins[Object.keys(l.pins)[0]])
+  if (pn?.side === 'T') return 'up'
+  if (pn?.side === 'B') return 'down'
+  if (pn && l && Object.values(l.pins).filter(q => q.side === pn.side).length > 1) return pn.side === 'L' ? 'left' : 'right'
+  return isGround(name) ? 'down' : 'up'
+}
+
+function PowerSymbol({ x, y, name, color, dir }: { x: number; y: number; name: string; color: string; dir: SymDir }) {
+  const gnd = isGround(name)
+  const flat = dir === 'left' || dir === 'right'
+  const s = dir === 'right' || dir === 'down' ? 1 : -1
+  // a point `along` the stem from the pin and `across` it, whichever way the symbol points
+  const at = (along: number, across: number) => flat ? [x + s * along, y + across] : [x + across, y + s * along]
+  const seg = (a1: number, c1: number, a2: number, c2: number, w: number, k: number) => {
+    const [x1, y1] = at(a1, c1), [x2, y2] = at(a2, c2)
+    return <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={w} />
   }
+  // lying flat it keeps within its own pin's row (the next pin is 22 away) and short, so wires still pass beside it
+  const half = flat ? (gnd ? 8 : 7) : 10, stem = flat ? 10 : 16
+  const bars = gnd ? [[stem, half, 1.5], [stem + 5, half * 0.6, 1.2], [stem + 10, 2, 1]] : [[stem, half, 2]]
+  const [tx, ty] = at(flat ? stem + (gnd ? 14 : 5) : gnd ? 34 : 26, 0)
   return (
-    <g pointerEvents="none">
-      <line x1={x} y1={y} x2={x} y2={y-16} stroke={color} strokeWidth="1.5" />
-      <line x1={x-10} y1={y-16} x2={x+10} y2={y-16} stroke={color} strokeWidth="2" />
-      <text x={x} y={y-22} textAnchor="middle" fill={color} fontSize="9"
-            fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
+    <g pointerEvents="none" data-power-symbol={dir}>
+      {seg(0, 0, stem, 0, 1.5, 0)}
+      {bars.map(([a, c, w], k) => seg(a, -c, a, c, w, k + 1))}
+      <text x={tx} y={ty} textAnchor={flat ? (s > 0 ? 'start' : 'end') : 'middle'} dominantBaseline="central"
+            fill={color} fontSize="9" fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
     </g>
   )
 }
 
+// the box a power symbol covers, label included: a wall for the wires and part of what the view fits
+function powerBox(x: number, y: number, name: string, dir: SymDir): Box {
+  const tw = name.length * 5.6, gnd = isGround(name)
+  if (dir === 'left' || dir === 'right') {
+    const len = 10 + (gnd ? 14 : 5) + tw
+    return dir === 'right' ? { x0: x, y0: y - 8, x1: x + len, y1: y + 8 } : { x0: x - len, y0: y - 8, x1: x, y1: y + 8 }
+  }
+  const len = gnd ? 39 : 31, hw = Math.max(10, tw / 2)
+  return dir === 'down' ? { x0: x - hw, y0: y, x1: x + hw, y1: y + len } : { x0: x - hw, y0: y - len, x1: x + hw, y1: y }
+}
+
+interface NetDraw { ends: (Pos & { side: PinDef['side'] })[]; edges: number[][]; paths: (Pos[] | null)[] }
+
+// what the schematic draws for these positions: each wired net's pins, links and their routes around the parts
+// and power symbols (null for a power net, drawn as symbols), and the box around all of it
+function drawing(nets: NetEntry[], pos: Record<string, Pos>, layouts: Record<string, Layout>) {
+  const STUB = 14
+  const netOf = new Map<string, number>()
+  nets.forEach((n, ni) => n.nodes.forEach(nd => netOf.set(`${nd.ref}:${nd.pin}`, ni)))
+  const all: Box[] = [], walls: Box[] = [], pins: PinEnd[] = []
+  for (const [ref, l] of Object.entries(layouts)) {
+    const p = pos[ref]
+    if (!p) continue
+    // the pin dots' hit circles reach 8 past the stubs; the wires keep 12 off the body
+    const [hw, hh] = [l.w / 2, l.h / 2]
+    all.push({ x0: p.x - hw - STUB - 8, y0: p.y - hh - STUB - 8, x1: p.x + hw + STUB + 8, y1: p.y + hh + STUB + 8 })
+    walls.push({ x0: p.x - hw - 12, y0: p.y - hh - 12, x1: p.x + hw + 12, y1: p.y + hh + 12 })
+    for (const [num, pd] of Object.entries(l.pins))
+      pins.push({ ...pinAbsPos(ref, num, pos, layouts)!, side: pd.side, net: netOf.get(`${ref}:${num}`) ?? -1 })
+  }
+  const links: Link[] = []
+  const draws = nets.map((n, ni): NetDraw | null => {
+    if (isPowerNet(n.name)) {
+      for (const nd of n.nodes) {
+        const e = pinAbsPos(nd.ref, nd.pin, pos, layouts)
+        if (!e) continue
+        const b = powerBox(e.x, e.y, n.name, powerDir(n.name, layouts[nd.ref], String(nd.pin)))
+        all.push(b)
+        walls.push(grow(b, 3))
+      }
+      return null
+    }
+    const ends = n.nodes.flatMap(nd => {
+      const e = pinAbsPos(nd.ref, nd.pin, pos, layouts), l = layouts[nd.ref]
+      return e ? [{ ...e, side: (l.pins[nd.pin] || l.pins[Object.keys(l.pins)[0]]).side }] : []
+    })
+    const edges = buildMST(ends)
+    edges.forEach(([i, j]) => links.push({ net: ni, a: { ...ends[i], net: ni }, b: { ...ends[j], net: ni } }))
+    return { ends, edges, paths: [] }
+  })
+  const routes = routeLinks(links, walls, pins)
+  let k = 0
+  for (const d of draws) if (d) d.paths = d.edges.map(() => routes[k++])
+  for (const r of routes) r?.forEach(p => all.push({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }))
+  const box = all.length ? all.reduce((u, b) => ({ x0: Math.min(u.x0, b.x0), y0: Math.min(u.y0, b.y0),
+    x1: Math.max(u.x1, b.x1), y1: Math.max(u.y1, b.y1) })) : null
+  return { nets: draws, box }
+}
+
+const grow = (b: Box, m: number): Box => ({ x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m })
+const pathD = (pts: Pos[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ')
+
 // Right-angle wire routing with optional mx (vertical x) and my (middle horizontal y)
 // Default: H-V-H (3 segments). With my set: H-V-H-V (5 segments, Z-shape).
+// A wire whose bend the person dragged is drawn this way; the others go around the parts (drawing()).
 function routeWire(ax: number, ay: number, bx: number, by: number, mx?: number, my?: number): string {
   const midX = mx !== undefined ? mx : ax + (bx - ax) * 0.5
   const midY = my !== undefined ? my : by
@@ -222,19 +301,14 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   // every part in view, centred, never enlarged past 1:1 (⌂, and each circuit as it opens). Zoom 1 at the origin
   // left a power circuit's regulator and the motor demo's sense resistors below the visible part (2026-10-30)
-  function fitTo(pos: Record<string, Pos>) {
+  // the nets drawn: the graph's as it opens (a person's edits to the last circuit are about to be dropped)
+  function fitTo(pos: Record<string, Pos>, drawn: NetEntry[] = effectiveNets) {
     const el = containerRef.current
-    const refs = Object.keys(pos)
-    if (!el || !refs.length || !el.clientWidth || !el.clientHeight) { setZoom(1); setPan({ x:0, y:0 }); return }
-    // a part's box, its pin stubs, and the power symbols and labels drawn past them
-    const EDGE = 14 + 34, PAD = 24
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-    for (const r of refs) {
-      const p = pos[r], l = layouts[r]
-      const hw = (l?.w || 80) / 2 + EDGE, hh = (l?.h || 60) / 2 + EDGE
-      x0 = Math.min(x0, p.x - hw); x1 = Math.max(x1, p.x + hw)
-      y0 = Math.min(y0, p.y - hh); y1 = Math.max(y1, p.y + hh)
-    }
+    // the parts with their pin stubs, the power symbols and labels drawn past them, and the wires around them
+    const b = drawing(drawn, pos, layouts).box
+    if (!el || !b || !el.clientWidth || !el.clientHeight) { setZoom(1); setPan({ x:0, y:0 }); return }
+    const PAD = 24
+    const { x0, y0, x1, y1 } = b
     const cw = el.clientWidth, ch = el.clientHeight
     const z = Math.max(0.25, Math.min(1, (cw - 2 * PAD) / (x1 - x0), (ch - 2 * PAD) / (y1 - y0)))
     // the content is drawn as scale(z) translate(pan): on screen a point sits at z * (u + pan)
@@ -276,8 +350,11 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     setWireDrag(null)
     wireDragRef.current = null
     setWireBends({})
-    fitTo(auto.positions)
+    fitTo(auto.positions, nets)
   }, [graph])
+
+  // routed again only when a part moves or a net changes, not on every hover
+  const drawn = useMemo(() => drawing(effectiveNets, positions, layouts), [effectiveNets, positions, layouts])
 
   if (!graph || !comps.length) return null
 
@@ -698,10 +775,6 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
               const color = isPwr
                 ? (/GND|EARTH|VSS|VEE/i.test(net.name) ? '#4a7a6a' : '#f08080')
                 : NET_COLORS[ni % NET_COLORS.length]
-              const pts = net.nodes
-                .map(n => pinAbsPos(n.ref, n.pin, positions, layouts))
-                .filter((p): p is Pos => p !== null)
-              if (!pts.length) return null
               const isHov = hoveredNet===ni
               const isSel = selectedNet===ni
 
@@ -713,17 +786,35 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                      onPointerLeave={() => setHoveredNet(prev=>prev===ni?null:prev)}
                      onClick={e => onNetClick(e, ni)}
                      style={{ cursor:'pointer' }}>
-                    {pts.map((pt, pi) => (
-                      <g key={pi} opacity={isSel||isHov ? 1 : 0.75}>
-                        {isSel && <circle cx={pt.x} cy={pt.y} r="10" fill={color} fillOpacity="0.15" />}
-                        <PowerSymbol x={pt.x} y={pt.y} name={net.name} color={color} />
-                      </g>
-                    ))}
+                    {net.nodes.map((nd, pi) => {
+                      const pt = pinAbsPos(nd.ref, nd.pin, positions, layouts)
+                      return pt && (
+                        <g key={pi} opacity={isSel||isHov ? 1 : 0.75}>
+                          {isSel && <circle cx={pt.x} cy={pt.y} r="10" fill={color} fillOpacity="0.15" />}
+                          <PowerSymbol x={pt.x} y={pt.y} name={net.name} color={color}
+                                       dir={powerDir(net.name, layouts[nd.ref], String(nd.pin))} />
+                        </g>
+                      )
+                    })}
                   </g>
                 )
               }
 
-              const mstEdges = buildMST(pts)
+              const nd = drawn.nets[ni]
+              if (!nd?.ends.length) return null
+              const { ends: pts, edges: mstEdges } = nd
+              // each link: its route around the parts, or the person's own bend once they dragged it; the dot sits
+              // on the first corner, and a drag starts from there
+              const wires = mstEdges.map(([ai, bi], i) => {
+                const a=pts[ai], b=pts[bi]
+                const bend = wireBends[`${ni}_${i}`]
+                const route = bend ? null : nd.paths[i]
+                const corner = route && route.length > 2 ? route[1] : null
+                const mx = bend?.mx ?? corner?.x ?? a.x+(b.x-a.x)*0.5
+                const my = bend?.my
+                return { d: route ? pathD(route) : routeWire(a.x,a.y,b.x,b.y,mx,my), mx, my: my ?? b.y,
+                         dot: { x: mx, y: my ?? corner?.y ?? a.y } }
+              })
 
               return (
                 <g key={`net-${ni}`}
@@ -733,46 +824,32 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                    onClick={e => onNetClick(e, ni)}
                    style={{ cursor:'pointer' }}>
                   {/* selection glow */}
-                  {isSel && mstEdges.map(([ai, bi], i) => {
-                    const a=pts[ai], b=pts[bi]
-                    const bend = wireBends[`${ni}_${i}`]
-                    const mx = bend?.mx ?? a.x+(b.x-a.x)*0.5
-                    const my = bend?.my
-                    return (
-                      <path key={`glow-${i}`} d={routeWire(a.x,a.y,b.x,b.y,mx,my)}
-                            fill="none" stroke={color} strokeWidth="8" strokeOpacity="0.18"
-                            pointerEvents="none" />
-                    )
-                  })}
+                  {isSel && wires.map((w, i) => (
+                    <path key={`glow-${i}`} d={w.d}
+                          fill="none" stroke={color} strokeWidth="8" strokeOpacity="0.18"
+                          pointerEvents="none" />
+                  ))}
                   {/* MST wire segments */}
-                  {mstEdges.map(([ai, bi], i) => {
-                    const a=pts[ai], b=pts[bi]
-                    const bend = wireBends[`${ni}_${i}`]
-                    const defaultMx = a.x+(b.x-a.x)*0.5
-                    const mx = bend?.mx ?? defaultMx
-                    const my = bend?.my
+                  {wires.map((w, i) => {
                     const isDraggingThis = wireDrag?.netIdx===ni && wireDrag?.segIdx===i
                     return (
                       <g key={i}>
-                        <path d={routeWire(a.x,a.y,b.x,b.y,mx,my)} fill="none"
+                        <path d={w.d} fill="none"
                               stroke="transparent" strokeWidth="16" style={{ cursor:'move' }}
-                              onPointerDown={e => onWireDragStart(e, ni, i, mx, my ?? b.y)} />
-                        <path d={routeWire(a.x,a.y,b.x,b.y,mx,my)} fill="none"
+                              onPointerDown={e => onWireDragStart(e, ni, i, w.mx, w.my)} />
+                        <path d={w.d} fill="none"
                               stroke={color}
                               strokeWidth={isSel||isDraggingThis ? 2.5 : isHov ? 2.2 : 1.4}
                               strokeOpacity={isSel||isDraggingThis ? 1 : isHov ? 1 : 0.65}
                               pointerEvents="none" />
-                        <circle cx={mx} cy={my ?? a.y} r={isSel||isDraggingThis ? 4 : 2.5}
+                        <circle cx={w.dot.x} cy={w.dot.y} r={isSel||isDraggingThis ? 4 : 2.5}
                                 fill={color} fillOpacity={isSel||isHov?1:0.6} pointerEvents="none" />
                       </g>
                     )
                   })}
                   {/* net label */}
-                  {(isHov || isSel) && mstEdges.length>0 && (() => {
-                    const [ai, bi] = mstEdges[0]
-                    const a=pts[ai], b=pts[bi]
-                    const mx = (wireBends[`${ni}_0`]?.mx) ?? (a.x+b.x)/2
-                    const my = Math.min(a.y,b.y)-12
+                  {(isHov || isSel) && wires.length>0 && (() => {
+                    const mx = wires[0].dot.x, my = wires[0].dot.y-8
                     return (
                       <g pointerEvents="none">
                         <rect x={mx-28} y={my-12} width={56} height={16} rx="3"
