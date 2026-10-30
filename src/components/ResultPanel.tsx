@@ -12,7 +12,7 @@ import { buildBom, compactRefs, type BomBoard } from '../lib/bom'
 import { assemblyRefs } from '../lib/assembly'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
-import { toLF, type CodeEdit } from '../lib/pythonCode'
+import { firstChangedLine, toLF, type CodeEdit } from '../lib/pythonCode'
 import TraceField from './TraceField.tsx'
 import {
   Button, Input,
@@ -406,7 +406,8 @@ export default function ResultPanel({
     const base = codeEdit?.text ?? result.code
     const text = draftWith(base, fix.lines, note)
     if (!text) return
-    setCodeEdit({ text, error: null })
+    // the lines go in just before generate_netlist, at the end: the editor scrolls there (it stayed at the top)
+    setCodeEdit({ text, error: null, show: firstChangedLine(base, text) })
     setActiveTab('Code')
     setDrawerOpen(true)
   }

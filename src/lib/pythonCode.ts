@@ -156,4 +156,14 @@ export interface CodeEdit {
   error: CodeError | null
   /** a run of this text is in flight (the textarea is read-only meanwhile) */
   running?: boolean
+  /** a line to bring into view and select once, then cleared: the first line a fix put in */
+  show?: number
+}
+
+/** the first line (from 1) where `after` differs from `before`: where a fix's lines went in */
+export function firstChangedLine(before: string, after: string): number {
+  const a = toLF(before).split('\n'), b = toLF(after).split('\n')
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  return i + 1
 }
