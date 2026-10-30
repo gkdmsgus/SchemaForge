@@ -103,26 +103,41 @@ function isPowerNet(name: string): boolean {
     || /^12V/.test(n) || /^V3\d/.test(n) || /^V5\d/.test(n) || /^\d+V\d*$/.test(n)
 }
 
-function PowerSymbol({ x, y, name, color }: { x: number; y: number; name: string; color: string }) {
-  const isGnd = /GND|EARTH|VSS|VEE/i.test(name)
-  if (isGnd) {
-    return (
-      <g pointerEvents="none">
-        <line x1={x} y1={y} x2={x} y2={y+16} stroke={color} strokeWidth="1.5" />
-        <line x1={x-10} y1={y+16} x2={x+10} y2={y+16} stroke={color} strokeWidth="1.5" />
-        <line x1={x-6}  y1={y+21} x2={x+6}  y2={y+21} stroke={color} strokeWidth="1.2" />
-        <line x1={x-2}  y1={y+26} x2={x+2}  y2={y+26} stroke={color} strokeWidth="1" />
-        <text x={x} y={y+38} textAnchor="middle" fill={color} fontSize="9"
-              fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
-      </g>
-    )
+const isGround = (name: string) => /GND|EARTH|VSS|VEE/i.test(name)
+
+type SymDir = 'up' | 'down' | 'left' | 'right'
+
+// which way a power symbol points from its pin. On a side with other pins (an IC) it points away from the part:
+// drawn up or down it ran over the next pins, and NE555's GND and VCC labels landed on each other, as did
+// LM1117's VOUT and GND (frame review of 2026-10-30). On a part's top or bottom it points away from the part too.
+function powerDir(name: string, l: Layout | undefined, pin: string): SymDir {
+  const pn = l && (l.pins[pin] || l.pins[Object.keys(l.pins)[0]])
+  if (pn?.side === 'T') return 'up'
+  if (pn?.side === 'B') return 'down'
+  if (pn && l && Object.values(l.pins).filter(q => q.side === pn.side).length > 1) return pn.side === 'L' ? 'left' : 'right'
+  return isGround(name) ? 'down' : 'up'
+}
+
+function PowerSymbol({ x, y, name, color, dir }: { x: number; y: number; name: string; color: string; dir: SymDir }) {
+  const gnd = isGround(name)
+  const flat = dir === 'left' || dir === 'right'
+  const s = dir === 'right' || dir === 'down' ? 1 : -1
+  // a point `along` the stem from the pin and `across` it, whichever way the symbol points
+  const at = (along: number, across: number) => flat ? [x + s * along, y + across] : [x + across, y + s * along]
+  const seg = (a1: number, c1: number, a2: number, c2: number, w: number, k: number) => {
+    const [x1, y1] = at(a1, c1), [x2, y2] = at(a2, c2)
+    return <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={w} />
   }
+  // lying flat it keeps within its own pin's row (the next pin is 22 away) and short, so wires still pass beside it
+  const half = flat ? (gnd ? 8 : 7) : 10, stem = flat ? 10 : 16
+  const bars = gnd ? [[stem, half, 1.5], [stem + 5, half * 0.6, 1.2], [stem + 10, 2, 1]] : [[stem, half, 2]]
+  const [tx, ty] = at(flat ? stem + (gnd ? 14 : 5) : gnd ? 34 : 26, 0)
   return (
-    <g pointerEvents="none">
-      <line x1={x} y1={y} x2={x} y2={y-16} stroke={color} strokeWidth="1.5" />
-      <line x1={x-10} y1={y-16} x2={x+10} y2={y-16} stroke={color} strokeWidth="2" />
-      <text x={x} y={y-22} textAnchor="middle" fill={color} fontSize="9"
-            fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
+    <g pointerEvents="none" data-power-symbol={dir}>
+      {seg(0, 0, stem, 0, 1.5, 0)}
+      {bars.map(([a, c, w], k) => seg(a, -c, a, c, w, k + 1))}
+      <text x={tx} y={ty} textAnchor={flat ? (s > 0 ? 'start' : 'end') : 'middle'} dominantBaseline="central"
+            fill={color} fontSize="9" fontFamily="'IBM Plex Mono',monospace" fontWeight="600">{name}</text>
     </g>
   )
 }
@@ -713,12 +728,16 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                      onPointerLeave={() => setHoveredNet(prev=>prev===ni?null:prev)}
                      onClick={e => onNetClick(e, ni)}
                      style={{ cursor:'pointer' }}>
-                    {pts.map((pt, pi) => (
-                      <g key={pi} opacity={isSel||isHov ? 1 : 0.75}>
-                        {isSel && <circle cx={pt.x} cy={pt.y} r="10" fill={color} fillOpacity="0.15" />}
-                        <PowerSymbol x={pt.x} y={pt.y} name={net.name} color={color} />
-                      </g>
-                    ))}
+                    {net.nodes.map((nd, pi) => {
+                      const pt = pinAbsPos(nd.ref, nd.pin, positions, layouts)
+                      return pt && (
+                        <g key={pi} opacity={isSel||isHov ? 1 : 0.75}>
+                          {isSel && <circle cx={pt.x} cy={pt.y} r="10" fill={color} fillOpacity="0.15" />}
+                          <PowerSymbol x={pt.x} y={pt.y} name={net.name} color={color}
+                                       dir={powerDir(net.name, layouts[nd.ref], String(nd.pin))} />
+                        </g>
+                      )
+                    })}
                   </g>
                 )
               }
