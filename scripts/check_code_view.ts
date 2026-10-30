@@ -12,7 +12,8 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { errorLine, indentLines, lineRange, summarizeError, toLF, tokenizePython, type Tok } from '../src/lib/pythonCode.ts'
+import { errorLine, firstChangedLine, indentLines, lineRange, summarizeError, toLF, tokenizePython, type Tok } from '../src/lib/pythonCode.ts'
+import { draftWith } from '../src/lib/fixes.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 let failed = 0
@@ -203,6 +204,16 @@ function runPython(source: string): { ok: boolean; stderr: string; why: string }
     const r = f && b && s ? ratio(f, over(b, s)) : 0
     check(`g: contrast ${name}`, r >= 4.5, f && b && s ? `${fg} on ${bg}${base ? ` over ${base}` : ''} = ${r.toFixed(2)}:1` : `colour not found (${fg} on ${bg})`)
   }
+}
+
+// h. "Code 탭에 고칠 줄 넣기" puts the lines just before generate_netlist, near the end: the editor is told the first
+// of them to bring into view (it stayed at line 1 and the fix was out of sight: tour review of 2026-10-30)
+{
+  const code = ['from skidl import *', '', "vcc = Net('VCC')", "r1 = Part('Device', 'R', value='10')", '', 'generate_netlist()', ''].join('\r\n')
+  const text = draftWith(code, ["r1.value = '470'"], '저항을 470 Ω으로') ?? ''
+  const at = firstChangedLine(code, text)
+  check('h: the first line a fix put in is found (CRLF code, LF draft)', at === 6 && text.split('\n')[at - 1] === '# 고침: 저항을 470 Ω으로', `line ${at}: ${text.split('\n')[at - 1]}`)
+  check('h: no change, no line past the end', firstChangedLine(code, code) === code.split('\r\n').length + 1)
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nall code view checks passed')

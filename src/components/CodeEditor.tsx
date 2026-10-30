@@ -189,6 +189,13 @@ export default function CodeEditor({
     }
   }
 
+  // a fix put into the draft: its first line comes into view, selected, once
+  useEffect(() => {
+    if (!edit?.show || !taRef.current) return
+    jumpTo(edit.show)
+    setEdit(e => (e ? { ...e, show: undefined } : e))
+  }, [edit?.show])
+
   function jumpTo(line: number) {
     const ta = taRef.current
     if (!ta || !edit) return
