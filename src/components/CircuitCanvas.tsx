@@ -220,6 +220,28 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   const auto = useMemo(() => autoLayout(comps, layouts), [graph, layouts])
 
+  // every part in view, centred, never enlarged past 1:1 (⌂, and each circuit as it opens). Zoom 1 at the origin
+  // left a power circuit's regulator and the motor demo's sense resistors below the visible part (2026-10-30)
+  function fitTo(pos: Record<string, Pos>) {
+    const el = containerRef.current
+    const refs = Object.keys(pos)
+    if (!el || !refs.length || !el.clientWidth || !el.clientHeight) { setZoom(1); setPan({ x:0, y:0 }); return }
+    // a part's box, its pin stubs, and the power symbols and labels drawn past them
+    const EDGE = 14 + 34, PAD = 24
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+    for (const r of refs) {
+      const p = pos[r], l = layouts[r]
+      const hw = (l?.w || 80) / 2 + EDGE, hh = (l?.h || 60) / 2 + EDGE
+      x0 = Math.min(x0, p.x - hw); x1 = Math.max(x1, p.x + hw)
+      y0 = Math.min(y0, p.y - hh); y1 = Math.max(y1, p.y + hh)
+    }
+    const cw = el.clientWidth, ch = el.clientHeight
+    const z = Math.max(0.25, Math.min(1, (cw - 2 * PAD) / (x1 - x0), (ch - 2 * PAD) / (y1 - y0)))
+    // the content is drawn as scale(z) translate(pan): on screen a point sits at z * (u + pan)
+    setZoom(z)
+    setPan({ x: (cw - z * (x1 - x0)) / 2 / z - x0, y: (ch - z * (y1 - y0)) / 2 / z - y0 })
+  }
+
   useEffect(() => {
     setPositions(auto.positions)
     setSelected(null)
@@ -232,8 +254,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     setWireDrag(null)
     wireDragRef.current = null
     setWireBends({})
-    setZoom(1)
-    setPan({ x:0, y:0 })
+    fitTo(auto.positions)
   }, [graph])
 
   if (!graph || !comps.length) return null
@@ -567,7 +588,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
         <div style={{ display:'flex', gap:2 }}>
           {([['−', -0.15], ['+', 0.15], ['⌂', 0]] as [string, number][]).map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
-              if (d===0) { setZoom(1); setPan({x:0,y:0}) }
+              if (d===0) fitTo(positions)
               else setZoom(z => Math.min(4, Math.max(0.25, z+d)))
             }} style={{
               padding:'3px 8px', border:'1px solid var(--sf-line)', borderRadius:4,
@@ -738,68 +759,6 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
               )
             })}
 
-            {/* ── Endpoint handles for selected net ───── */}
-            {selectedNet !== null && !reconnectState && effectiveNets[selectedNet]?.nodes.map((nd, nodeIdx) => {
-              const pt = pinAbsPos(nd.ref, nd.pin, positions, layouts)
-              if (!pt) return null
-              const netColor = NET_COLORS[selectedNet % NET_COLORS.length]
-              return (
-                <g key={`ep-${nodeIdx}`}
-                   onPointerDown={e => onEndpointPointerDown(e, selectedNet, nodeIdx)}
-                   style={{ cursor: 'crosshair' }}>
-                  <circle cx={pt.x} cy={pt.y} r="14" fill="transparent" />
-                  <circle cx={pt.x} cy={pt.y} r="6" fill={netColor}
-                          stroke="#080a10" strokeWidth="2"
-                          style={{ filter: `drop-shadow(0 0 5px ${netColor})` }} />
-                  <text x={pt.x + 10} y={pt.y - 6} fontSize="8.5" fill={netColor}
-                        fontFamily="'IBM Plex Mono',monospace" pointerEvents="none"
-                        style={{ userSelect: 'none' }}>
-                    {nd.ref}[{nd.pin}]
-                  </text>
-                </g>
-              )
-            })}
-
-            {/* ── Reconnect drag preview ───────────────── */}
-            {reconnectState && (() => {
-              const net = effectiveNets[reconnectState.netIdx]
-              if (!net) return null
-              const fixedNodeIdx = net.nodes.findIndex((_, i) => i !== reconnectState.nodeIdx)
-              const fixedNode = fixedNodeIdx >= 0 ? net.nodes[fixedNodeIdx] : null
-              const fixedPt = fixedNode ? pinAbsPos(fixedNode.ref, fixedNode.pin, positions, layouts) : null
-              const nearest = findNearestPin(cursor.x, cursor.y)
-              const snapPt = nearest ? pinAbsPos(nearest.ref, nearest.pin, positions, layouts) : null
-              const targetPt = snapPt || cursor
-              return (
-                <g pointerEvents="none">
-                  {fixedPt && (
-                    <path d={routeWire(fixedPt.x, fixedPt.y, targetPt.x, targetPt.y)}
-                          fill="none" stroke={WIRE_PREVIEW} strokeWidth="2"
-                          strokeDasharray="8 4" />
-                  )}
-                  {snapPt && (
-                    <circle cx={snapPt.x} cy={snapPt.y} r="10" fill="none"
-                            stroke={PIN_ACTIVE} strokeWidth="2" strokeDasharray="3 2" opacity="0.8" />
-                  )}
-                  <circle cx={targetPt.x} cy={targetPt.y} r="5"
-                          fill={PIN_ACTIVE} opacity="0.9" />
-                </g>
-              )
-            })()}
-
-            {/* ── Wire preview ────────────────────────── */}
-            {wireState && wireFromPt && (
-              <g pointerEvents="none">
-                <path d={routeWire(wireFromPt.x, wireFromPt.y, cursor.x, cursor.y)}
-                      fill="none" stroke={WIRE_PREVIEW} strokeWidth="1.8"
-                      strokeDasharray="6 4" />
-                <circle cx={wireFromPt.x} cy={wireFromPt.y} r="4"
-                        fill={PIN_ACTIVE} opacity="0.9" />
-                <circle cx={cursor.x} cy={cursor.y} r="4"
-                        fill={PIN_ACTIVE} opacity="0.5" />
-              </g>
-            )}
-
             {/* ── Components ──────────────────────────── */}
             {comps.map((c, idx) => {
               const p = positions[c.ref]
@@ -938,6 +897,70 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                 </g>
               )
             })}
+
+            {/* drawn over the parts: an end handle sits on a pin, and with the parts on top a press on it
+                started a new wire from that pin instead of moving the end (tour take of 2026-10-29) */}
+            {/* ── Endpoint handles for selected net ───── */}
+            {selectedNet !== null && !reconnectState && effectiveNets[selectedNet]?.nodes.map((nd, nodeIdx) => {
+              const pt = pinAbsPos(nd.ref, nd.pin, positions, layouts)
+              if (!pt) return null
+              const netColor = NET_COLORS[selectedNet % NET_COLORS.length]
+              return (
+                <g key={`ep-${nodeIdx}`}
+                   onPointerDown={e => onEndpointPointerDown(e, selectedNet, nodeIdx)}
+                   style={{ cursor: 'crosshair' }}>
+                  <circle cx={pt.x} cy={pt.y} r="14" fill="transparent" />
+                  <circle cx={pt.x} cy={pt.y} r="6" fill={netColor}
+                          stroke="#080a10" strokeWidth="2"
+                          style={{ filter: `drop-shadow(0 0 5px ${netColor})` }} />
+                  <text x={pt.x + 10} y={pt.y - 6} fontSize="8.5" fill={netColor}
+                        fontFamily="'IBM Plex Mono',monospace" pointerEvents="none"
+                        style={{ userSelect: 'none' }}>
+                    {nd.ref}[{nd.pin}]
+                  </text>
+                </g>
+              )
+            })}
+
+            {/* ── Reconnect drag preview ───────────────── */}
+            {reconnectState && (() => {
+              const net = effectiveNets[reconnectState.netIdx]
+              if (!net) return null
+              const fixedNodeIdx = net.nodes.findIndex((_, i) => i !== reconnectState.nodeIdx)
+              const fixedNode = fixedNodeIdx >= 0 ? net.nodes[fixedNodeIdx] : null
+              const fixedPt = fixedNode ? pinAbsPos(fixedNode.ref, fixedNode.pin, positions, layouts) : null
+              const nearest = findNearestPin(cursor.x, cursor.y)
+              const snapPt = nearest ? pinAbsPos(nearest.ref, nearest.pin, positions, layouts) : null
+              const targetPt = snapPt || cursor
+              return (
+                <g pointerEvents="none">
+                  {fixedPt && (
+                    <path d={routeWire(fixedPt.x, fixedPt.y, targetPt.x, targetPt.y)}
+                          fill="none" stroke={WIRE_PREVIEW} strokeWidth="2"
+                          strokeDasharray="8 4" />
+                  )}
+                  {snapPt && (
+                    <circle cx={snapPt.x} cy={snapPt.y} r="10" fill="none"
+                            stroke={PIN_ACTIVE} strokeWidth="2" strokeDasharray="3 2" opacity="0.8" />
+                  )}
+                  <circle cx={targetPt.x} cy={targetPt.y} r="5"
+                          fill={PIN_ACTIVE} opacity="0.9" />
+                </g>
+              )
+            })()}
+
+            {/* ── Wire preview ────────────────────────── */}
+            {wireState && wireFromPt && (
+              <g pointerEvents="none">
+                <path d={routeWire(wireFromPt.x, wireFromPt.y, cursor.x, cursor.y)}
+                      fill="none" stroke={WIRE_PREVIEW} strokeWidth="1.8"
+                      strokeDasharray="6 4" />
+                <circle cx={wireFromPt.x} cy={wireFromPt.y} r="4"
+                        fill={PIN_ACTIVE} opacity="0.9" />
+                <circle cx={cursor.x} cy={cursor.y} r="4"
+                        fill={PIN_ACTIVE} opacity="0.5" />
+              </g>
+            )}
 
           </g>{/* end viewport transform */}
         </svg>
