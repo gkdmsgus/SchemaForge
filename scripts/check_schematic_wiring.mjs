@@ -5,7 +5,10 @@
 // drops a started wire, S4 joining two pins that are already on one net adds no pin twice, S5 with a net picked
 // the toolbar keeps its height and its zoom buttons, S6 dragging a picked net's end handle onto another pin moves
 // that end (the parts were drawn over the handles, so the press started a new wire instead: tour take of
-// 2026-10-29), S7 every part is in view when the circuit opens and after ⌂ (zoom 1 at the origin left parts below).
+// 2026-10-29), S7 every part is in view when the circuit opens and after ⌂ (zoom 1 at the origin left parts below),
+// S8 a click on a part shows its properties and a double-click opens its value field (the pointer was captured on
+// the press, so neither reached the part: frame review of 2026-10-30), S9 the view fits again when the drawer
+// below opens and closes (a circuit fitted with the Code drawer open stayed a tiny cluster after it closed).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -177,6 +180,35 @@ try {
   const outAfterHome = await outside()
   check('S7 every part is in view when the circuit opens and after ⌂', outAtOpen.length === 0 && outZoomed.length > 0 && outAfterHome.length === 0,
     `outside at open [${outAtOpen}], zoomed in [${outZoomed}], after ⌂ [${outAfterHome}]`)
+
+  // S8
+  await page.mouse.click(sb.x + 30, sb.y + 30)
+  await page.waitForTimeout(200)
+  const part = await page.locator("g[data-comp='D1']").boundingBox()
+  await page.mouse.click(part.x + part.width / 2, part.y + part.height / 2)
+  await page.waitForTimeout(400)
+  const props = await page.getByText('PROPERTIES', { exact: true }).isVisible().catch(() => false)
+  await page.mouse.click(sb.x + 30, sb.y + 30)
+  await page.waitForTimeout(200)
+  await page.mouse.dblclick(part.x + part.width / 2, part.y + part.height / 2)
+  await page.waitForTimeout(400)
+  const field = await page.locator('svg foreignObject input, svg input').first().isVisible().catch(() => false)
+  await page.keyboard.press('Escape')
+  check('S8 a click on a part shows its properties, a double-click opens its value field', props && field, `properties ${props}, value field ${field}`)
+
+  // S9: open and close the drawer below the schematic (the Netlist tab)
+  await page.getByRole('button', { name: '⌂', exact: true }).first().click()
+  await page.waitForTimeout(300)
+  const z0 = await page.evaluate(() => document.querySelector('svg:has(g[data-comp]) > g')?.getAttribute('transform'))
+  await page.locator('button.sf-drawer-tab', { hasText: 'Netlist' }).first().click()
+  await page.waitForTimeout(600)
+  const outOpen = await outside()
+  await page.locator('button.sf-drawer-tab').first().locator('xpath=..').getByRole('button', { name: '×' }).click()
+  await page.waitForTimeout(600)
+  const outClosed = await outside()
+  const z1 = await page.evaluate(() => document.querySelector('svg:has(g[data-comp]) > g')?.getAttribute('transform'))
+  check('S9 the view fits again as the drawer below opens and closes', outOpen.length === 0 && outClosed.length === 0 && z1 === z0,
+    `outside with the drawer open [${outOpen}], after it closes [${outClosed}], view ${z0 === z1 ? 'back as before' : `${z0} → ${z1}`}`)
 } finally {
   await browser.close()
 }
