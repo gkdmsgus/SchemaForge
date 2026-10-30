@@ -13,7 +13,7 @@ import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix,
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { applyActions, movedPins, pinNumber, skippedAdds } from '../src/lib/graphEdit.ts'
+import { actionLabel, applyActions, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
@@ -165,17 +165,42 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
 }
 
 // G5. an add with no reference (live, 2026-10-29: "출력 쪽에 100nF 커패시터를 하나 추가해줘" saved a part with ref "",
-// and the schematic stopped drawing whenever that history entry was opened) is left out and told; a net does not
-// take a pin with no reference; a taken reference is told too
+// and the schematic stopped drawing whenever that history entry was opened) is never applied as such: the code
+// names the part when it can tell its kind; otherwise it is left out and told. A net takes no pin with no reference;
+// a taken reference is told too
 {
   const g: NetGraph = { components: [{ ref: 'C1', value: '10uF', name: 'C' }, { ref: 'U1', value: 'LM7805', name: 'REG' }], nets: [net('VOUT', 'U1.3')] }
-  const acts = [{ type: 'add_component' as const, name: 'C', value: '100nF' }, { type: 'add_component' as const, ref: ' ', name: 'C', value: '1nF' },
+  const acts = [{ type: 'add_component' as const, name: 'Widget', value: '?' }, { type: 'add_component' as const, ref: ' ', value: '1' },
     { type: 'add_component' as const, ref: 'C1', name: 'C', value: '1uF' },
     { type: 'add_net' as const, name: 'VOUT', nodes: [{ ref: '', pin: '1' }, { ref: 'C1', pin: '1' }] }]
-  const out = applyActions(g, acts)
+  const filled = withRefs(g, acts)
+  const out = applyActions(g, filled)
   check('G5 no part without a reference, no net pin without one, and the chat is told',
     out.components.map(c => c.ref).join() === 'C1,U1' && JSON.stringify(out.nets) === JSON.stringify([net('VOUT', 'U1.3', 'C1.1')])
-    && skippedAdds(g, acts).join(' | ') === 'C 100nF (부품 기호 없음) | C 1nF (부품 기호 없음) | C1 (이미 있는 기호)', skippedAdds(g, acts).join(' | '))
+    && skippedAdds(g, filled).join(' | ') === 'Widget ? (부품 기호 없음) | 1 (부품 기호 없음) | C1 (이미 있는 기호)', skippedAdds(g, filled).join(' | '))
+}
+
+// G7. the code names a part the model added without a reference (live, 2026-10-30: the 100nF capacitor came with no
+// ref while the edit put C3.1 on VOUT, so the net pointed at a part that was never added: ERC "삭제된 부품을 가리키는
+// 연결 C3", and the chat chip read "+undefined")
+{
+  const g: NetGraph = { components: [{ ref: 'C1', value: '1000uF', name: 'C' }, { ref: 'C2', value: '100nF', name: 'C' }, { ref: 'U1', value: 'LM7805', name: 'REG' }],
+    nets: [net('VOUT', 'U1.3'), net('GND', 'U1.2')] }
+  const live = [{ type: 'add_component' as const, name: 'C', value: '100nF' },
+    { type: 'add_net' as const, name: 'VOUT', nodes: [{ ref: 'U1', pin: '3' }, { ref: 'C3', pin: '1' }] },
+    { type: 'add_net' as const, name: 'GND', nodes: [{ ref: 'U1', pin: '2' }, { ref: 'C3', pin: '2' }] }]
+  const f1 = withRefs(g, live), o1 = applyActions(g, f1)
+  const named = f1[0].ref === 'C3' && o1.components.some(c => c.ref === 'C3' && c.value === '100nF')
+    && JSON.stringify(o1.nets) === JSON.stringify([net('VOUT', 'U1.3', 'C3.1'), net('GND', 'U1.2', 'C3.2')]) && skippedAdds(g, f1).length === 0
+  // no net names it: the next free number of its kind, and a net pin with no reference is that part's
+  const f2 = withRefs(g, [{ type: 'add_component', name: 'LED', value: 'RED' }, { type: 'add_component', value: '4.7k' },
+    { type: 'add_net', name: 'VOUT', nodes: [{ ref: '', pin: '1' }] }])
+  const next = f2[0].ref === 'D1' && f2[1].ref === 'R1' && JSON.stringify(f2[2].nodes) === JSON.stringify([{ ref: '', pin: '1' }])
+  const f3 = withRefs(g, [{ type: 'add_component', name: 'C', value: '1uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: '', pin: '1' }] }])
+  const onePin = f3[0].ref === 'C3' && f3[1].nodes?.[0].ref === 'C3'
+  const chip = actionLabel({ type: 'add_component', name: 'C', value: '100nF' }) === '+C' && actionLabel(f1[0]) === '+C3'
+  check('G7 a part added without a reference is named by the code (the net\'s C3, else the next number), chips never "+undefined"',
+    named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
