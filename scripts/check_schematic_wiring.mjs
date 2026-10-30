@@ -3,7 +3,9 @@
 // the wire hint appeared, the schematic moved down, the release landed beside the pin and the wire was dropped at
 // once: tour take of 2026-10-29), S2 a click on a pin of another net joins the two nets, S3 a click on empty space
 // drops a started wire, S4 joining two pins that are already on one net adds no pin twice, S5 with a net picked
-// the toolbar keeps its height and its zoom buttons.
+// the toolbar keeps its height and its zoom buttons, S6 dragging a picked net's end handle onto another pin moves
+// that end (the parts were drawn over the handles, so the press started a new wire instead: tour take of
+// 2026-10-29), S7 every part is in view when the circuit opens and after ⌂ (zoom 1 at the origin left parts below).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -19,6 +21,16 @@ try {
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
 
   const hint = page.getByText('연결할 핀을 클릭하세요')
+  const svg = page.locator('svg:has(g[data-comp])').first()
+  // parts whose box is not wholly inside the schematic's visible part
+  const outside = () => page.evaluate(() => {
+    const v = document.querySelector('svg:has(g[data-comp])').getBoundingClientRect()
+    return [...document.querySelectorAll('g[data-comp]')].filter(g => {
+      const b = g.getBoundingClientRect()
+      return b.left < v.left || b.right > v.right || b.top < v.top || b.bottom > v.bottom
+    }).map(g => g.getAttribute('data-comp'))
+  })
+  const outAtOpen = await outside()
   const toolbar = page.locator('div', { has: page.getByText(/COMPS · \d+ NETS/) }).last()
   const toolbarHeight = async () => Math.round((await toolbar.boundingBox()).height)
   const partY = ref => page.locator(`g[data-comp='${ref}']`).boundingBox().then(b => Math.round(b.y))
@@ -109,6 +121,62 @@ try {
   const tb = await toolbar.boundingBox(), home = await page.getByRole('button', { name: '⌂', exact: true }).first().boundingBox()
   check('S5 with a net picked the toolbar keeps its height and its zoom buttons', h5 === h0 && home.x + home.width <= tb.x + tb.width,
     `toolbar ${h0}→${h5} px, ⌂ right ${Math.round(home.x + home.width)} / toolbar right ${Math.round(tb.x + tb.width)}`)
+
+  // S6: pick a net by its wire, then drag one end handle onto a pin of another part off that net
+  await page.mouse.click(sb.x + 30, sb.y + 30)
+  await page.waitForTimeout(200)
+  const m6 = await pinMap()
+  const pick = await page.evaluate(() => {
+    for (const p of document.querySelectorAll("g[data-net] path[stroke='transparent']")) {
+      const L = p.getTotalLength()
+      if (L < 40) continue
+      const m = p.getPointAtLength(L / 2), c = p.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    }
+    return null
+  })
+  await page.mouse.click(pick.x, pick.y)
+  await page.waitForTimeout(400)
+  const ends = await page.evaluate(() => [...document.querySelectorAll("svg g[style*='crosshair'] > circle[r='6']")]
+    .filter(c => !c.closest('g[data-comp]')).map(c => { const m = c.getScreenCTM(), x = +c.getAttribute('cx'), y = +c.getAttribute('cy')
+      return { x: x * m.a + y * m.c + m.e, y: x * m.b + y * m.d + m.f } }))
+  const at = q => m6.pins.find(p => Math.hypot(p.x - q.x, p.y - q.y) < 4)
+  let move = null
+  for (const h of ends) {
+    const own = at(h), keep = ends.map(at).find(p => p && p !== own)
+    const target = own && keep && m6.pins.filter(t => t.ref !== own.ref && t.net !== own.net)
+      .sort((a, b) => Math.hypot(a.x - h.x, a.y - h.y) - Math.hypot(b.x - h.x, b.y - h.y))[0]
+    if (target) { move = { h, own, keep, target }; break }
+  }
+  let moved = false, wireStarted = false
+  if (move) {
+    await page.mouse.move(move.h.x, move.h.y)
+    await page.mouse.down()
+    await page.mouse.move(move.target.x, move.target.y, { steps: 12 })
+    wireStarted = await hint.isVisible()
+    await page.mouse.up()
+    await page.waitForTimeout(400)
+    const m = await pinMap(), now = q => m.pins.find(p => Math.hypot(p.x - q.x, p.y - q.y) < 4)
+    const t = now(move.target), k = now(move.keep), o = now(move.own)
+    moved = !!t && !!k && t.net >= 0 && t.net === k.net && (!o || o.net !== k.net)
+  }
+  if (await hint.isVisible()) await page.mouse.click(sb.x + 30, sb.y + 30)
+  check('S6 dragging an end handle onto another pin moves that end of the net', !!move && moved && !wireStarted,
+    move ? `${move.own.ref} end → ${move.target.ref}; ${wireStarted ? 'a new wire started instead' : moved ? 'moved' : 'not moved'}` : 'no handle to drag')
+
+  // S7
+  const box = await svg.boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.keyboard.down('Control')
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -240)
+  await page.keyboard.up('Control')
+  await page.waitForTimeout(300)
+  const outZoomed = await outside()
+  await page.getByRole('button', { name: '⌂', exact: true }).first().click()
+  await page.waitForTimeout(300)
+  const outAfterHome = await outside()
+  check('S7 every part is in view when the circuit opens and after ⌂', outAtOpen.length === 0 && outZoomed.length > 0 && outAfterHome.length === 0,
+    `outside at open [${outAtOpen}], zoomed in [${outZoomed}], after ⌂ [${outAfterHome}]`)
 } finally {
   await browser.close()
 }
