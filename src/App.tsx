@@ -104,6 +104,8 @@ export default function App() {
   const [resultKey, setResultKey] = useState(0)
   const [pendingCached, setPendingCached] = useState<PendingCached | null>(null)
   const cachedOfferRef = useRef<HTMLDivElement>(null)
+  // the plan approved for a description goes with its generation, and with ↺ of the same description
+  const approvedPlan = useRef<{ prompt: string; plan: unknown } | null>(null)
   const pendingGenerateRef = useRef<PendingRun | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   // bumped whenever another circuit takes the screen (history open, version pick, new generation, home):
@@ -383,7 +385,8 @@ export default function App() {
       const res = await authFetch(`${API}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: p, autoFix: settings.autoRetry !== false }),
+        body: JSON.stringify({ description: p, autoFix: settings.autoRetry !== false,
+          plan: approvedPlan.current?.prompt === p ? approvedPlan.current.plan : undefined }),
         signal: abort.signal,
       })
       if (res.status === 401) {
@@ -630,7 +633,7 @@ export default function App() {
           originalPrompt={plan.originalPrompt}
           plan={plan.plan}
           loading={plan.loading}
-          onApprove={() => executeGenerate(plan.originalPrompt)}
+          onApprove={() => { approvedPlan.current = { prompt: plan.originalPrompt, plan: plan.plan }; executeGenerate(plan.originalPrompt) }}
           onRegenerate={(feedback: string) => {
             const enriched = feedback
               ? `${plan.originalPrompt}\n\n[수정 요청]\n${feedback}`

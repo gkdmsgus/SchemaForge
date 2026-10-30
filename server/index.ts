@@ -883,12 +883,35 @@ changed.`
 
 // ── POST /generate ─────────────────────────────────────────────────
 
+/**
+ * The design plan the person approved (POST /plan's answer), as lines for the circuit request. Only its known
+ * fields, as text, capped: the code that builds the circuit is still the model's, checked as before.
+ */
+export function approvedPlanText(plan: unknown): string {
+  if (!plan || typeof plan !== 'object') return ''
+  const p = plan as Record<string, unknown>
+  const s = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim().slice(0, 200) : '')
+  const rows = (v: unknown) => (Array.isArray(v) ? v.slice(0, 40).filter(x => x && typeof x === 'object') as Record<string, unknown>[] : [])
+  const lines: string[] = []
+  if (s(p.topology)) lines.push(`Topology: ${s(p.topology)}`)
+  for (const x of rows(p.specs)) if (s(x.label) || s(x.value)) lines.push(`Spec: ${s(x.label)} = ${s(x.value)}`)
+  for (const x of rows(p.parts)) {
+    const what = [s(x.ref), s(x.type), s(x.value)].filter(Boolean).join(' ')
+    if (what) lines.push(`Part: ${what}${s(x.role) ? ` (${s(x.role)})` : ''}`)
+  }
+  for (const r of Array.isArray(p.risks) ? p.risks.slice(0, 10) : []) if (s(r)) lines.push(`Watch: ${s(r)}`)
+  return lines.join('\n').slice(0, 4000)
+}
+
 app.post('/generate', optionalAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
   // The '자동 재시도' setting: one model fix for a code error and one for netlist (ERC) errors.
   // Older clients send nothing and keep both.
   const autoFix = req.body?.autoFix !== false
+  // the plan approved on 1단계 · 설계 계획 확인: it was shown and approved but never sent, so the circuit could come
+  // out with other parts (a 12 V LM7812 plan built as a 5 V LM7805: frame review of the tour, 2026-10-30)
+  const planText = approvedPlanText(req.body?.plan)
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
   res.setHeader('Cache-Control', 'no-cache, no-transform')
@@ -914,6 +937,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     res.write(sse('status', `🤖 ${modelLabel(MODEL)} is analysing and generating the circuit...`))
     const userMsg =
       `Circuit request: ${description}\n\n` +
+      (planText ? `The person approved this design plan. Build it: use these parts and values, and keep the specs:\n${planText}\n\n` : '') +
       'Design this to standard professional practice. Include every component the board ' +
       'needs to actually work — decoupling, current limiting, bulk capacitance, ' +
       'protection — not just the parts named in the request.'
