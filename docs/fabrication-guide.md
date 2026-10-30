@@ -121,7 +121,7 @@ ne555 THT 실측값 [측정]과 제조사 최소값 [JLC-능력][PCBWay-능력]:
 - 내보내기 전에 동박을 채운다(`--check-zones`). 화면의 GND 동박이 그대로 동박 층에 들어간다.
 - 드릴은 `-PTH.drl`과 `-NPTH.drl`로 나눈다(`--excellon-separate-th`) [JLC-KiCad]. 드릴 맵과 gbrjob(작업 파일)은 안내에 없어 넣지 않는다.
 - 이 9개 파일만 zip 하나로 묶는다. JLCPCB는 zip이나 rar 파일 하나, 100 MB 이하만 받는다 [JLC-견적]. PCBWay는 rar·zip·7z, 50 MB 이하를 받는다 [PCBWay-견적].
-- 앱의 기판 검사는 같은 코드로 테스트 기판 8개의 zip을 만들어, 파일 9개, 도금·비도금 드릴 분리, 동박이 거버에 들어갔는지, 동박 간격 0.5 mm를 매번 확인한다. DRC도 동박을 채운 상태로 돈다 [run_checks].
+- 앱의 기판 검사는 같은 코드로 테스트 기판 10개의 zip을 만들어, 파일 9개, 도금·비도금 드릴 분리, 동박이 거버에 들어갔는지, 동박 간격 0.5 mm를 매번 확인한다. DRC도 동박을 채운 상태로 돈다 [run_checks].
 
 ### 3-2. (선택) KiCad로 직접 다시 뽑기
 KiCad에서 기판을 고쳤을 때만 한다. 1절 8번의 .kicad_pcb를 `C:\pcb\ne555_tht.kicad_pcb`로 두고 PowerShell에서 실행한다. 앱이 쓰는 설정과 같다.

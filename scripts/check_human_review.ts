@@ -59,13 +59,15 @@ const handBoard = (style: 'smd' | 'tht', extra: BoardModel['parts'] = []): Board
     style === 'smd' ? legs('U2', 'REG', 'Package_TO_SOT_SMD:SOT-223-3_TabPin2', { 1: 1, 2: 2, 3: 3 })
       : legs('U2', 'REG', 'Package_TO_SOT_THT:TO-220-3_Vertical', { 1: 3, 2: 1, 3: 2 }),
     legs('J1', 'Conn_01x02', 'Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical', { 1: 1, 2: 2 }),
+    style === 'smd' ? legs('D3', 'Bridge', 'Package_TO_SOT_SMD:TO-269AA', { 1: 1, 2: 2, 3: 3, 4: 4 })
+      : legs('D3', 'Bridge', 'Diode_THT:Diode_Bridge_DIP-4_W7.62mm_P5.08mm', { 1: 3, 2: 4, 3: 1, 4: 2 }),
     ...extra],
 })
 const item = (b: BoardModel, ref: string) => reviewItems(b).find(i => i.ref === ref)!
 
 // H1. only parts with a polarity, an exact-part pinout, a pin-1 mark or a connector order
 if (boards.length) {
-  const target = /^(LED|D|CP|Buzzer|Battery|Q_NPN|Q_NMOS|REG|Relay|NE555|Conn_01x\d\d)$/
+  const target = /^(LED|D|CP|Buzzer|Battery|Q_NPN|Q_NMOS|REG|Relay|Bridge|NE555|Conn_01x\d\d)$/
   const bad: string[] = []
   let n = 0
   for (const { f, b } of boards) {
@@ -279,6 +281,21 @@ if (boards.some(x => x.b.style === 'smd' && x.b.parts.some(p => p.part === 'Q_NM
   check('H13 labels follow the part rotation', JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got))
   check('H13b a label for a pad the part lacks is left out',
     boardMarks({ ref: 'D1', pads: led.pads.slice(1) }, [0, 0, 0], items).map(m => m.label).join() === '+')
+}
+
+// H14. a bridge rectifier: + and − on the pads server/pcb/footprints_table.py wires template pins 3 (+) and 4 (−),
+// ~ on the two AC pads; the words name the part the pinout follows and say the + decides which way round
+{
+  const table = fs.readFileSync(path.join('server', 'pcb', 'footprints_table.py'), 'utf-8')
+  const bad: string[] = []
+  for (const style of ['smd', 'tht'] as const) {
+    const m = new RegExp(`\\('Bridge', '${style}'\\): \\([^{]*\\{1: '(\\d)', 2: '(\\d)', 3: '(\\d)', 4: '(\\d)'\\}`).exec(table)
+    const it = item(handBoard(style), 'D3')
+    const want = m ? { [m[1]]: '~', [m[2]]: '~', [m[3]]: '+', [m[4]]: '−' } : null
+    if (!want || JSON.stringify(marksOf(it)) !== JSON.stringify(Object.fromEntries(Object.entries(want).sort()))) bad.push(`${style} ${JSON.stringify(marksOf(it))}`)
+    if (it.kind !== 'pinout' || !it.what.includes(style === 'smd' ? 'MB6S를' : 'DF06M을') || !it.what.includes('+ 자리를 꼭 확인')) bad.push(`${style}: ${it.what}`)
+  }
+  check('H14 bridge rectifier labels and words', bad.length === 0, bad.join(' | ') || item(handBoard('smd'), 'D3').what)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)

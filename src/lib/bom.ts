@@ -61,7 +61,7 @@ export function normValue(v: string): string {
 }
 
 const TYPE_BY_PART: Record<string, string> = {
-  R: '저항', C: '커패시터', CP: '전해 커패시터', L: '인덕터', LED: 'LED', D: '다이오드',
+  R: '저항', C: '커패시터', CP: '전해 커패시터', L: '인덕터', LED: 'LED', D: '다이오드', Bridge: '브리지 정류기',
   Q_NPN: 'NPN 트랜지스터', Q_NMOS: 'N-MOSFET', REG: '레귤레이터', NE555: '555 타이머', OpAmp: '연산 증폭기',
   Relay: '릴레이', Buzzer: '버저', SW: '스위치', Battery: '배터리', Crystal: '크리스탈',
 }
@@ -199,6 +199,7 @@ export function furnitureSummary(furniture: Bom['furniture']): string {
 
 export const SEARCH_WORD: Record<string, string> = {
   R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
+  Bridge: 'bridge rectifier',
   Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
   Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal',
 }

@@ -88,6 +88,8 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const got = [pinoutStyleFix('Q_NPN', '2N3904', 'smd'), pinoutStyleFix('Q_NPN', 'BC547', 'smd'), pinoutStyleFix('REG', 'L7805', 'smd'),
     pinoutStyleFix('REG', 'AMS1117-3.3', 'tht'), pinoutStyleFix('Q_NMOS', '2N7002', 'tht'), pinoutStyleFix('R', '1k', 'smd')]
   check('F5 pinout rebuild style', JSON.stringify(got) === JSON.stringify(['tht', null, 'tht', 'smd', 'smd', null]), JSON.stringify(got))
+  check('F5b a bridge named for the SMD part rebuilds in SMD', pinoutStyleFix('Bridge', 'MB6S', 'tht') === 'smd'
+    && pinoutStyleFix('Bridge', 'DF06M', 'smd') === 'tht' && pinoutStyleFix('Bridge', 'DB107', 'tht') === null)
 }
 
 // F6. particles and values as written in the fix text
