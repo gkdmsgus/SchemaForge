@@ -19,13 +19,13 @@ import {
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
 } from './primitives.tsx'
 import type {
-  GenerateResult, Version, ChatSession, NetGraph, ChatMessage, PcbSummary, ErcFinding,
+  GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary, ErcFinding,
   BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
 } from '../types'
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
-import { applyActions, movedPins, skippedAdds } from '../lib/graphEdit'
+import { actionLabel, applyActions, movedPins, skippedAdds, withRefs } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
@@ -511,8 +511,10 @@ export default function ResultPanel({
             })
             setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 10)
           } else if (evt === 'done') {
-            const { reply, actions } = JSON.parse(raw)
+            const { reply, actions: proposed } = JSON.parse(raw)
             const snapshot = effectiveGraph ?? null
+            // a part the model added without a reference gets one here, before it is applied, told or saved
+            const actions: ChatAction[] = snapshot && proposed?.length ? withRefs(snapshot, proposed) : proposed
             let newGraph: NetGraph | null = snapshot
             let note = ''
             if (actions?.length && snapshot) {
@@ -785,7 +787,7 @@ export default function ResultPanel({
                             color: a.type.startsWith('add') ? 'var(--sf-cyan)' : a.type.startsWith('remove') ? 'var(--sf-danger)' : 'var(--sf-violet)',
                             border: `1px solid ${a.type.startsWith('add') ? 'var(--sf-cyan-line)' : a.type.startsWith('remove') ? 'rgba(255,106,91,0.30)' : 'var(--sf-line)'}`,
                           }}>
-                            {a.type === 'add_component' ? `+${a.ref}` : a.type === 'remove_component' ? `−${a.ref}` : a.type === 'modify_component' ? `~${a.ref}` : a.type === 'add_net' ? `+${a.name}` : a.type === 'remove_net' ? `−${a.name}` : a.type}
+                            {actionLabel(a)}
                           </span>
                         ))}
                       </div>

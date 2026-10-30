@@ -812,7 +812,7 @@ changed.`
               type: 'object',
               properties: {
                 type: { type: 'string', enum: ['remove_component','add_component','modify_component','add_net','remove_net'] },
-                ref:   { type: 'string' },
+                ref:   { type: 'string', description: 'remove/modify_component: a ref from the list. add_component: the new part\'s ref, the next free number for its prefix (C3 when C1 and C2 exist) — never leave it out, and use the same ref in add_net nodes' },
                 name:  { type: 'string', description: 'add_component: the part type (R, LED, ...). add_net / remove_net: the net name (required; an existing net from the list to add pins to it)' },
                 value: { type: 'string' },
                 nodes: { type: 'array', description: 'add_net: every ref+pin on the net', items: { type: 'object', properties: { ref: { type: 'string' }, pin: { type: 'string', description: 'pin number as in ref.pin' } }, required: ['ref','pin'] } },

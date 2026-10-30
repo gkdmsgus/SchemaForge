@@ -59,6 +59,61 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
   return { ...graph, components: comps, nets }
 }
 
+/** the part types the AI editor is told to use (server/index.ts), and a few words for them, → reference prefix */
+const PREFIXES: [RegExp, string][] = [
+  [/^(R|resistor|저항)$/i, 'R'], [/^(C|CP|capacitor|커패시터|콘덴서)$/i, 'C'], [/^(L|inductor|인덕터)$/i, 'L'],
+  [/^(LED|D|diode|다이오드)$/i, 'D'], [/^Q(_|$)/i, 'Q'], [/^(NE555|REG|U)$/i, 'U'], [/^SW/i, 'SW'], [/^relay$/i, 'K'],
+  [/^buzzer$/i, 'LS'], [/^battery$/i, 'BT'], [/^crystal$/i, 'Y'], [/^conn/i, 'J'],
+]
+const refPrefix = (ref: string) => ref.replace(/\d+$/, '')
+
+function prefixOf(name?: string, value?: string): string | null {
+  const n = (name || '').trim(), v = (value || '').trim()
+  for (const [re, p] of PREFIXES) if (re.test(n)) return p
+  if (/\d\s*[pnuµm]?F$/.test(v)) return 'C'
+  if (/\d\s*[nuµm]?H$/.test(v)) return 'L'
+  if (/\d\s*[kKM]?\s*(Ω|ohm)$/i.test(v) || /^\d+(\.\d+)?\s*[kKM]$/.test(v)) return 'R'
+  return null
+}
+
+/**
+ * The edit with a reference on every part it adds. The model sometimes leaves it out (live, 2026-10-30: "출력 쪽에
+ * 100nF 커패시터를 하나 추가해줘" gave the capacitor no ref but put C3.1 on VOUT, so the net pointed at a part that
+ * was never added). The code names it: the one reference of that kind the edit's nets use and no part has, else
+ * the next free number of its kind (C3 after C1 and C2). A part whose kind it cannot tell keeps none (skippedAdds).
+ * A net pin with no reference goes to the one part named here, when there is just one.
+ */
+export function withRefs(graph: NetGraph, actions: ChatAction[]): ChatAction[] {
+  const taken = new Set((graph.components || []).map(c => c.ref))
+  for (const a of actions) if (a.type === 'add_component' && (a.ref || '').trim()) taken.add((a.ref || '').trim())
+  const unknown = [...new Set(actions.flatMap(a => (a.type === 'add_net' ? (a.nodes || []).map(nd => (nd.ref || '').trim()) : [])))]
+    .filter(r => r && !taken.has(r))
+  const given: string[] = []
+  const out = actions.map(a => {
+    if (a.type !== 'add_component' || (a.ref || '').trim()) return a
+    const p = prefixOf(a.name, a.value)
+    let ref = unknown.find(r => !taken.has(r) && (p ? refPrefix(r) === p : unknown.length === 1))
+    if (!ref && p) ref = p + (Math.max(0, ...[...taken].filter(r => refPrefix(r) === p).map(r => Number(r.slice(p.length)) || 0)) + 1)
+    if (!ref) return a
+    taken.add(ref)
+    given.push(ref)
+    return { ...a, ref }
+  })
+  if (given.length !== 1) return out
+  return out.map(a => (a.type === 'add_net' && (a.nodes || []).some(nd => !(nd.ref || '').trim())
+    ? { ...a, nodes: (a.nodes || []).map(nd => ((nd.ref || '').trim() ? nd : { ...nd, ref: given[0] })) } : a))
+}
+
+/** the chip under an AI editor reply: +C3, −LED1, ~R1, +VOUT (a saved reply may have a part with no ref: its type) */
+export function actionLabel(a: ChatAction): string {
+  if (a.type === 'add_component') return `+${a.ref || a.name || '?'}`
+  if (a.type === 'remove_component') return `−${a.ref || '?'}`
+  if (a.type === 'modify_component') return `~${a.ref || '?'}`
+  if (a.type === 'add_net') return `+${a.name || '?'}`
+  if (a.type === 'remove_net') return `−${a.name || '?'}`
+  return a.type
+}
+
 /**
  * Pins an edit took off the net they were on (moved to another net, or left on none): a guess by the model can
  * re-wire a pin that was right (seen live: a motor's + pin moved off +12V), so the chat says so under the reply.
