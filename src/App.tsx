@@ -242,6 +242,10 @@ export default function App() {
 
   function applyCurrentVersion() {
     if (!currentVersionId) return
+    // the applied version is what the saved result of its description opens next time: it kept the newest one
+    // generated, so after v1 was applied "불러오기" brought back the v2 just dropped (frame review of 2026-10-30)
+    const applied = versions.find(x => x.id === currentVersionId)
+    if (applied) saveResultToLocal(applied.result, applied.prompt)
     setVersions(prev => {
       const idx = prev.findIndex(x => x.id === currentVersionId)
       if (idx < 0) return prev
