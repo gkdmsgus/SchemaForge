@@ -18,6 +18,7 @@ PIN_NAMES = {
     'CP': ['+', '-'],
     'LED': ['A', 'K'],
     'D': ['A', 'K'],
+    'Bridge': ['AC1', 'AC2', '+', '-'],
     'Q_NPN': ['B', 'C', 'E'],
     'Q_NMOS': ['G', 'D', 'S'],
     'REG': ['GND', 'OUT', 'IN'],

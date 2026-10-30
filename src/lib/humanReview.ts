@@ -18,6 +18,7 @@ export const PIN_NAMES: Record<string, string[]> = {
   CP: ['+', '-'],
   LED: ['A', 'K'],
   D: ['A', 'K'],
+  Bridge: ['AC1', 'AC2', '+', '-'],
   Q_NPN: ['B', 'C', 'E'],
   Q_NMOS: ['G', 'D', 'S'],
   REG: ['GND', 'OUT', 'IN'],
@@ -33,11 +34,12 @@ export const ASSUMED: Record<string, { smd: string; tht: string }> = {
   Q_NMOS: { smd: '2N7002', tht: '2N7000' },
   REG: { smd: 'AMS1117', tht: 'L78xx' },
   Relay: { smd: 'Sanyou SRD', tht: 'Sanyou SRD' },
+  Bridge: { smd: 'MB6S', tht: 'DF06M' },
 }
 
 function kindOf(part: string): ReviewKind | null {
   if (['LED', 'D', 'CP', 'Buzzer', 'Battery'].includes(part)) return 'polarity'
-  if (['Q_NPN', 'Q_NMOS', 'REG', 'Relay'].includes(part)) return 'pinout'
+  if (['Q_NPN', 'Q_NMOS', 'REG', 'Relay', 'Bridge'].includes(part)) return 'pinout'
   if (part === 'NE555') return 'orientation'
   if (/^Conn_01x\d\d$/.test(part)) return 'connector'
   return null
@@ -70,6 +72,8 @@ export interface ReviewItem {
 }
 
 const MINUS = '−'          // U+2212: the same width as + in the board labels
+/** A pin name as the real part prints it: a bridge rectifier marks its AC legs ~ */
+const PRINTED: Record<string, string> = { AC1: '~', AC2: '~', '-': MINUS }
 
 /** Board label colours, the same in 2D and 3D: + red, − navy, 1 and pin names violet. */
 export const MARK_COLOR = (label: string) => (label === '+' ? '#c62828' : label === MINUS ? '#1f3b73' : '#6a4cb5')
@@ -124,7 +128,7 @@ function marksOf(kind: ReviewKind, pins: ReviewPin[]): ReviewMark[] {
     case 'connector':
       return pins.filter(p => p.pad === '1').map(p => ({ pad: p.pad, label: '1' }))
     case 'pinout':
-      return pins.filter(p => p.pin != null).map(p => ({ pad: p.pad, label: p.name }))
+      return pins.filter(p => p.pin != null).map(p => ({ pad: p.pad, label: PRINTED[p.name] ?? p.name }))
   }
 }
 
@@ -150,6 +154,8 @@ function buyable(assumed: string): string {
 function legsWay(footprint: string): string {
   if (/TO-92/.test(footprint)) return '몸통의 평평한 면(글자가 적힌 면)이 기판 그림의 곧은 선 쪽을 보게 꽂습니다.'
   if (/TO-220/.test(footprint)) return '뒤쪽 금속 판(구멍 뚫린 탭)이 기판 그림의 좁은 띠 쪽으로 가게 꽂습니다.'
+  // four legs in a rectangle: it also fits turned around, so the printed + decides
+  if (/TO-269AA|Diode_Bridge/.test(footprint)) return '몸통에 찍힌 +·−·~ 표시를 기판의 같은 표시 자리에 맞춥니다. 돌려도 들어가는 모양이라 + 자리를 꼭 확인합니다.'
   return '다리 모양대로 한 방향으로만 들어맞습니다.'
 }
 
