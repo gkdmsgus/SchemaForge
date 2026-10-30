@@ -235,6 +235,11 @@ node scripts/check_versions.mjs     # npm run dev 를 켠 채로
 결과 버전 2항목 (로그인과 생성 API는 브라우저 안에서 흉내 내고, 데모 회로 둘을 번갈아 돌려준다). ↺가 v2를 만들고 v1을 누르면 첫 회로로 돌아가는지, v1을 적용한 뒤 같은 설명의 저장된 결과를 불러오면 v1이 열리는지 확인한다.
 
 ```bash
+node scripts/check_plan_flow.mjs     # npm run dev 를 켠 채로
+```
+설계 계획 2항목 (로그인과 계획·생성 API는 브라우저 안에서 흉내 낸다). "이 계획으로 회로 만들기"가 승인한 계획을 생성 요청에 함께 보내는지, 같은 설명의 ↺ 재생성도 그 계획을 다시 보내는지 확인한다. 서버가 그 계획을 회로 요청에 넣는지는 `npm test`의 모델 설정 검사(L3b)가 본다.
+
+```bash
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```

@@ -18,7 +18,7 @@ const check = (name: string, pass: boolean, info = '') => {
   console.log(`${pass ? 'ok  ' : 'FAIL'} ${name}  ${info}`)
 }
 
-type Seen = { path: string; auth: string; model: string; effort: string; stream: boolean; json: boolean; system: string }
+type Seen = { path: string; auth: string; model: string; effort: string; stream: boolean; json: boolean; system: string; user: string }
 const seen: Seen[] = []
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
@@ -32,6 +32,7 @@ const mock = createServer((rq, rs) => {
       path: rq.url ?? '', auth: String(rq.headers.authorization ?? ''), model: String(body.model ?? ''),
       effort: String(body.reasoning_effort ?? ''), stream: body.stream === true,
       json: body.response_format?.type === 'json_object', system: String(body.messages?.[0]?.content ?? '').slice(0, 60),
+      user: String(body.messages?.find((m: { role?: string }) => m.role === 'user')?.content ?? ''),
     })
     if (rq.url !== '/v1/chat/completions') { rs.writeHead(404); return rs.end('{}') }
     if (body.stream) {   // the AI editor streams: one text chunk, then the end
@@ -127,6 +128,21 @@ async function main() {
     check('L3 circuit code: SF_MODEL at the base URL (was api.openai.com by name), and the circuit is built',
       done && asked(at(n), 'grok-4.3', s => !s.stream && !s.json) && events.includes('Grok 4.3 is analysing'),
       `${at(n).length} call(s) ${JSON.stringify(at(n).map(s => [s.model, s.effort]))} done=${done}`)
+
+    // L3b. the approved plan reaches the circuit request (it was approved on screen and never sent); none without one
+    n = seen.length
+    const planned = await post(grok.base, '/generate', { description: '전원 회로 만들어줘', autoFix: true, plan: {
+      topology: '선형', specs: [{ label: '출력 전압', value: '12V' }],
+      parts: [{ ref: 'U1', type: '전압 조정기', value: 'LM7812', role: '12V 출력' }, { ref: 'R1', type: '저항', value: '1kΩ' }] } })
+    await planned.text()
+    const withPlan = at(n)[0]?.user ?? ''
+    n = seen.length
+    await (await post(grok.base, '/generate', { description: '전원 회로 만들어줘', autoFix: true })).text()
+    const withoutPlan = at(n)[0]?.user ?? ''
+    check('L3b the approved plan goes into the circuit request, and nothing when there is none',
+      /approved this design plan/.test(withPlan) && /Part: U1 전압 조정기 LM7812 \(12V 출력\)/.test(withPlan) && /Spec: 출력 전압 = 12V/.test(withPlan)
+      && !/approved this design plan/.test(withoutPlan) && withoutPlan.includes('전원 회로 만들어줘'),
+      withPlan.slice(0, 300).replace(/\n/g, ' | '))
 
     n = seen.length
     const edit = await post(grok.base, '/chat_edit', { graph: { components: [{ ref: 'R1', value: '1k' }], nets: [] }, message: 'R1 값을 2k로 바꿔줘' })
