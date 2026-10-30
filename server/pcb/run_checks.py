@@ -16,7 +16,7 @@ from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E40
 from sexpr import parse, find, find_all  # noqa: E402
 from fab_export import export_fab, FAB_SUFFIXES  # noqa: E402
 
-CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor']
+CIRCUITS = ['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor', 'bridge_supply']
 STYLES = ['smd', 'tht']
 # (part, skidl pin that must sit on KiCad pad "1") — polarity checks
 POLARITY = {'LED': '2', 'D': '2', 'CP': '1', 'Battery': '1', 'Buzzer': '1'}
@@ -29,6 +29,13 @@ TRANSISTOR_PADS = {
     ('Q_NPN', 'tht'): {'1': '2', '2': '3', '3': '1'},  # 2N3904: 1=E 2=B 3=C
     ('Q_NMOS', 'smd'): {'1': '1', '2': '3', '3': '2'}, # 2N7002: 1=G 2=S 3=D
     ('Q_NMOS', 'tht'): {'1': '2', '2': '3', '3': '1'}, # 2N7000: 1=S 2=G 3=D
+}
+# SKiDL Bridge pins: 1=AC1, 2=AC2, 3=+, 4=-; the two AC pins are interchangeable.
+# Seen from above with + and - on the right (MB6S) or the left (DF06M), + is the lower (MB6S) or upper (DF06M) lead:
+# https://www.vishay.com/docs/88661/mb2s.pdf  https://www.vishay.com/docs/88571/dfm.pdf (front-page drawings)
+BRIDGE_PADS = {
+    'smd': {'3': '3', '4': '4', 'ac': {'1', '2'}},     # MB6S TO-269AA: pad 3 (3.075, 1.27) = +, pad 4 = -
+    'tht': {'3': '1', '4': '2', 'ac': {'3', '4'}},     # DF06M DIP-4: pad 1 (0, 0) = +, pad 2 (0, 5.08) = -
 }
 
 
@@ -82,9 +89,9 @@ def check_one(name, style, work, cli):
         for nd in n['nodes']:
             if nd['ref'] not in comp_part:           # test point added by the generator
                 continue
-            lib_fp = TABLE[(comp_part[nd['ref']], style)]
-            pad = lib_fp[2][int(nd['pin'])]
-            if pad_net.get((nd['ref'], pad)) != n['name']:
+            lib_fp = TABLE.get((comp_part[nd['ref']], style))
+            pad = lib_fp[2].get(int(nd['pin'])) if lib_fp else None
+            if pad is None or pad_net.get((nd['ref'], pad)) != n['name']:
                 bad.append(f"{nd['ref']}.{nd['pin']}")
     nodes = sum(len(n['nodes']) for n in nets)
     tps = summary.get('test_points') or []           # probe pads the generator adds on top of the netlist
@@ -102,16 +109,22 @@ def check_one(name, style, work, cli):
                 pol_bad.append(ref)
     res['3 polarity'] = (not pol_bad, str(pol_bad or ''))
 
-    # A self-consistent TABLE can still be wrong: assert the actual transistor
+    # A self-consistent TABLE can still be wrong: assert the actual transistor and bridge
     # pad/net assignments against separately recorded manufacturer pinouts.
     transistor_bad = []
     for ref, part in comp_part.items():
         expected = TRANSISTOR_PADS.get((part, style))
+        if part == 'Bridge':
+            b = BRIDGE_PADS[style]
+            expected = {'3': b['3'], '4': b['4']}
+            ac = {pad_net.get((ref, pad)) for pad in b['ac']}
+            if ac != {node_net.get((ref, '1')), node_net.get((ref, '2'))}:
+                transistor_bad.append(f'{ref}: AC pins not on pads {sorted(b["ac"])}')
         if expected:
             for pin, pad in expected.items():
                 if pad_net.get((ref, pad)) != node_net.get((ref, pin)):
                     transistor_bad.append(f'{ref}: pin {pin} -> pad {pad}')
-    res['3b transistor pinout'] = (not transistor_bad, str(transistor_bad or ''))
+    res['3b exact-part pinout'] = (not transistor_bad, str(transistor_bad or ''))
 
     # 4. courtyards: no overlap, all inside the outline
     boxes = [p['courtyard'] for p in parts.values()]
@@ -307,6 +320,18 @@ def check_broken_circuit(work, cli):
     return (ok, f'rules={sorted(rules)} refs={sorted(refs)} nets={sorted(nets)}'), (pre_ok, pre_info)
 
 
+def check_four_legged_diode(work):
+    """A bridge written as a 'D' with four pins (seen from the model) is reported pin by pin, never placed
+    as if it fit. src/lib/humanReview.ts missingPads reads these words for the screen."""
+    src = open(os.path.join(SERVER, 'test_circuits', 'bridge_supply.py'), encoding='utf-8').read()
+    with open(os.path.join(work, 'bridge_as_d.py'), 'w', encoding='utf-8') as f:
+        f.write(src.replace("name='Bridge'", "name='D'"))
+    subprocess.run([sys.executable, 'bridge_as_d.py'], cwd=work, check=True, capture_output=True)
+    summary = generate(os.path.join(work, 'bridge_as_d.net'), os.path.join(work, 'bridge_as_d.kicad_pcb'), 'smd')
+    want = [f'D1 pin {n} has no pad in Diode_SMD:D_SOD-123' for n in (3, 4)]
+    return summary['warnings'] == want and not summary['unmapped'], f"warnings={summary['warnings']}"
+
+
 def check_templates():
     """7. every part template in SYSTEM_PROMPT has a table entry (or is a documented exception)."""
     src = open(os.path.join(SERVER, 'index.ts'), encoding='utf-8').read()
@@ -348,6 +373,11 @@ def main():
     all_ok &= b_ok and pre_ok
     print(f'== broken circuit caught {"PASS" if b_ok else "FAIL"}  {b_info}')
     print(f'== broken circuit, pre-PCB ERC = board ERC {"PASS" if pre_ok else "FAIL"}  {pre_info}')
+    d_dir = os.path.join(work_root, 'four_legged_diode')
+    os.makedirs(d_dir, exist_ok=True)
+    d_ok, d_info = check_four_legged_diode(d_dir)
+    all_ok &= d_ok
+    print(f'== four-legged diode reported {"PASS" if d_ok else "FAIL"}  {d_info}')
     t_ok, t_info = check_templates()
     all_ok &= t_ok
     print(f'== templates {"PASS" if t_ok else "FAIL"}  {t_info}')

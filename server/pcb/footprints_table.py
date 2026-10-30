@@ -22,6 +22,10 @@ maintainers take them from the datasheets) and the footprint pad layout:
     (NO/NC read from the symbol drawing: the arm rests on pin 4's contact;
      footprint drills match the Sanyou SRD datasheet: COM offset 2 mm,
      coil holes 1.0 mm, contact holes 1.3 mm)
+  Diode_Bridge:MB6S (MB2S)     TO-269AA 1,2=~ 3=+ 4=-
+  Diode_Bridge:DF06M (B40C800DM) DIP-4  1=+ 2=- 3,4=~
+    (Vishay mb2s.pdf and dfm.pdf front-page drawings: + and - on one side,
+     the two ~ on the other; the two ~ are interchangeable)
 Parts that are not in this table are reported as unmapped, never guessed.
 """
 
@@ -30,7 +34,7 @@ IDENTITY2 = {1: '1', 2: '2'}
 # skidl template pin numbers, for reference:
 #   LED/D: 1=A 2=K   Q_NPN: 1=B 2=C 3=E   Q_NMOS: 1=G 2=D 3=S
 #   REG: 1=GND 2=OUT 3=IN   Relay: 1=COIL1 2=COIL2 3=COM 4=NO 5=NC
-#   CP / Buzzer / Battery: 1=+ 2=-
+#   CP / Buzzer / Battery: 1=+ 2=-   Bridge: 1=AC1 2=AC2 3=+ 4=-
 DIODE_MAP = {1: '2', 2: '1'}                      # A -> pad 2, K -> pad 1
 RELAY_MAP = {1: '2', 2: '5', 3: '1', 4: '3', 5: '4'}
 
@@ -47,6 +51,8 @@ TABLE = {
     ('LED', 'tht'):    ('LED_THT', 'LED_D5.0mm', DIODE_MAP),
     ('D', 'smd'):      ('Diode_SMD', 'D_SOD-123', DIODE_MAP),
     ('D', 'tht'):      ('Diode_THT', 'D_DO-35_SOD27_P7.62mm_Horizontal', DIODE_MAP),
+    ('Bridge', 'smd'): ('Package_TO_SOT_SMD', 'TO-269AA', {1: '1', 2: '2', 3: '3', 4: '4'}),         # MB6S
+    ('Bridge', 'tht'): ('Diode_THT', 'Diode_Bridge_DIP-4_W7.62mm_P5.08mm', {1: '3', 2: '4', 3: '1', 4: '2'}),  # DF06M
     ('Q_NPN', 'smd'):  ('Package_TO_SOT_SMD', 'SOT-23', {1: '1', 2: '3', 3: '2'}),       # MMBT3904
     ('Q_NPN', 'tht'):  ('Package_TO_SOT_THT', 'TO-92_Inline', {1: '2', 2: '3', 3: '1'}),  # 2N3904
     ('Q_NMOS', 'smd'): ('Package_TO_SOT_SMD', 'SOT-23', {1: '1', 2: '3', 3: '2'}),       # 2N7002
@@ -91,6 +97,7 @@ ASSUMED_PART = {
     ('Q_NPN', 'smd'): 'MMBT3904', ('Q_NPN', 'tht'): '2N3904',
     ('Q_NMOS', 'smd'): '2N7002', ('Q_NMOS', 'tht'): '2N7000',
     ('REG', 'smd'): 'AMS1117', ('REG', 'tht'): 'L78xx',
+    ('Bridge', 'smd'): 'MB6S', ('Bridge', 'tht'): 'DF06M',
 }
 
 
