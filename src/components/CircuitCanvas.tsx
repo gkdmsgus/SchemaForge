@@ -161,7 +161,7 @@ function buildMST(pts: Pos[]): number[][] {
   return edges
 }
 
-interface DragState { ref: string; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean }
+interface DragState { ref: string; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; pointerId: number }
 interface PanDrag { lastX: number; lastY: number }
 interface WireDragLive { netIdx: number; segIdx: number; startX: number; startY: number; startMx: number; startMy: number; captured: boolean; pointerId: number }
 interface GraphDiff { added?: Set<string>; removed?: Set<string>; modified?: Set<string> }
@@ -240,7 +240,29 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     // the content is drawn as scale(z) translate(pan): on screen a point sits at z * (u + pan)
     setZoom(z)
     setPan({ x: (cw - z * (x1 - x0)) / 2 / z - x0, y: (ch - z * (y1 - y0)) / 2 / z - y0 })
+    autoFit.current = true
   }
+
+  // the view fits again when the schematic's space changes (the drawer below opens or closes, a notice above
+  // comes or goes) until the person zooms or pans: a circuit fitted while the Code drawer was open stayed a
+  // tiny cluster after it closed, and the ERC notice pushed the new part under the caption (review of 2026-10-30)
+  const autoFit = useRef(true)
+  const refit = useRef<() => void>(() => {})
+  refit.current = () => fitTo(positions)
+  const hasGraph = !!graph && comps.length > 0
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let size = `${el.clientWidth}x${el.clientHeight}`
+    const ro = new ResizeObserver(() => {
+      const now = `${el.clientWidth}x${el.clientHeight}`
+      if (now === size) return
+      size = now
+      if (autoFit.current) refit.current()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [hasGraph])
 
   useEffect(() => {
     setPositions(auto.positions)
@@ -277,9 +299,10 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     e.stopPropagation()
     const pt = svgPoint(e)
     const p = positions[ref] || { x:0, y:0 }
-    dragRef.current = { ref, offsetX:pt.x-p.x, offsetY:pt.y-p.y, startX:pt.x, startY:pt.y, moved:false }
-    // Capture on SVG so onPointerMove on the SVG always fires during drag
-    try { svgRef.current?.setPointerCapture(e.pointerId) } catch(_) {}
+    // the pointer is captured once the part really moves (onSvgPointerMove). Captured here, a plain click and
+    // a double-click went to the SVG, whose click handler cleared the selection at once and whose dblclick never
+    // reached the part: no properties panel, no value field (frame review of 2026-10-30)
+    dragRef.current = { ref, offsetX:pt.x-p.x, offsetY:pt.y-p.y, startX:pt.x, startY:pt.y, moved:false, pointerId:e.pointerId }
   }
 
   function onSvgPointerDown(e: React.PointerEvent) {
@@ -319,13 +342,18 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     }
     const d = dragRef.current
     if (d && !wireState) {
-      if (!d.moved && (Math.abs(pt.x-d.startX)>4 || Math.abs(pt.y-d.startY)>4)) d.moved = true
+      if (!d.moved && (Math.abs(pt.x-d.startX)>4 || Math.abs(pt.y-d.startY)>4)) {
+        d.moved = true
+        // Capture on SVG so onPointerMove on the SVG keeps firing while the part is dragged off it
+        try { svgRef.current?.setPointerCapture(d.pointerId) } catch(_) {}
+      }
       if (d.moved) setPositions(p => ({ ...p, [d.ref]: { x:pt.x-d.offsetX, y:pt.y-d.offsetY } }))
     }
     const pd = panDragRef.current
     if (pd) {
       const dx = (e.clientX - pd.lastX) / zoom, dy = (e.clientY - pd.lastY) / zoom
       if (Math.abs(e.clientX - pd.lastX) > 2 || Math.abs(e.clientY - pd.lastY) > 2) didPanRef.current = true
+      if (dx || dy) autoFit.current = false
       setPan(p => ({ x: p.x + dx, y: p.y + dy }))
       pd.lastX = e.clientX; pd.lastY = e.clientY
     }
@@ -495,6 +523,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey && !e.metaKey) return
     e.preventDefault()
+    autoFit.current = false
     setZoom(z => Math.min(4, Math.max(0.25, z * (e.deltaY > 0 ? 0.9 : 1.1))))
   }
   onWheelRef.current = onWheel
@@ -589,7 +618,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           {([['−', -0.15], ['+', 0.15], ['⌂', 0]] as [string, number][]).map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
               if (d===0) fitTo(positions)
-              else setZoom(z => Math.min(4, Math.max(0.25, z+d)))
+              else { autoFit.current = false; setZoom(z => Math.min(4, Math.max(0.25, z+d))) }
             }} style={{
               padding:'3px 8px', border:'1px solid var(--sf-line)', borderRadius:4,
               background:'transparent', color:TEXT_VALUE, cursor:'pointer',
