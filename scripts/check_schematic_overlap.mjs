@@ -1,11 +1,16 @@
 // Browser checks that nothing on the schematic is drawn over something else, measured on the page, on the 555
-// demo, the motor demo and an LM1117 3.3 V supply (the circuits of the logged-in tour, frame review of 2026-10-30):
+// demo, the motor demo, an LM1117 3.3 V supply and the tour's 555 blinker (the circuits of the logged-in tour, frame
+// reviews of 2026-10-30):
 // P1 no two power symbols overlap (NE555's GND and VCC labels landed on each other on both sides of U1, and
 // LM1117's VOUT flag on its GND symbol), P2 no power symbol is drawn over a part, W0 every wire starts and ends
 // on a pin, W1 no wire runs through a part (the 555's LED net ran through D1 and R3, and in the tour's circuit
 // through D1, R1, R2 and R3, so it read as a wire between two other pins), W2 no wire runs along another net's
-// wire, W3 no wire runs over a power symbol (U1's DISCH wire crossed its VCC label).
-// Needs the vite dev server (npm run dev) and the demo route of its API (the LM1117 circuit is served by the page).
+// wire (in the tour's 555 OUT ran down the column TRIG/THRES ran up, so OUT read as joined to them), W3 no wire runs
+// over a power symbol (U1's DISCH wire crossed its VCC label). The wires are checked again after the tour's SW1 is
+// dragged beside U1 onto its VCC symbol: OUT's pin was shut in, its wire fell back to a bend halfway, ran through R2
+// and U1 and looked like it ended on DISCH (tour take of 2026-10-30).
+// Needs the vite dev server (npm run dev) and the demo route of its API (LM1117 and the tour's circuit are served by
+// the page).
 // Usage: node scripts/check_schematic_overlap.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each schematic)
 import { chromium } from 'playwright'
 
@@ -29,6 +34,22 @@ const LM1117 = {
 
 // everything drawn, in page pixels: part bodies, pin ends, power symbols (with their labels) and each wired
 // net's straight wire pieces
+// the tour's 555 blinker as the frames show it (parts in this order give its layout)
+const TOUR555 = {
+  components: [['BT1', '5V'], ['C1', '10nF'], ['C2', '100uF'], ['C3', '100nF'], ['D1', 'RED'], ['R1', '250'],
+    ['R2', '250'], ['R3', '150'], ['SW1', 'SPST'], ['U1', 'NE555']].map(([ref, value]) => ({ ref, value })),
+  nets: [
+    { name: 'GND', nodes: ['BT1.2', 'C1.2', 'C2.2', 'C3.2', 'D1.2', 'U1.1'].map(node) },
+    { name: 'LED_A', nodes: ['D1.1', 'R3.2'].map(node) },
+    { name: 'N$1', nodes: ['C1.1', 'U1.5'].map(node) },
+    { name: 'N$2', nodes: ['R1.2', 'R2.1', 'U1.7'].map(node) },
+    { name: 'N$3', nodes: ['R3.1', 'U1.3'].map(node) },
+    { name: 'TRIG_THRES', nodes: ['C2.1', 'R2.2', 'U1.2', 'U1.6'].map(node) },
+    { name: 'VCC', nodes: ['BT1.1', 'C3.1', 'R1.1', 'SW1.1', 'SW1.2', 'U1.4', 'U1.8'].map(node) },
+  ],
+}
+const SERVED = { lm1117: LM1117, tour555: TOUR555 }
+
 const measure = page => page.evaluate(() => {
   const box = el => { const r = el.getBoundingClientRect(); return { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom } }
   const scr = (el, x, y) => { const c = el.getScreenCTM(); return { x: x * c.a + y * c.c + c.e, y: x * c.b + y * c.d + c.f } }
@@ -77,15 +98,49 @@ const nearest = (m, b) => m.bodies.reduce((best, p) => {
   return !best || d < best.d ? { ref: p.ref, d } : best
 }, null)?.ref
 
+// W0–W3 on one drawn schematic
+function checkWires(m, graph, label) {
+  const name = s => graph.nets[s.net]?.name ?? `net ${s.net}`
+  // W0: every wire still starts and ends on a pin
+  const loose = m.segs.filter(s => (s.first && !m.pins.some(p => Math.hypot(p.x - s.a.x, p.y - s.a.y) < 1.5))
+    || (s.last && !m.pins.some(p => Math.hypot(p.x - s.b.x, p.y - s.b.y) < 1.5))).map(name)
+  check(`W0 ${label}: every wire starts and ends on a pin`, m.segs.length > 0 && !loose.length, loose.join(', '))
+  // W1
+  const through = []
+  for (const s of m.segs) for (const p of m.bodies) { const l = inside(s, p); if (l > 1) through.push([`${name(s)} through ${p.ref}`, l]) }
+  check(`W1 ${label}: no wire runs through a part`, !through.length, sum(through).join(', '))
+  // W2
+  const lap = []
+  m.segs.forEach((s, i) => m.segs.slice(i + 1).forEach(t => {
+    const l = t.net !== s.net ? along(s, t, 6 * m.zoom) : 0
+    if (l > 2) lap.push([`${name(s)} on ${name(t)}`, l])
+  }))
+  check(`W2 ${label}: no wire runs along another net's wire`, !lap.length, sum(lap).join(', '))
+  // W3
+  const crossed = []
+  for (const s of m.segs) for (const y of m.symbols) {
+    const l = Math.max(inside(s, y.box, 0.5), inside(s, y.label, 0.5))
+    if (l > 1) crossed.push([`${name(s)} over ${y.name} at ${nearest(m, y.box)}`, l])
+  }
+  check(`W3 ${label}: no wire runs over a power symbol`, !crossed.length, sum(crossed).join(', '))
+}
+
 const browser = await chromium.launch()
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
-  await page.route(/\/demo_result\/lm1117$/, r => r.fulfill({ status: 200, contentType: 'application/json',
-    body: JSON.stringify({ filename: 'lm1117.net', graph: LM1117, code: '', guide: '' }) }))
-  for (const demo of ['ne555', 'motor', 'lm1117']) {
+  await page.route(/\/demo_result\/(lm1117|tour555)$/, (r, req) => {
+    const demo = /(\w+)$/.exec(req.url())[1]
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ filename: `${demo}.net`, graph: SERVED[demo], code: '', guide: '' }) })
+  })
+  for (const demo of ['ne555', 'motor', 'lm1117', 'tour555']) {
     await page.goto(`${BASE}/?demo=${demo}`, { waitUntil: 'networkidle' })
     await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
     await page.waitForTimeout(500)
+    // ⌂ first: a circuit that comes at once (the two served here) can open unfitted, at zoom 1 from the origin, with
+    // parts below the visible part. What is checked does not depend on the view, but the shots and the drag do
+    await page.getByRole('button', { name: '⌂', exact: true }).first().click()
+    await page.waitForTimeout(300)
     if (SHOTS) await page.locator('svg:has(g[data-comp])').first().screenshot({ path: `${SHOTS}/schematic_${demo}.png` })
     const m = await measure(page)
 
@@ -106,30 +161,24 @@ try {
     }
     check(`P2 ${demo}: no power symbol is drawn over a part`, !over.length, over.join(', '))
 
-    const graph = demo === 'lm1117' ? LM1117 : (await (await fetch(`${BASE}/demo_result/${demo}`)).json()).graph
-    const name = s => graph.nets[s.net]?.name ?? `net ${s.net}`
-    // W0: every wire still starts and ends on a pin
-    const loose = m.segs.filter(s => (s.first && !m.pins.some(p => Math.hypot(p.x - s.a.x, p.y - s.a.y) < 1.5))
-      || (s.last && !m.pins.some(p => Math.hypot(p.x - s.b.x, p.y - s.b.y) < 1.5))).map(name)
-    check(`W0 ${demo}: every wire starts and ends on a pin`, m.segs.length > 0 && !loose.length, loose.join(', '))
-    // W1
-    const through = []
-    for (const s of m.segs) for (const p of m.bodies) { const l = inside(s, p); if (l > 1) through.push([`${name(s)} through ${p.ref}`, l]) }
-    check(`W1 ${demo}: no wire runs through a part`, !through.length, sum(through).join(', '))
-    // W2
-    const lap = []
-    m.segs.forEach((s, i) => m.segs.slice(i + 1).forEach(t => {
-      const l = t.net !== s.net ? along(s, t, 6 * m.zoom) : 0
-      if (l > 2) lap.push([`${name(s)} on ${name(t)}`, l])
-    }))
-    check(`W2 ${demo}: no wire runs along another net's wire`, !lap.length, sum(lap).join(', '))
-    // W3
-    const crossed = []
-    for (const s of m.segs) for (const y of m.symbols) {
-      const l = Math.max(inside(s, y.box, 0.5), inside(s, y.label, 0.5))
-      if (l > 1) crossed.push([`${name(s)} over ${y.name} at ${nearest(m, y.box)}`, l])
-    }
-    check(`W3 ${demo}: no wire runs over a power symbol`, !crossed.length, sum(crossed).join(', '))
+    const graph = SERVED[demo] ?? (await (await fetch(`${BASE}/demo_result/${demo}`)).json()).graph
+    checkWires(m, graph, demo)
+    if (demo !== 'tour555') continue
+
+    // the tour's move: SW1 from its own spot to beside U1, its pins on the row of U1's VCC pin (52, 32 to the
+    // right and down), so SW1's VCC symbol lands on U1's. M0: it did move (a drag below the visible part moves nothing)
+    const sw1 = () => page.locator("g[data-comp='SW1'] rect[rx='6']").boundingBox()
+    const { zoom } = m, sw = await sw1()
+    const [x, y] = [sw.x + sw.width / 2, sw.y + sw.height / 2]
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + 52 * zoom, y + 32 * zoom, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForTimeout(300)
+    const now = await sw1(), moved = [(now.x - sw.x) / zoom, (now.y - sw.y) / zoom].map(Math.round)
+    check(`M0 ${demo}: SW1 is dragged beside U1`, moved[0] === 52 && moved[1] === 32, `moved ${moved.join(', ')}`)
+    if (SHOTS) await page.locator('svg:has(g[data-comp])').first().screenshot({ path: `${SHOTS}/schematic_${demo}_moved.png` })
+    checkWires(await measure(page), graph, `${demo} with SW1 beside U1`)
   }
 } catch (e) {
   failed++
