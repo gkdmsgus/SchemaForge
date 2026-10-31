@@ -137,8 +137,9 @@ try {
     await page.goto(`${BASE}/?demo=${demo}`, { waitUntil: 'networkidle' })
     await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
     await page.waitForTimeout(500)
-    // ⌂ first: a circuit that comes at once (the two served here) can open unfitted, at zoom 1 from the origin, with
-    // parts below the visible part. What is checked does not depend on the view, but the shots and the drag do
+    // ⌂ first, so the shots and the drag start from the fitted view (what is checked does not depend on the view).
+    // A circuit that came at once, like the two served here, sometimes opened unfitted; that it now opens fitted is
+    // check_schematic_wiring.mjs's S10
     await page.getByRole('button', { name: '⌂', exact: true }).first().click()
     await page.waitForTimeout(300)
     if (SHOTS) await page.locator('svg:has(g[data-comp])').first().screenshot({ path: `${SHOTS}/schematic_${demo}.png` })
