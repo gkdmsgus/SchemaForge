@@ -299,13 +299,22 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   const auto = useMemo(() => autoLayout(comps, layouts), [graph, layouts])
 
+  // a new circuit's parts are placed, and the edits to the last one's nets dropped, in the render it arrives in, not
+  // in the effect below: a resize in between refit the view to no parts at all and left it at zoom 1 from the origin
+  // (3 of 30 openings of the tour's 555, 2026-10-31)
+  const [placedFor, setPlacedFor] = useState<NetGraph>()
+  if (placedFor !== graph) {
+    setPlacedFor(graph)
+    setPositions(auto.positions)
+    setLocalNets(null)
+  }
+
   // every part in view, centred, never enlarged past 1:1 (⌂, and each circuit as it opens). Zoom 1 at the origin
   // left a power circuit's regulator and the motor demo's sense resistors below the visible part (2026-10-30)
-  // the nets drawn: the graph's as it opens (a person's edits to the last circuit are about to be dropped)
-  function fitTo(pos: Record<string, Pos>, drawn: NetEntry[] = effectiveNets) {
+  function fitTo() {
     const el = containerRef.current
     // the parts with their pin stubs, the power symbols and labels drawn past them, and the wires around them
-    const b = drawing(drawn, pos, layouts).box
+    const b = drawing(effectiveNets, positions, layouts).box
     if (!el || !b || !el.clientWidth || !el.clientHeight) { setZoom(1); setPan({ x:0, y:0 }); return }
     const PAD = 24
     const { x0, y0, x1, y1 } = b
@@ -322,7 +331,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   // tiny cluster after it closed, and the ERC notice pushed the new part under the caption (review of 2026-10-30)
   const autoFit = useRef(true)
   const refit = useRef<() => void>(() => {})
-  refit.current = () => fitTo(positions)
+  refit.current = fitTo
   const hasGraph = !!graph && comps.length > 0
   useEffect(() => {
     const el = containerRef.current
@@ -339,10 +348,8 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }, [hasGraph])
 
   useEffect(() => {
-    setPositions(auto.positions)
     setSelected(null)
     setSelectedNet(null)
-    setLocalNets(null)
     setNetsHistory([])
     setToast(null)
     setEdits({})
@@ -350,7 +357,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     setWireDrag(null)
     wireDragRef.current = null
     setWireBends({})
-    fitTo(auto.positions, nets)
+    fitTo()
   }, [graph])
 
   // routed again only when a part moves or a net changes, not on every hover
@@ -694,7 +701,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
         <div style={{ display:'flex', gap:2 }}>
           {([['−', -0.15], ['+', 0.15], ['⌂', 0]] as [string, number][]).map(([lbl, d]) => (
             <button key={lbl} onClick={() => {
-              if (d===0) fitTo(positions)
+              if (d===0) fitTo()
               else { autoFit.current = false; setZoom(z => Math.min(4, Math.max(0.25, z+d))) }
             }} style={{
               padding:'3px 8px', border:'1px solid var(--sf-line)', borderRadius:4,

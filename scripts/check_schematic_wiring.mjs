@@ -8,7 +8,9 @@
 // 2026-10-29), S7 every part is in view when the circuit opens and after ⌂ (zoom 1 at the origin left parts below),
 // S8 a click on a part shows its properties and a double-click opens its value field (the pointer was captured on
 // the press, so neither reached the part: frame review of 2026-10-30), S9 the view fits again when the drawer
-// below opens and closes (a circuit fitted with the Code drawer open stayed a tiny cluster after it closed).
+// below opens and closes (a circuit fitted with the Code drawer open stayed a tiny cluster after it closed), S10 the
+// circuit opens fitted when the schematic changes size before its parts are placed (it opened at zoom 1 from the
+// origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -26,7 +28,7 @@ try {
   const hint = page.getByText('연결할 핀을 클릭하세요')
   const svg = page.locator('svg:has(g[data-comp])').first()
   // parts whose box is not wholly inside the schematic's visible part
-  const outside = () => page.evaluate(() => {
+  const outside = (p = page) => p.evaluate(() => {
     const v = document.querySelector('svg:has(g[data-comp])').getBoundingClientRect()
     return [...document.querySelectorAll('g[data-comp]')].filter(g => {
       const b = g.getBoundingClientRect()
@@ -209,6 +211,42 @@ try {
   const z1 = await page.evaluate(() => document.querySelector('svg:has(g[data-comp]) > g')?.getAttribute('transform'))
   check('S9 the view fits again as the drawer below opens and closes', outOpen.length === 0 && outClosed.length === 0 && z1 === z0,
     `outside with the drawer open [${outOpen}], after it closes [${outClosed}], view ${z0 === z1 ? 'back as before' : `${z0} → ${z1}`}`)
+
+  // S10: the size change came between the render that shows the circuit and the one that places its parts, and the
+  // refit it set off ran on no parts. A real change is told at the next frame, which only sometimes comes in between,
+  // so on a second page the schematic is told at once: its box is made 2 px shorter in the microtask after the
+  // schematic starts watching it
+  const forced = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await forced.addInitScript(() => {
+    const Native = window.ResizeObserver
+    window.ResizeObserver = class extends Native {
+      constructor(cb) { super(cb); this.cb = cb; this.on = true }
+      observe(el, opts) {
+        super.observe(el, opts)
+        if (!el.querySelector(':scope > svg')) return   // the schematic's box (its parts may not be drawn yet)
+        queueMicrotask(() => {
+          if (!this.on) return   // let go at once (development mode watches twice)
+          el.style.maxHeight = `${el.clientHeight - 2}px`
+          window.__shrunk = el.clientHeight
+          this.cb([], this)
+        })
+      }
+      disconnect() { this.on = false; super.disconnect() }
+    }
+  })
+  const p10 = await forced.newPage()
+  await p10.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await p10.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
+  await p10.waitForTimeout(300)
+  const view = () => p10.evaluate(() => document.querySelector('svg:has(g[data-comp]) > g')?.getAttribute('transform'))
+  const shrunk = await p10.evaluate(() => window.__shrunk ?? null)
+  const atOpen = await view(), outAtOpen10 = await outside(p10)
+  await p10.getByRole('button', { name: '⌂', exact: true }).first().click()
+  await p10.waitForTimeout(300)
+  const homed = await view()
+  check('S10 the circuit opens fitted when the schematic changes size before its parts are placed',
+    shrunk !== null && atOpen === homed && outAtOpen10.length === 0,
+    `${shrunk === null ? 'the schematic was never made shorter' : `made ${shrunk} px tall`}, outside at open [${outAtOpen10}], view at open ${atOpen === homed ? 'as ⌂ gives' : `${atOpen}, after ⌂ ${homed}`}`)
 } finally {
   await browser.close()
 }
