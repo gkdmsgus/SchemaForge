@@ -768,24 +768,33 @@ app.post('/chat_edit', optionalAuth as any, requireMember as any, async (req: Re
   const compSummary = (graph.components || []).map(c => `${c.ref}(${c.value || '?'})`).join(', ')
   // ref.pin: an edit that lists a net's pins copies the real ones instead of guessing them
   const netSummary  = (graph.nets || []).map(n => `${n.name}:[${n.nodes.map(nd => `${nd.ref}.${nd.pin}`).join(',')}]`).join(', ')
+  // the free reference of each kind: the model reused C3 for a new capacitor (live, 2026-10-30), so the add was skipped
+  const freeRefs = ['R', 'C', 'L', 'D', 'Q', 'U', 'SW', 'K', 'LS', 'BT', 'J', 'Y'].map(p => p + (Math.max(0, ...(graph.components || [])
+    .map(c => /^([A-Z]+)(\d+)$/.exec(String(c.ref || '').trim())).filter(m => m?.[1] === p).map(m => Number(m![2]))) + 1)).join(', ')
 
   const systemPrompt = `You edit an existing schematic. Apply exactly what the user asks — no extra "improvements".
 
 Current circuit:
 - Components: ${compSummary || 'none'}
 - Nets: ${netSummary || 'none'}
+- Free refs for new parts: ${freeRefs}
 
 Rules:
 - Only reference designators from the component list above. Never invent a ref.
-- add_component: pick the next free number for that prefix (R, C, L, D, Q, U, SW, K,
-  LS, BT, J, Y only) and give it a real value with units. Set "name" to the part type
+- Leave every existing connection as it is unless the user's message names that part. Never put
+  a pin of a part the user did not name on another net, and never remove a net holding such pins:
+  the app does not apply those moves.
+- add_component: the new part takes the free ref for its prefix listed above (R, C, L, D, Q, U, SW, K,
+  LS, BT, J, Y only), never a ref already in the component list, and a real value with units. Set "name" to the part type
   exactly as one of: R, C, CP (electrolytic, 1uF and above), L, LED, D, Q_NPN, Q_NMOS,
   NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Conn_01x02 … Conn_01x10 — the PCB
   footprint is chosen from this name, and pins are numbered as in those parts
   (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
 - add_net / remove_net: always set "name" to the net's name. To connect a pin to an existing
-  net, use add_net with that net's name from the list above. "nodes" must list every ref+pin on
-  that net, not just the new one. Pins are the numbers shown as ref.pin above (write "2", not "K" or "-").
+  net, use add_net with that net's name from the list above and list the pins to connect: pins
+  already on that net stay on it, and a pin listed leaves the net it was on. A new part between two
+  nets is one add_net per net, each with the new part's pin (VCC: [C4.1], GND: [C4.2]).
+  Pins are the numbers shown as ref.pin above (write "2", not "K" or "-").
 - modify_component: change only the field the user named.
 - If the request is ambiguous or names a part that does not exist, return an empty
   actions array and ask which one in the reply. Do not guess.
@@ -816,10 +825,10 @@ changed.`
               type: 'object',
               properties: {
                 type: { type: 'string', enum: ['remove_component','add_component','modify_component','add_net','remove_net'] },
-                ref:   { type: 'string', description: 'remove/modify_component: a ref from the list. add_component: the new part\'s ref, the next free number for its prefix (C3 when C1 and C2 exist) — never leave it out, and use the same ref in add_net nodes' },
+                ref:   { type: 'string', description: 'remove/modify_component: a ref from the list. add_component: the new part\'s ref, the free ref for its prefix (C3 when C1 and C2 exist), never one already in the list — never leave it out, and use the same ref in add_net nodes' },
                 name:  { type: 'string', description: 'add_component: the part type (R, LED, ...). add_net / remove_net: the net name (required; an existing net from the list to add pins to it)' },
                 value: { type: 'string' },
-                nodes: { type: 'array', description: 'add_net: every ref+pin on the net', items: { type: 'object', properties: { ref: { type: 'string' }, pin: { type: 'string', description: 'pin number as in ref.pin' } }, required: ['ref','pin'] } },
+                nodes: { type: 'array', description: 'add_net: the pins to put on the net (pins already on it stay); a listed pin leaves the net it was on', items: { type: 'object', properties: { ref: { type: 'string' }, pin: { type: 'string', description: 'pin number as in ref.pin' } }, required: ['ref','pin'] } },
               },
               required: ['type'],
             },
