@@ -765,6 +765,7 @@ export default function ResultPanel({
                       background: m.role === 'user' ? 'var(--sf-cyan-soft)' : 'var(--sf-bg-1)',
                       border: `1px solid ${m.role === 'user' ? 'var(--sf-cyan-line)' : 'var(--sf-line)'}`,
                       fontFamily: 'var(--sf-font-sans)', fontSize: 11, color: m.role === 'user' ? 'var(--sf-cyan)' : 'var(--sf-fg-muted)', lineHeight: 1.5,
+                      whiteSpace: 'pre-wrap',   // the notes under a reply are their own paragraphs
                     }}>
                       {m.content || (m._streaming ? '' : '...')}
                       {m._streaming && (
