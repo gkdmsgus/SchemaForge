@@ -781,9 +781,9 @@ Current circuit:
 
 Rules:
 - Only reference designators from the component list above. Never invent a ref.
-- Leave every existing connection as it is unless the user's message names that part. Never put
-  a pin of a part the user did not name on another net, and never remove a net holding such pins:
-  the app does not apply those moves.
+- Change, remove or re-wire only the parts the user's message names (by ref, or by kind when the
+  circuit has just one part of that kind). Never remove or modify another part, never put its pins
+  on another net, and never remove a net holding its pins: the app does not apply those edits.
 - add_component: the new part takes the free ref for its prefix listed above (R, C, L, D, Q, U, SW, K,
   LS, BT, J, Y only), never a ref already in the component list, and a real value with units. Set "name" to the part type
   exactly as one of: R, C, CP (electrolytic, 1uF and above), L, LED, D, Q_NPN, Q_NMOS,

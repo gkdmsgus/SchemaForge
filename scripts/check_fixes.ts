@@ -284,6 +284,32 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     moved && renamed && floating && merge && cased, JSON.stringify({ moved, renamed, floating, merge, cased, r1: r1.note, ren: ren.note, mg: mg.note, cs: cs.note }))
 }
 
+// G11. removing a part or changing its value goes the same way: only a part the message names, by reference or by a
+// kind the circuit has one of ("LED 빼줘", the chat's own example) unless the edit adds one of that kind
+{
+  const val = chatEdit(blinker, [{ type: 'modify_component', ref: 'R3', value: '1k' }, { type: 'modify_component', ref: 'R2', value: '22k' }], '저항 R3 값을 1k로 바꿔줘')
+  const values = val.graph.components.map(c => `${c.ref}=${c.value}`).filter(s => /^R[23]=/.test(s)).join() === 'R2=10k,R3=1k'
+    && JSON.stringify(val.actions) === JSON.stringify([{ type: 'modify_component', ref: 'R3', value: '1k' }]) && /값은 바꾸지 않았습니다: R2\(저항\)/.test(val.note) && plain(val.note)
+  const rm = chatEdit(blinker, [{ type: 'remove_component', ref: 'R3' }, { type: 'remove_component', ref: 'D1' }], 'R3을 지워줘')
+  const removed = !rm.graph.components.some(c => c.ref === 'R3') && rm.graph.components.some(c => c.ref === 'D1')
+    && JSON.stringify(rm.graph.nets.find(n => n.name === 'GND')) === JSON.stringify(blinker.nets.find(n => n.name === 'GND')) && /지우지 않았습니다: D1\(LED\)/.test(rm.note) && plain(rm.note)
+  const hint = chatEdit(blinker, [{ type: 'remove_component', ref: 'D1' }], 'LED 빼줘')
+  const byKind = !hint.graph.components.some(c => c.ref === 'D1') && hint.note === ''
+  const many = chatEdit(blinker, [{ type: 'modify_component', ref: 'C2', value: '1uF' }], '커패시터 값을 1uF로 바꿔줘')
+  const notUnique = many.changed === false && /C2\(커패시터\)/.test(many.note)
+  const one: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'R1', value: '1k', name: 'R' }, { ref: 'C1', value: '10uF', name: 'C' }],
+    nets: [net('VCC', 'BT1.1', 'R1.1', 'C1.1'), net('GND', 'BT1.2', 'C1.2'), net('OUT', 'R1.2')] }
+  const add = chatEdit(one, [{ type: 'add_component', ref: 'C2', name: 'C', value: '100nF' }, { type: 'modify_component', ref: 'C1', value: '1uF' },
+    { type: 'add_net', name: 'OUT', nodes: [{ ref: 'C2', pin: '1' }, { ref: 'C1', pin: '1' }] }], '커패시터를 하나 더 추가해줘')
+  const adding = add.graph.components.find(c => c.ref === 'C1')?.value === '10uF' && add.graph.components.some(c => c.ref === 'C2')
+    && add.graph.nets.find(n => n.name === 'VCC')!.nodes.some(nd => nd.ref === 'C1' && nd.pin === '1') && /C1\(커패시터\)/.test(add.note)
+  const mv = chatEdit(blinker, [{ type: 'add_net', name: 'OUT', nodes: [{ ref: 'D1', pin: '1' }] }], 'LED 다리를 출력에 바로 이어줘')
+  const moveByKind = mv.graph.nets.find(n => n.name === 'OUT')!.nodes.some(nd => nd.ref === 'D1' && nd.pin === '1') && !/그대로|바꾸지 않았/.test(mv.note)
+  check('G11 removals and value changes of parts the request does not name are held; a kind the circuit has one of names it, unless the edit adds that kind',
+    values && removed && byKind && notUnique && adding && moveByKind,
+    JSON.stringify({ values, removed, byKind, notUnique, adding, moveByKind, val: val.note, rm: rm.note, many: many.note, add: add.note, mv: mv.note }))
+}
+
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
 // render and blanked the whole result screen)
 {

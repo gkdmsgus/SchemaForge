@@ -142,11 +142,25 @@ export function movedPins(before: NetGraph, after: NetGraph): { pin: string; fro
 }
 
 /** the circuit's parts the person's message names by reference: "C3", "bt1의" (not "C30", not "AC1") */
-export function namedRefs(graph: NetGraph, message: string): Set<string> {
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new Set((graph.components || []).map(c => (c.ref || '').trim())
-    .filter(r => r && new RegExp(`(^|[^A-Za-z0-9])${esc(r)}(?![A-Za-z0-9])`, 'i').test(message)))
+export function namedRefs(graph: NetGraph, message: string, edit: ChatAction[] = []): Set<string> {
+  const says = (w: string) => new RegExp(`(^|[^A-Za-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*')}(?![A-Za-z0-9])`, 'i').test(message)
+  const comps = (graph.components || []).map(c => ({ ref: (c.ref || '').trim(), words: kindWords(c.name, c.ref || '') })).filter(c => c.ref)
+  // a kind the edit adds names the new part, not the one there ("커패시터를 하나 더 추가해줘")
+  const adding = new Set(edit.filter(a => a.type === 'add_component').flatMap(a => kindWords(a.name, (a.ref || '').trim() || prefixOf(a.name, a.value) || '')))
+  const one = (w: string) => !adding.has(w) && comps.filter(c => c.words.includes(w)).length === 1 && says(w)
+  return new Set(comps.filter(c => says(c.ref) || c.words.some(one)).map(c => c.ref))
 }
+
+/** words a person names a part by without its reference, by part type (by reference prefix when the graph has none) */
+const KIND_WORDS: Record<string, string[]> = {
+  R: ['저항'], C: ['커패시터', '캐패시터', '콘덴서'], CP: ['커패시터', '캐패시터', '콘덴서', '전해 커패시터', '전해 콘덴서'],
+  L: ['인덕터'], LED: ['LED'], D: ['다이오드'], Bridge: ['브리지', '정류기'], Q_NPN: ['트랜지스터'],
+  Q_NMOS: ['트랜지스터', 'MOSFET', '모스펫'], NE555: ['555', 'NE555', '타이머'], REG: ['레귤레이터'], Relay: ['릴레이'],
+  Buzzer: ['버저', '부저'], SW: ['스위치', '버튼'], Battery: ['배터리', '전지'], Crystal: ['크리스탈'],
+}
+const TYPE_OF_PREFIX: Record<string, string> = { R: 'R', C: 'C', L: 'L', D: 'D', SW: 'SW', K: 'Relay', LS: 'Buzzer', BT: 'Battery', Y: 'Crystal' }
+const kindWords = (name: string | undefined, ref: string): string[] =>
+  /^Conn/i.test(name || '') ? ['커넥터'] : KIND_WORDS[name || ''] ?? KIND_WORDS[TYPE_OF_PREFIX[refPrefix(ref.trim())] ?? ''] ?? []
 
 /** a pin's move that is its whole net renamed: the old name gone, the new one new, the same pins (of those counted) on it */
 function renamedWhole(before: NetGraph, after: NetGraph, m: { from: string; to: string | null }, counted: (ref: string) => boolean): boolean {
@@ -163,22 +177,31 @@ function renamedWhole(before: NetGraph, after: NetGraph, m: { from: string; to: 
  * a net renamed whole moves no connection, and a pin that was on no net leaves none. Held pins come off the edit's
  * add_net (one left with no pins goes) and a remove_net that would leave them on none goes. A part add whose reference
  * the circuit has is not applied, and the edit's pins with that reference meant the new part: they go too, rather
- * than re-wire the part that is there.
+ * than re-wire the part that is there. Removing a part or changing its value goes the same way: only a named part.
+ * A part is named by its reference, or by its kind when the circuit has one of that kind ("LED 빼줘") and the edit
+ * adds none.
  */
-export function guardEdit(graph: NetGraph, actions: ChatAction[], message: string): { actions: ChatAction[]; held: { pin: string; from: string; to: string | null }[]; dropped: string[] } {
+export function guardEdit(graph: NetGraph, actions: ChatAction[], message: string): {
+  actions: ChatAction[]; held: { pin: string; from: string; to: string | null }[]; dropped: string[]; kept: string[]; valued: string[]
+} {
   const comps = graph.components || []
   const taken = new Set(comps.map(c => c.ref))
-  const named = namedRefs(graph, message)
+  const named = namedRefs(graph, message, actions)
   const guarded = (ref: string) => taken.has(ref) && !named.has(ref)
   const key = (nd: { ref: string; pin: string }) => {
     const ref = (nd.ref || '').trim()
     return `${ref}.${pinNumber(comps.find(c => c.ref === ref)?.name, String(nd.pin))}`
   }
   // the adds applyActions leaves out (skippedAdds tells them) are not shown as done either
-  const reused = new Set<string>(), added = new Set<string>()
+  const reused = new Set<string>(), added = new Set<string>(), kept: string[] = [], valued: string[] = []
   let out = actions.filter(a => {
-    if (a.type !== 'add_component') return true
     const ref = (a.ref || '').trim()
+    if (a.type === 'remove_component' || a.type === 'modify_component') {
+      if (!guarded(ref)) return true
+      ;(a.type === 'remove_component' ? kept : valued).push(ref)
+      return false
+    }
+    if (a.type !== 'add_component') return true
     if (ref && taken.has(ref)) reused.add(ref)
     if (!ref || taken.has(ref) || added.has(ref)) return false
     added.add(ref)
@@ -200,7 +223,7 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
     const pins = new Set(bad.map(m => m.pin)), cut = new Set(bad.filter(m => m.to === null).map(m => m.from))
     out = without(nd => pins.has(key(nd))).filter(a => !(a.type === 'remove_net' && cut.has(a.name || '')))
   }
-  return { actions: out, held: [...held.values()], dropped }
+  return { actions: out, held: [...held.values()], dropped, kept: [...new Set(kept)], valued: [...new Set(valued)] }
 }
 
 /**
@@ -211,7 +234,7 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
 export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: string): { actions: ChatAction[]; graph: NetGraph; changed: boolean; note: string } {
   const filled = withRefs(graph, proposed)
   const skipped = skippedAdds(graph, filled)
-  const { actions, held, dropped } = guardEdit(graph, filled, message)
+  const { actions, held, dropped, kept, valued } = guardEdit(graph, filled, message)
   const after = applyActions(graph, actions)
   const changed = JSON.stringify([after.components, after.nets]) !== JSON.stringify([graph.components || [], graph.nets || []])
   const comps = graph.components || []
@@ -219,9 +242,12 @@ export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: strin
   const parts = (pins: string[]) => [...new Set(pins.map(p => p.split('.')[0]))]
     .map(ref => `${ref}(${typeLabel(comps.find(c => c.ref === ref)?.name || '', ref)})`).join(', ')
   let note = ''
-  if (held.length) {
-    const first = held[0].pin.split('.')[0]
-    note += `\n\n요청에 없던 부품의 연결은 바꾸지 않았습니다: ${parts(held.map(m => m.pin))}. 이 부품의 연결도 바꾸려면 부품 기호를 넣어 다시 요청해 주세요(예: "${first}의 연결도 바꿔줘").`
+  const untouched = [kept.length ? `요청에 없던 부품은 지우지 않았습니다: ${parts(kept)}.` : '',
+    valued.length ? `요청에 없던 부품의 값은 바꾸지 않았습니다: ${parts(valued)}.` : '',
+    held.length ? `요청에 없던 부품의 연결은 바꾸지 않았습니다: ${parts(held.map(m => m.pin))}.` : ''].filter(Boolean)
+  if (untouched.length) {
+    const ask = kept.length ? `${kept[0]} 빼줘` : valued.length ? `${valued[0]} 값을 바꿔줘` : `${held[0].pin.split('.')[0]}의 연결도 바꿔줘`
+    note += `\n\n${untouched.join(' ')} 꼭 필요하면 부품 기호를 넣어 다시 요청해 주세요(예: "${ask}").`
   }
   // what did move is a named part's pin: the model may still have guessed, so the person sees it
   const moved = movedPins(graph, after).filter(m => !renamedWhole(graph, after, m, r => taken.has(r)))

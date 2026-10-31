@@ -150,17 +150,18 @@ async function main() {
     check('L4 AI editor: SF_MODEL_MINI at the base URL, streamed', asked(at(n), 'grok-mini-test', s => s.stream),
       JSON.stringify(at(n).map(s => [s.model, s.effort, s.stream])))
 
-    // L4b. the AI editor is told the free refs and to leave unnamed parts' connections (live, 2026-10-30, the 555
-    // blinker: a new capacitor took C3, which exists, and the battery's + pin was moved off VCC)
+    // L4b. the AI editor is told the free refs and to leave unnamed parts alone (live, 2026-10-30, the 555 blinker:
+    // a new capacitor took C3, which exists, and the battery's + pin was moved off VCC)
     n = seen.length
     const blinker = { components: ['BT1', 'U1', 'R1', 'R2', 'R3', 'C1', 'C2', 'C3', 'D1'].map(ref => ({ ref, value: '' })),
       nets: [{ name: 'VCC', nodes: [{ ref: 'BT1', pin: '1' }, { ref: 'C3', pin: '1' }] }] }
     await (await post(grok.base, '/chat_edit', { graph: blinker, message: '전원 입력 쪽에 100nF 커패시터를 하나 추가해줘' })).text()
     const sys = at(n)[0]?.system ?? ''
-    check('L4b AI editor prompt: the free refs (C4, not C3) and no moving pins of parts the user did not name',
+    check('L4b AI editor prompt: the free refs (C4, not C3) and no removing, changing or re-wiring parts the user did not name',
       /Free refs for new parts: R4, C4, L1, D2, Q1, U2, SW1, K1, LS1, BT2, J1, Y1\n/.test(sys) && /never a ref already in the component list/.test(sys)
-      && /Leave every existing connection as it is unless the user's message names that part/.test(sys) && !/must list every ref\+pin/.test(sys),
-      sys.split('\n').filter(l => /Free refs|Leave every|never a ref/.test(l)).join(' | ') || sys.slice(0, 200))
+      && /Change, remove or re-wire only the parts the user's message names/.test(sys) && /Never remove or modify another part/.test(sys)
+      && !/must list every ref\+pin/.test(sys),
+      sys.split('\n').filter(l => /Free refs|Change, remove|never a ref/.test(l)).join(' | ') || sys.slice(0, 200))
   } finally {
     await stopServer(grok.proc)
   }
