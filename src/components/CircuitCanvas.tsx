@@ -154,7 +154,7 @@ function powerBox(x: number, y: number, name: string, dir: SymDir): Box {
   return dir === 'down' ? { x0: x - hw, y0: y, x1: x + hw, y1: y + len } : { x0: x - hw, y0: y - len, x1: x + hw, y1: y }
 }
 
-interface NetDraw { ends: (Pos & { side: PinDef['side'] })[]; edges: number[][]; paths: (Pos[] | null)[] }
+interface NetDraw { ends: (Pos & { side: PinDef['side'] })[]; edges: number[][]; paths: Pos[][] }
 
 // what the schematic draws for these positions: each wired net's pins, links and their routes around the parts
 // and power symbols (null for a power net, drawn as symbols), and the box around all of it
@@ -162,14 +162,14 @@ function drawing(nets: NetEntry[], pos: Record<string, Pos>, layouts: Record<str
   const STUB = 14
   const netOf = new Map<string, number>()
   nets.forEach((n, ni) => n.nodes.forEach(nd => netOf.set(`${nd.ref}:${nd.pin}`, ni)))
-  const all: Box[] = [], walls: Box[] = [], pins: PinEnd[] = []
+  const all: Box[] = [], parts: Box[] = [], symbols: Box[] = [], pins: PinEnd[] = []
   for (const [ref, l] of Object.entries(layouts)) {
     const p = pos[ref]
     if (!p) continue
     // the pin dots' hit circles reach 8 past the stubs; the wires keep 12 off the body
     const [hw, hh] = [l.w / 2, l.h / 2]
     all.push({ x0: p.x - hw - STUB - 8, y0: p.y - hh - STUB - 8, x1: p.x + hw + STUB + 8, y1: p.y + hh + STUB + 8 })
-    walls.push({ x0: p.x - hw - 12, y0: p.y - hh - 12, x1: p.x + hw + 12, y1: p.y + hh + 12 })
+    parts.push({ x0: p.x - hw - 12, y0: p.y - hh - 12, x1: p.x + hw + 12, y1: p.y + hh + 12 })
     for (const [num, pd] of Object.entries(l.pins))
       pins.push({ ...pinAbsPos(ref, num, pos, layouts)!, side: pd.side, net: netOf.get(`${ref}:${num}`) ?? -1 })
   }
@@ -181,7 +181,7 @@ function drawing(nets: NetEntry[], pos: Record<string, Pos>, layouts: Record<str
         if (!e) continue
         const b = powerBox(e.x, e.y, n.name, powerDir(n.name, layouts[nd.ref], String(nd.pin)))
         all.push(b)
-        walls.push(grow(b, 3))
+        symbols.push(grow(b, 3))
       }
       return null
     }
@@ -193,10 +193,10 @@ function drawing(nets: NetEntry[], pos: Record<string, Pos>, layouts: Record<str
     edges.forEach(([i, j]) => links.push({ net: ni, a: { ...ends[i], net: ni }, b: { ...ends[j], net: ni } }))
     return { ends, edges, paths: [] }
   })
-  const routes = routeLinks(links, walls, pins)
+  const routes = routeLinks(links, parts, symbols, pins)
   let k = 0
   for (const d of draws) if (d) d.paths = d.edges.map(() => routes[k++])
-  for (const r of routes) r?.forEach(p => all.push({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }))
+  for (const r of routes) r.forEach(p => all.push({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }))
   const box = all.length ? all.reduce((u, b) => ({ x0: Math.min(u.x0, b.x0), y0: Math.min(u.y0, b.y0),
     x1: Math.max(u.x1, b.x1), y1: Math.max(u.y1, b.y1) })) : null
   return { nets: draws, box }
