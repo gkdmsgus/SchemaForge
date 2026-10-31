@@ -514,12 +514,13 @@ export default function ResultPanel({
           } else if (evt === 'done') {
             const { reply, actions: proposed } = JSON.parse(raw)
             const snapshot = effectiveGraph ?? null
-            // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit)
+            // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit): a pin of a part the
+            // message does not name keeps its net. Nothing left to apply leaves the circuit, undo list and re-check alone
             const edit = snapshot && proposed?.length ? chatEdit(snapshot, proposed, msg) : null
             const actions: ChatAction[] = edit?.actions ?? proposed
             let newGraph: NetGraph | null = snapshot
             const note = edit?.note ?? ''
-            if (edit && snapshot) {
+            if (edit?.changed && snapshot) {
               pushGraphHistory(snapshot)
               newGraph = edit.graph
               const diff = computeDiff(snapshot, newGraph)

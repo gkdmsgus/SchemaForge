@@ -13,7 +13,7 @@ import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix,
 import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { actionLabel, applyActions, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
+import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
 import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
@@ -223,6 +223,65 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const chip = actionLabel({ type: 'add_component', name: 'C', value: '100nF' }) === '+C' && actionLabel(f1[0]) === '+C3'
   check('G7 a part added without a reference is named by the code (the net\'s C3, else the next number), chips never "+undefined"',
     named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
+}
+
+// G8-G10. an AI edit does not move a pin of a part the request does not name (live, 2026-10-30 tour, the 555 LED
+// blinker): the move is held back and the chat says which parts kept their connections, in words with no pin
+// number or net name. The 555 circuit as it was then:
+const blinker: NetGraph = {
+  components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'U1', value: 'NE555', name: 'NE555' }, { ref: 'R1', value: '1k', name: 'R' },
+    { ref: 'R2', value: '10k', name: 'R' }, { ref: 'R3', value: '470', name: 'R' }, { ref: 'C1', value: '10nF', name: 'C' },
+    { ref: 'C2', value: '10uF', name: 'C' }, { ref: 'C3', value: '100nF', name: 'C' }, { ref: 'D1', value: 'RED', name: 'LED' }],
+  nets: [net('VCC', 'BT1.1', 'U1.8', 'U1.4', 'R1.1', 'C3.1'), net('GND', 'BT1.2', 'U1.1', 'C1.2', 'C2.2', 'C3.2', 'D1.2'),
+    net('N$1', 'U1.5', 'C1.1'), net('DISCH', 'U1.7', 'R1.2', 'R2.1'), net('TRIG_THRES', 'U1.2', 'U1.6', 'R2.2', 'C2.1'),
+    net('OUT', 'U1.3', 'R3.1'), net('LED_A', 'R3.2', 'D1.1')],
+}
+const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
+
+// G8. "전원 입력 쪽에 100nF 커패시터를 하나 추가해줘": the model added C3, which exists (skipped), and put BT1.1 and C3.1 on
+// a new net N$4, cutting the battery off VCC while the chat said the re-check passed. Now nothing moves: the battery is
+// not named, and the pins of a part whose add was skipped meant the new part, not the C3 that is there
+{
+  const e = chatEdit(blinker, [{ type: 'add_component', ref: 'C3', name: 'C', value: '100nF' },
+    { type: 'add_net', name: 'N$4', nodes: [{ ref: 'BT1', pin: '1' }, { ref: 'C3', pin: '1' }] }], '전원 입력 쪽에 100nF 커패시터를 하나 추가해줘')
+  check('G8 a skipped add and an unnamed battery pin: nothing moves, nothing is applied, the chat says why',
+    JSON.stringify(e.graph) === JSON.stringify(blinker) && e.changed === false && e.actions.length === 0
+    && /BT1\(배터리\)/.test(e.note) && /C3/.test(e.note) && /C4/.test(e.note) && plain(e.note), `${JSON.stringify(e.graph.nets.slice(0, 1))} | ${e.note}`)
+}
+
+// G9. "VCC와 GND 사이에 100nF 커패시터 C4를 하나 추가해줘": C4 went on a new net N$4 and C1.1, U1.5 (N$1), C2.1 (TRIG_THRES)
+// and C3.1 (VCC) were all moved onto it. Now C4 goes in with its own pins; the four keep their nets and are named
+{
+  const e = chatEdit(blinker, [{ type: 'add_component', ref: 'C4', name: 'C', value: '100nF' },
+    { type: 'add_net', name: 'N$4', nodes: [{ ref: 'C4', pin: '1' }, { ref: 'C1', pin: '1' }, { ref: 'U1', pin: '5' }, { ref: 'C2', pin: '1' }, { ref: 'C3', pin: '1' }] },
+    { type: 'add_net', name: 'GND', nodes: [{ ref: 'C4', pin: '2' }] }], 'VCC와 GND 사이에 100nF 커패시터 C4를 하나 추가해줘')
+  const want = [...blinker.nets.map(n => (n.name === 'GND' ? { ...n, nodes: [...n.nodes, { ref: 'C4', pin: '2' }] } : n)), net('N$4', 'C4.1')]
+  check('G9 the new part goes in, the four pins it would have moved stay, and the chat names their parts',
+    JSON.stringify(e.graph.nets) === JSON.stringify(want) && e.graph.components.some(c => c.ref === 'C4') && e.changed
+    && ['C1(커패시터)', 'U1(555 타이머)', 'C2(커패시터)', 'C3(커패시터)'].every(w => e.note.includes(w)) && plain(e.note),
+    `${JSON.stringify(e.graph.nets.filter(n => n.name === 'N$4' || n.name === 'N$1'))} | ${e.note}`)
+}
+
+// G10. what the request names, or what moves no connection, still goes in: a named part's pin (any case, "c3을"),
+// a net renamed whole, a pin that was on no net. A net merged into another by a guess is held (and the net it would
+// have removed stays), and U10 does not name U1
+{
+  const r1 = chatEdit(blinker, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'R1', pin: '1' }] }], 'R1을 VCC에서 떼서 GND에 연결해줘')
+  const moved = r1.graph.nets.find(n => n.name === 'GND')!.nodes.some(nd => nd.ref === 'R1' && nd.pin === '1') && /R1\(저항\)/.test(r1.note) && plain(r1.note)
+  const ren = chatEdit(blinker, [{ type: 'remove_net', name: 'N$1' }, { type: 'add_net', name: 'CTRL', nodes: [{ ref: 'U1', pin: '5' }, { ref: 'C1', pin: '1' }] }],
+    'N$1 선 이름을 CTRL로 바꿔줘')
+  const renamed = JSON.stringify(ren.graph.nets.find(n => n.name === 'CTRL')) === JSON.stringify(net('CTRL', 'U1.5', 'C1.1')) && !ren.graph.nets.some(n => n.name === 'N$1')
+    && !/그대로/.test(ren.note)
+  const open: NetGraph = { ...blinker, nets: blinker.nets.map(n => (n.name === 'GND' ? { ...n, nodes: n.nodes.filter(nd => nd.ref !== 'D1') } : n)) }
+  const fl = chatEdit(open, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'D1', pin: '2' }] }], '끊긴 다리를 이어줘')
+  const floating = JSON.stringify(fl.graph.nets) === JSON.stringify(blinker.nets) && fl.note === ''
+  const mg = chatEdit(blinker, [{ type: 'remove_net', name: 'N$1' }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'U1', pin: '5' }, { ref: 'C1', pin: '1' }] }], 'GND를 정리해줘')
+  const merge = JSON.stringify(mg.graph) === JSON.stringify(blinker) && mg.changed === false && /U1\(555 타이머\)/.test(mg.note) && /C1\(커패시터\)/.test(mg.note)
+  const cs = chatEdit(blinker, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'C3', pin: '1' }, { ref: 'U1', pin: '5' }] }], 'c3을 GND로 옮기고 U10은 그대로 둬')
+  const cased = cs.graph.nets.find(n => n.name === 'GND')!.nodes.some(nd => nd.ref === 'C3' && nd.pin === '1')
+    && cs.graph.nets.find(n => n.name === 'N$1')!.nodes.some(nd => nd.ref === 'U1' && nd.pin === '5') && /U1\(555 타이머\)/.test(cs.note)
+  check('G10 named moves, renames and open pins go in; a guessed merge is held; U10 is not U1',
+    moved && renamed && floating && merge && cased, JSON.stringify({ moved, renamed, floating, merge, cased, r1: r1.note, ren: ren.note, mg: mg.note, cs: cs.note }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
