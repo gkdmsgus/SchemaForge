@@ -25,7 +25,7 @@ import type {
 import BoardView from './BoardView'
 import { StatusChip } from './StatusUi'
 import OperatingPanel from './OperatingPanel'
-import { actionLabel, applyActions, movedPins, skippedAdds, withRefs } from '../lib/graphEdit'
+import { actionLabel, chatEdit } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, splitWarnings, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
@@ -514,18 +514,14 @@ export default function ResultPanel({
           } else if (evt === 'done') {
             const { reply, actions: proposed } = JSON.parse(raw)
             const snapshot = effectiveGraph ?? null
-            // a part the model added without a reference gets one here, before it is applied, told or saved
-            const actions: ChatAction[] = snapshot && proposed?.length ? withRefs(snapshot, proposed) : proposed
+            // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit)
+            const edit = snapshot && proposed?.length ? chatEdit(snapshot, proposed, msg) : null
+            const actions: ChatAction[] = edit?.actions ?? proposed
             let newGraph: NetGraph | null = snapshot
-            let note = ''
-            if (actions?.length && snapshot) {
+            const note = edit?.note ?? ''
+            if (edit && snapshot) {
               pushGraphHistory(snapshot)
-              newGraph = applyActions(snapshot, actions)
-              // pins the edit took off a net they were on: the model may have guessed, so the person sees it
-              const moved = movedPins(snapshot, newGraph)
-              if (moved.length) note = `\n\n바뀐 연결: ${moved.map(m => `${m.pin} ${m.from} → ${m.to ?? '연결 없음'}`).join(', ')}. 의도와 다르면 위의 되돌리기를 누르세요.`
-              const skipped = skippedAdds(snapshot, actions)
-              if (skipped.length) note += `\n\n넣지 못한 부품: ${skipped.join(', ')}. 부품 기호(예: C3)를 붙여 다시 요청해 주세요.`
+              newGraph = edit.graph
               const diff = computeDiff(snapshot, newGraph)
               setGraphDiff(diff)
               // Let removed parts flash before they disappear, then show diagnostics.

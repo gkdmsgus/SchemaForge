@@ -139,3 +139,20 @@ export function movedPins(before: NetGraph, after: NetGraph): { pin: string; fro
   return [...netOf(before)].filter(([pin, from]) => refs.has(pin.split('.')[0]) && a.get(pin) !== from)
     .map(([pin, from]) => ({ pin, from, to: a.get(pin) ?? null }))
 }
+
+/**
+ * An AI edit as the chat applies it: references filled in, the circuit after, and the note under the reply.
+ * What of the model's proposal goes in is the code's call, before it is applied, told or saved.
+ */
+export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: string): { actions: ChatAction[]; graph: NetGraph; note: string } {
+  void message
+  const actions = withRefs(graph, proposed)
+  const after = applyActions(graph, actions)
+  // pins the edit took off a net they were on: the model may have guessed, so the person sees it
+  const moved = movedPins(graph, after)
+  let note = ''
+  if (moved.length) note = `\n\n바뀐 연결: ${moved.map(m => `${m.pin} ${m.from} → ${m.to ?? '연결 없음'}`).join(', ')}. 의도와 다르면 위의 되돌리기를 누르세요.`
+  const skipped = skippedAdds(graph, actions)
+  if (skipped.length) note += `\n\n넣지 못한 부품: ${skipped.join(', ')}. 부품 기호(예: C3)를 붙여 다시 요청해 주세요.`
+  return { actions, graph: after, note }
+}
