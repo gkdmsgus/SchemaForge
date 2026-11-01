@@ -3,7 +3,7 @@
 // DRC and unconnected counts -> gerber zip. Each type's result goes to videos/flow_results.json as soon as it is known;
 // a type passes only with no circuit error left, DRC errors 0, unconnected 0 and a gerber zip downloaded. Run by
 // scripts/record_tour.mjs B with "flow" in videos/tour_control.txt.
-import { mkdirSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 // the chips picked for each type: required ones, plus a few that make the circuit concrete
@@ -23,8 +23,14 @@ export async function run(rec) {
   const btn = (name, exact = false) => page.getByRole('button', { name, exact })
   const dir = join(rec.out, 'flow')
   mkdirSync(dir, { recursive: true })
-  const results = []
-  const save = () => writeFileSync(join(rec.out, 'flow_results.json'), JSON.stringify({ at: new Date().toISOString(), results }, null, 1))
+  // videos/flow_only.txt (keys, one per line) runs those types again; the other types keep their last result
+  const resultsFile = join(rec.out, 'flow_results.json')
+  const onlyFile = join(rec.out, 'flow_only.txt')
+  const only = existsSync(onlyFile) ? readFileSync(onlyFile, 'utf8').split(/\s+/).filter(Boolean) : null
+  const kept = only && existsSync(resultsFile) ? JSON.parse(readFileSync(resultsFile, 'utf8')).results : []
+  const results = CASES.map(c => kept.find(r => r.key === c.key && !only.includes(c.key))).filter(Boolean)
+  const save = () => writeFileSync(resultsFile, JSON.stringify({ at: new Date().toISOString(),
+    results: CASES.map(c => results.find(r => r.key === c.key)).filter(Boolean) }, null, 1))
   page.removeAllListeners('dialog')
   page.on('dialog', d => (/복사 완료|배치 체크/.test(d.message()) ? d.accept() : d.dismiss()).catch(() => {}))
   const checksText = () => page.evaluate(() => ['erc-notice', 'circuit-diagnostics']
@@ -43,22 +49,38 @@ export async function run(rec) {
   }
 
   for (const [i, c] of CASES.entries()) {
+    if (only && !only.includes(c.key)) continue
     const r = { key: c.key, type: c.type, chips: c.chips, stage: 'start', pass: false }
     results.push(r)
     await rec.shot(`F${i + 1}`, c.type, async () => {
       const t0 = Date.now()
       await rec.goto('/')
+      // a type run again had its earlier result offered ("저장된 결과가 있어요") instead of a new plan (2026-11-01)
+      await page.evaluate(() => localStorage.removeItem('sf_saved_results'))
       await rec.caption(`${c.type}: 사양을 고르고 계획 → 회로 → PCB → 거버까지 확인합니다`)
       await rec.scrollTo(page.getByRole('heading', { name: '회로 종류로 시작하기' }))
       await rec.press(page.locator('button[role=listitem].sf-type-row', { hasText: c.type }).first())
       const panel = page.locator('.sf-spec-panel')
-      for (const chip of c.chips) await rec.press(panel.getByRole('button', { name: chip, exact: true }).first())
+      // each chip brought to the middle first: the timer's opened at the bottom edge, and the press measured it while
+      // the page was still scrolling ("outside the screen", 2026-11-01)
+      for (const chip of c.chips) {
+        const b = panel.getByRole('button', { name: chip, exact: true }).first()
+        await b.evaluate(e => e.scrollIntoView({ block: 'center', behavior: 'instant' }))
+        await rec.pause(300)
+        await rec.press(b)
+      }
       await page.getByText('필수 항목을 모두 골랐습니다.').waitFor({ timeout: 5000 })
       await rec.press(btn(`${c.type} 만들기`).last())
       r.stage = 'plan'
       // a type with every required chip goes straight to the plan; answered with the first options if it asks
       const kicker = page.locator('.sf-flow-kicker')
-      await rec.fast(() => kicker.filter({ hasText: /가지만 확인합니다|설계 계획 확인/ }).first().waitFor({ timeout: 180000 }), 6)
+      const offer = page.getByText('저장된 결과가 있어요')
+      await rec.fast(() => kicker.filter({ hasText: /가지만 확인합니다|설계 계획 확인/ }).first().or(offer).first().waitFor({ timeout: 180000 }), 6)
+      if (await offer.isVisible().catch(() => false)) {
+        r.offeredSaved = true
+        await rec.press(btn('새로 생성', true))
+        await rec.fast(() => kicker.filter({ hasText: /가지만 확인합니다|설계 계획 확인/ }).first().waitFor({ timeout: 180000 }), 6)
+      }
       if (/가지만 확인합니다/.test(await kicker.first().innerText())) {
         r.asked = true
         for (const li of await page.locator('ol.sf-questions > li').all()) await rec.press(li.locator('.options button').first())
@@ -75,8 +97,9 @@ export async function run(rec) {
       r.fixRounds = 0
       for (let round = 0; round < 3 && await broken(); round++) {
         const pick = [T('erc-notice').locator('[data-erc-chat]').first(), T('circuit-diagnostics').locator('[data-cir-fix]').first()]
+        // a visible one: after the AI asked back, a hidden 해결 button stayed in the page and the press waited 15 s
         let fix = null
-        for (const f of pick) if (!fix && await f.count()) fix = f
+        for (const f of pick) if (!fix && await f.isVisible().catch(() => false)) fix = f
         if (!fix) break
         r.fixRounds++
         if (await T('left-rail').count()) await rec.press(T('left-rail'))
