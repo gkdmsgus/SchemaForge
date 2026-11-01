@@ -238,7 +238,12 @@ export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(�
  */
 export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: string, reply = ''): { actions: ChatAction[]; graph: NetGraph; changed: boolean; note: string } {
   if (proposed.length && asksBack(reply)) {
-    return { actions: [], graph, changed: false, note: '\n\nAI가 먼저 묻고 있어서 회로는 아직 바꾸지 않았습니다. 그대로 바꾸려면 "응, 그렇게 바꿔줘"처럼 답해 주세요.' }
+    // the answer to give names the parts there whose pins or values the edit touches: a bare "응" would be held by guardEdit
+    const there = new Set((graph.components || []).map(c => c.ref))
+    const refs = [...new Set(proposed.flatMap(a => (a.type === 'add_net' ? (a.nodes || []).map(nd => (nd.ref || '').trim())
+      : a.type === 'remove_component' || a.type === 'modify_component' ? [(a.ref || '').trim()] : [])))].filter(r => there.has(r))
+    return { actions: [], graph, changed: false, note: '\n\nAI가 먼저 묻고 있어서 회로는 아직 바꾸지 않았습니다. 그대로 바꾸려면 '
+      + `"응, ${refs.length ? `${refs.join(', ')} ` : ''}그렇게 바꿔줘"처럼 답해 주세요.` }
   }
   const filled = withRefs(graph, proposed)
   const skipped = skippedAdds(graph, filled)
