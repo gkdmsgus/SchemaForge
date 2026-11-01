@@ -291,6 +291,19 @@ cd server && npm run typecheck
 npm run lint
 ```
 
+## 데모 영상 녹화
+
+```bash
+node scripts/record_tour.mjs A     # 로그인 없는 부분 (데모 회로), 창 없이
+node scripts/record_tour.mjs B     # 로그인한 부분: 녹화되지 않는 창에서 직접 로그인
+```
+기능 전체를 자막과 포인터가 보이는 영상으로 찍는다(`scripts/tour/`). 기본 주소는 배포 서버이고, 두 번째 인자로 바꾼다. A는 홈·데모·PCB·3D·배치하기·거버·BOM·Code·동작 검사를 로그인 없이(`shots_a.mjs`), B는 설명 → 질문 → 계획 → 생성부터 AI 편집·버전·기록까지 실제로 만든 회로로(`shots_b.mjs`) 찍는다. 스크립트는 비밀번호를 입력하지 않는다. B는 녹화하지 않는 창에서 사람이 로그인하면 그 로그인을 넘겨받고, `videos/tour_control.txt`에 `take`(다시 찍기)·`logout`(마지막 로그아웃 장면)·`quit`(끝)이 쓰일 때까지 기다린다. 장면마다 걸린 시간과 실패는 `videos/tour_status_B.json`에 남는다. 기다리는 구간은 "▶▶ n배속" 배지를 띄우고 빨리 감는다.
+
+```bash
+python scripts/tour/reedit.py videos/tour_B11_….webm videos/tour_B11_….mp4 out.mp4 --calls videos/tour_fast_B.json
+```
+녹화기의 편집은 빨리 감을 구간을 벽시계로 정해서, 긴 녹화에서는 영상과 최대 15초까지 어긋났다(2026-10-30 10번째 촬영: 배지가 뜬 대기는 1배속, 그 뒤 장면은 빨리 감김). `reedit.py`는 원본 녹화에서 배지가 보이는 프레임을 찾아 그 구간만 빨리 감고, 다시 편집한 영상에서 구간마다 길이를 재어 맞는지 확인한다. 녹화와 영상은 `videos/`에 쌓이고 저장소에는 넣지 않는다.
+
 ## 구조
 
 ```
