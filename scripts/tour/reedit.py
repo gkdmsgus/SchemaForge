@@ -3,7 +3,8 @@
 The runner's edit (lib.mjs edit()) places each sped-up wait by the wall clock, and in take 10 of 2026-10-30 the
 recording ran up to 15 s apart from it: waits with a "▶▶ n배속" badge played at 1x and the scenes after them were
 fast-forwarded. Here a wait is where the badge is on screen (orange, top right), frame by frame; its speed comes from
-the waits shots_b.mjs logs in order (videos/tour_fast_B.json), matched by length, or from --speeds.
+the waits shots_b.mjs logs in order (videos/tour_fast_B.json), matched by length, or from --speeds. Two waits back to
+back can leave one badge run; it is cut in the ratio of their logged lengths, each part at its own speed.
 
   python scripts/tour/reedit.py RAW.webm RUNNER.mp4 OUT.mp4 [--calls videos/tour_fast_B.json | --speeds 6,6,8,...]
 
@@ -78,17 +79,37 @@ def speeds_from_calls(runs, calls):
                 back[(i, j + 1)] = (i, j, None)
             if i < n and j < m and dp[i, j] + cost(runs[i], calls[j]) < dp[i + 1, j + 1]:
                 dp[i + 1, j + 1] = dp[i, j] + cost(runs[i], calls[j])
-                back[(i + 1, j + 1)] = (i, j, j)
+                back[(i + 1, j + 1)] = (i, j, (j,))
+            # two waits back to back leave one badge run when the badge is off for less than a frame between them
+            # (AI 다듬기 at 8x, then the 3D model at 4x, in take 1 of 2026-11-01)
+            if i < n and j + 1 < m:
+                both = {'a': calls[j]['a'], 'b': calls[j]['a'] + (calls[j]['b'] - calls[j]['a']) + (calls[j + 1]['b'] - calls[j + 1]['a'])}
+                c2 = dp[i, j] + cost(runs[i], both) + 0.15
+                if c2 < dp[i + 1, j + 2]:
+                    dp[i + 1, j + 2] = c2
+                    back[(i + 1, j + 2)] = (i, j, (j, j + 1))
     out, at = [None] * n, (n, m)
     if dp[n, m] == INF:
         return out
     while at != (0, 0):
-        i, j, k = back[at]
-        if k is not None:
-            out[i] = calls[k]['speed']
-            if abs((runs[i][1] - runs[i][0]) - (calls[k]['b'] - calls[k]['a'])) > max(1.0, 0.25 * (calls[k]['b'] - calls[k]['a'])) and runs[i][1] - runs[i][0] > MIN_FAST:
-                print(f'  run {i} ({runs[i][1] - runs[i][0]:.2f} s) paired with a wait of {calls[k]["b"] - calls[k]["a"]:.2f} s: check it')
+        i, j, ks = back[at]
+        if ks is not None:
+            durs = [calls[k]['b'] - calls[k]['a'] for k in ks]
+            out[i] = [(d / sum(durs), calls[k]['speed']) for d, k in zip(durs, ks)]
+            if abs((runs[i][1] - runs[i][0]) - sum(durs)) > max(1.0, 0.25 * sum(durs)) and runs[i][1] - runs[i][0] > MIN_FAST:
+                print(f'  run {i} ({runs[i][1] - runs[i][0]:.2f} s) paired with waits of {sum(durs):.2f} s: check it')
         at = (i, j)
+    return out
+
+
+def segments(run, parts):
+    """a badge run cut into its waits, each (start, end, speed); a part of MIN_FAST or less stays at 1x"""
+    s, e = run
+    out, t = [], s
+    for share, sp in parts:
+        end = t + share * (e - s)
+        out.append((t, end, sp if end - t > MIN_FAST else 1))
+        t = end
     return out
 
 
@@ -124,25 +145,26 @@ def main():
         speeds = [int(x) for x in a.speeds.split(',')]
         if len(speeds) != len(runs):
             raise SystemExit(f'{len(runs)} badge runs but {len(speeds)} speeds')
+        plans = [[(1.0, sp)] for sp in speeds]
     else:
-        speeds = speeds_from_calls(runs, json.load(open(a.calls, encoding='utf-8'))['calls'])
-    for k, ((s, e), sp) in enumerate(zip(runs, speeds)):
-        print(f'#{k:2d} {s:8.2f}-{e:8.2f} ({e - s:6.2f} s)  x{sp if sp else "?"}')
-    unknown = [k for k, ((s, e), sp) in enumerate(zip(runs, speeds)) if sp is None and e - s > MIN_FAST]
+        plans = speeds_from_calls(runs, json.load(open(a.calls, encoding='utf-8'))['calls'])
+    for k, ((s, e), p) in enumerate(zip(runs, plans)):
+        print(f'#{k:2d} {s:8.2f}-{e:8.2f} ({e - s:6.2f} s)  ' + (' then '.join(f'x{sp} for {sh * (e - s):.2f} s' for sh, sp in p) if p else 'x?'))
+    unknown = [k for k, ((s, e), p) in enumerate(zip(runs, plans)) if p is None and e - s > MIN_FAST]
     if unknown:
         raise SystemExit(f'no logged wait matches badge runs {unknown}: give --speeds')
 
     trim = a.trim if a.trim is not None else find_trim(a.raw, a.runner_mp4, runs[0][0] if runs else 20)
     print(f'start cut at {trim:.2f} s')
-    fast = [(s, e, sp) for (s, e), sp in zip(runs, speeds) if e - s > MIN_FAST]
-    edit(a.raw, a.out, trim, fast)
+    cuts = [segments(r, p or [(1.0, 1)]) for r, p in zip(runs, plans)]
+    edit(a.raw, a.out, trim, [seg for c in cuts for seg in c if seg[2] > 1])
 
     # each wait measured again in the result
     again = badge_runs(a.out)
     bad = 0
     print(f'{len(runs)} badge runs in the recording, {len(again)} in {a.out}')
-    for k, (((s, e), sp), (s2, e2)) in enumerate(zip(zip(runs, speeds), again)):
-        want = (e - s) / sp if e - s > MIN_FAST else e - s
+    for k, (c, (s2, e2)) in enumerate(zip(cuts, again)):
+        want = sum((e - s) / sp for s, e, sp in c)
         ok = abs((e2 - s2) - want) < 0.25
         bad += not ok
         print(f'#{k:2d} should last {want:5.2f} s, lasts {e2 - s2:5.2f} s  {"ok" if ok else "CHECK"}')
