@@ -5,7 +5,7 @@ import { execFileSync } from 'child_process'
 import { copyFileSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { better, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, parseOhms, precheck, type Overrides } from './ai_layout'
+import { better, clashText, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, parseOhms, precheck, precheckNote, type Overrides } from './ai_layout'
 
 const work = mkdtempSync(join(tmpdir(), 'sf_ailayout_'))
 copyFileSync(join('test_circuits', 'ne555_blink.py'), join(work, 'ne555_blink.py'))
@@ -41,8 +41,17 @@ const victim = board.parts.find((p: { ref: string; keepout?: number[] }) => p.re
 const onTop = base(); onTop.parts[cap] = [victim.x, victim.y, part(cap).rot]
 const offBoard = base(); offBoard.parts[cap] = [part(cap).x + 60, part(cap).y, part(cap).rot]
 const p1 = precheck(board, onTop), p2 = precheck(board, offBoard), p3 = precheck(board, base())
-check('27 precheck', p1.some(s => s.includes('overlap')) && p2.some(s => s.includes('outline')) && p3.length === 0,
-  `onTop=[${p1.join('; ')}] offBoard=[${p2.join('; ')}] none=${p3.length}`)
+check('27 precheck', p1.some(c => c.hit) && p2.some(c => !c.hit) && p3.length === 0,
+  `onTop=[${p1.map(clashText).join('; ')}] offBoard=[${p2.map(clashText).join('; ')}] none=${p3.length}`)
+
+// 27c. the screen's line for a rejected proposal is Korean, each pair once; the model still reads what hit what in
+//      English (2026-11-01 tour: the AI rounds list showed "C3 would overlap R2")
+const both = [{ ref: 'C3', hit: 'R2' }, { ref: 'R2', hit: 'C3' }, { ref: 'C3', hit: null }]
+const shown = [precheckNote('배치', p1), precheckNote('배치', p2), precheckNote('배치', both)]
+const words = (s: string) => s.replace(/\b[A-Z]{1,3}\d+\b/g, '')
+check('27c rejected-move note in Korean', shown.every(s => /^배치 사전 검사 불합격: /.test(s) && !/[A-Za-z]{2,}/.test(words(s)))
+  && /자리와 겹침/.test(shown[0]) && /기판 밖/.test(shown[1]) && shown[2] === '배치 사전 검사 불합격: C3 자리가 R2 자리와 겹침, C3 자리가 기판 밖으로 나감'
+  && clashText(both[0]) === 'C3 would overlap R2' && clashText(both[2]) === 'C3 would leave the board outline', shown.join(' | '))
 
 // 27b. the failure mode from the 2026-09-15 runs: the model slides a capacitor toward its IC and lands on a
 //      neighbour (then C3 +5.5, -2.5 mm hit R3). Pinning the offset broke when the board grew, so aim at the
@@ -55,14 +64,14 @@ const near = c3 && board.parts
 const real = base()
 if (c3 && near) real.parts.C3 = [(c3.x + near.x) / 2, (c3.y + near.y) / 2, c3.rot]
 const p5 = c3 && near ? precheck(board, real) : []
-check('27b slide onto a neighbour caught', !!near && p5.some(s => s.startsWith('C3 would overlap')),
-  `toward ${near?.ref}: [${p5.join('; ')}]`)
+check('27b slide onto a neighbour caught', !!near && p5.some(c => c.ref === 'C3' && c.hit),
+  `toward ${near?.ref}: [${p5.map(clashText).join('; ')}]`)
 
 // 28. a 90-degree rotation is checked with the turned courtyard (a square-ish part may pass, a long part near a neighbour may not)
 const turned = base(); const u = board.parts.find((p: { ref: string }) => p.ref.startsWith('U'))
 turned.parts[u.ref] = [u.x, u.y, (u.rot + 90) % 360]
 const p4 = precheck(board, turned)
-check('28 rotation precheck runs', Array.isArray(p4), `U rotate 90: [${p4.join('; ') || 'no collision'}]`)
+check('28 rotation precheck runs', Array.isArray(p4), `U rotate 90: [${p4.map(clashText).join('; ') || 'no collision'}]`)
 
 // 29. with everything else equal, a shorter decoupling distance wins; a DRC error still outranks it
 const m = metricsOf({ hpwl: 80, vias: 5, track_length: 90 }, 0, board)
@@ -104,7 +113,7 @@ if (c3) {
     JSON.stringify([c3.x, c3.y, c3.rot]), JSON.stringify(moves)], { cwd: process.cwd() }).toString().trim().split('\n').pop()!)
   const rows = moves.map(([dx, dy], i) => {
     const ov = base(); ov.parts.C3 = [c3.x + dx, c3.y + dy, c3.rot]
-    const pre = precheck(board, ov).filter(s => s.includes('overlap')).length > 0
+    const pre = precheck(board, ov).some(c => c.hit)
     return { move: `${dx},${dy}`, generator: gen[i].length > 0, precheck: pre }
   })
   const agree = rows.every(r => r.generator === r.precheck)

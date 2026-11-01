@@ -11,8 +11,8 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import OpenAI from 'openai'
 import {
-  MAX_ROUNDS, applyEdit, askModel, backup, better, describeBoard, describeOutcome, metricsOf, precheck, splitEdit,
-  readBoard, roundFeedback, runGenerator,
+  MAX_ROUNDS, applyEdit, askModel, backup, better, clashText, describeBoard, describeOutcome, metricsOf, precheck, precheckNote,
+  splitEdit, readBoard, roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
@@ -1350,7 +1350,8 @@ async function runAiLoop(
       const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history)
       history.push(JSON.stringify(edit))
       if (edit.stop) {
-        emit({ round, reason: edit.reason || '더 고칠 것이 없습니다', actions: edit, before: best, kept: false, note: 'stop' })
+        // no note: the list's 중단 chip says it (a note "stop" showed under it in English)
+        emit({ round, reason: edit.reason || '더 고칠 것이 없습니다', actions: edit, before: best, kept: false })
         break
       }
       // A proposal often mixes a width change with a move. Judge them one after the other so a good
@@ -1362,10 +1363,11 @@ async function runAiLoop(
         // Reject collisions before paying for a reroute and DRC, and tell the model exactly what hit what.
         const problems = precheck(board, trial)
         if (problems.length) {
-          const why = `rejected before routing: ${problems.join('; ')}`
+          // the model reads what hit what in English; the screen says it in Korean
+          const why = `rejected before routing: ${problems.map(clashText).join('; ')}`
           feedback.push(describeOutcome(round, sub, best, undefined, false, why))
           emit({ round, part, reason: edit.reason || '', actions: sub, before: best, kept: false,
-                 note: [...notes, `${label} 사전 검사 불합격: ${problems.join(', ')}`].join(', ') })
+                 note: [...notes, precheckNote(label, problems)].join(', ') })
           continue
         }
         const restore = backup([pcbPath, jsonPath])

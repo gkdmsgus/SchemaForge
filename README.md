@@ -172,7 +172,7 @@ python server/pcb/run_checks.py
 ```bash
 cd server && npx tsx check_ai_layout.ts
 ```
-AI 다듬기의 판정 규칙 13항목 (사전 검사, 점수 순서, 릴레이 접점·모터 경로의 부하 전류 넷 판정 등). 모델을 호출하지 않는다.
+AI 다듬기의 판정 규칙 16항목 (사전 검사와 그 불합격을 화면에 한국어로 적는지, 점수 순서, 릴레이 접점·모터 경로의 부하 전류 넷 판정 등). 모델을 호출하지 않는다.
 
 ```bash
 cd server && npx tsx check_erc_repair.ts
@@ -253,7 +253,7 @@ node scripts/check_plan_flow.mjs     # npm run dev 를 켠 채로
 cd server && SF_AI_STUB=1 PORT=8098 npx tsx index.ts     # 다른 터미널에서
 python server/pcb/check_ai_loop.py --port 8098
 ```
-고정 배치 재현성과 다듬기 루프 6항목. 나쁜 제안이 되돌려지는지, 섞인 제안에서 좋은 쪽만 남는지 확인한다.
+고정 배치 재현성과 다듬기 루프 7항목. 나쁜 제안이 되돌려지는지, 섞인 제안에서 좋은 쪽만 남는지, 라운드 목록에 영어 문장이 섞이지 않는지 확인한다.
 
 ```bash
 npx tsx scripts/check_operating.ts

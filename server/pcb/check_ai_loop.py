@@ -8,7 +8,7 @@ and an off-board move together, round 2 stops).
 Usage: python check_ai_loop.py [--port 8098]
 Exit code 0 only if every check passes.
 """
-import argparse, json, os, subprocess, sys, tempfile, shutil, urllib.request
+import argparse, json, os, re, subprocess, sys, tempfile, shutil, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
@@ -70,6 +70,11 @@ def check_loop(port):
             for r in bad)
         and max(p['x'] for p in board['parts']) < board['outline'][2],
         f'rounds kept={[r["kept"] for r in rounds]} notes={[r.get("note") for r in bad]}')
+    # what the AI rounds list shows: Korean, no English words (2026-11-01 tour: "C3 would overlap R2"; a stopped round
+    # had "stop"). Part refs, net names and mm stay
+    notes = [r.get('note') or '' for r in rounds]
+    english = [n for n in notes if re.search(r'[A-Za-z]{2,}', re.sub(r'\b(?:[A-Z0-9_$+\-]+|mm)\b', '', n))]
+    res['21b notes in Korean'] = (any('사전 검사' in n for n in notes) and not english, f'notes={notes}')
     gnd = {t['width'] for t in board['tracks'] if t['net'] == 'GND'}
     res['22 good round kept'] = (
         any(r['kept'] for r in rounds) and gnd == {0.8} and done['summary']['net_width'].get('GND') == 0.8,

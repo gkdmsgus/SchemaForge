@@ -315,11 +315,31 @@ function movedArea(p: BoardPart, x: number, y: number, rot: number): Box | null 
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
 }
 
+/** A precheck problem: ref's keep-out box would overlap part `hit`, or leave the board outline (hit null). */
+export interface Clash { ref: string; hit: string | null }
+
+/** A problem as the model reads it in the next round's feedback. */
+export const clashText = (c: Clash): string =>
+  c.hit ? `${c.ref} would overlap ${c.hit}` : `${c.ref} would leave the board outline`
+
+/**
+ * The rejected proposal's line on the screen, in Korean (the 2026-11-01 tour showed "C3 would overlap R2"):
+ * each pair once, by where the parts would end up.
+ */
+export function precheckNote(label: string, clashes: Clash[]): string {
+  const pairs = new Set<string>()
+  const said = clashes.filter(c => {
+    const key = c.hit ? [c.ref, c.hit].sort().join('|') : c.ref
+    return !pairs.has(key) && !!pairs.add(key)
+  }).map(c => (c.hit ? `${c.ref} 자리가 ${c.hit} 자리와 겹침` : `${c.ref} 자리가 기판 밖으로 나감`))
+  return `${label} 사전 검사 불합격: ${said.join(', ')}`
+}
+
 /**
  * Cheap geometric check before the reroute: would a moved or rotated part's keep-out box overlap
- * another one or leave the board? Returns readable problems (empty = go ahead).
+ * another one or leave the board? Returns the problems (empty = go ahead).
  */
-export function precheck(board: BoardJson, ov: Overrides): string[] {
+export function precheck(board: BoardJson, ov: Overrides): Clash[] {
   const boxes = new Map<string, Box>()
   const changed = new Set<string>()
   for (const p of board.parts) {
@@ -329,15 +349,15 @@ export function precheck(board: BoardJson, ov: Overrides): string[] {
     if (box) boxes.set(p.ref, box)
     if (moved) changed.add(p.ref)
   }
-  const problems: string[] = []
+  const problems: Clash[] = []
   const [bx1, by1, bx2, by2] = board.outline
   for (const ref of changed) {
     const a = boxes.get(ref)
     if (!a) continue
     for (const [other, b] of boxes) {
-      if (other !== ref && boxesOverlap(a, b)) problems.push(`${ref} would overlap ${other}`)
+      if (other !== ref && boxesOverlap(a, b)) problems.push({ ref, hit: other })
     }
-    if (a[0] < bx1 || a[1] < by1 || a[2] > bx2 || a[3] > by2) problems.push(`${ref} would leave the board outline`)
+    if (a[0] < bx1 || a[1] < by1 || a[2] > bx2 || a[3] > by2) problems.push({ ref, hit: null })
   }
   return problems
 }
