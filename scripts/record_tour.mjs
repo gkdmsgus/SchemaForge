@@ -4,7 +4,7 @@
 //      history, favorites). The owner logs in by hand in a window that is NOT recorded; the script only carries
 //      that login over to the recorded window and never types a password.
 // Part B keeps the login and waits for videos/tour_control.txt: "take" records part B again, "logout" records
-// the closing logout clip, "quit" ends. Waits are played faster in the edit (badge "▶▶ n배속").
+// the closing logout clip, "flow" runs every circuit type through to gerbers (tour/flow_b.mjs), "quit" ends. Waits are played faster in the edit (badge "▶▶ n배속").
 // Usage: node scripts/record_tour.mjs A|B [BASE]   (default https://schemaforge.kro.kr)
 import { chromium } from 'playwright'
 import { spawn } from 'child_process'
@@ -107,11 +107,11 @@ try {
     let n = 0
     let cmd = 'take'
     while (cmd !== 'quit') {
-      if (cmd === 'take' || cmd === 'logout') {
+      if (cmd === 'take' || cmd === 'logout' || cmd === 'flow') {
         n++
         status({ phase: 'recording', take: n, cmd })
-        const { result, state: next } = cmd === 'take'
-          ? await take(`tour_B${n}`, 'shots_b.mjs', state)
+        const { result, state: next } = cmd === 'take' ? await take(`tour_B${n}`, 'shots_b.mjs', state)
+          : cmd === 'flow' ? await take(`flow_B${n}`, 'flow_b.mjs', state)
           : await take('tour_logout', 'shots_logout.mjs', state)
         state = next
         status({ phase: 'idle', take: n, cmd, ...result })
