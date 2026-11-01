@@ -451,6 +451,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const layout3d = useMemo(() => (final?.parts ?? []).map(p => ({ ref: p.ref, x: p.x, y: p.y })), [final])
   const aiSkipped = ai.some(r => r.round === 0 && !r.kept)
   const aiOpen = aiOpenSet ?? aiSkipped
+  const showAi = placed && ai.length > 0 && !assembly
   // does it work: numeric checks on the finished board's part values
   const opResults = useMemo(() => {
     if (!final) return []
@@ -868,11 +869,58 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       )}
       </div>
 
+      {(frames.length > 0 || showAi) && (
+        // the AI rounds box (left) and the view buttons (right) share the top edge, so with the AI edit panel open
+        // beside a narrow board the buttons wrap beside the box instead of running under it (frame review 2026-11-01:
+        // the folded box sat on 도형 보기)
+        <div style={{ position: 'absolute', left: 12, right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 12, top: 12,
+          display: 'flex', alignItems: 'flex-start', gap: 6, pointerEvents: 'none' }}>
+      {showAi && (
+        <div data-testid="board-ai" style={{ flexShrink: 0, width: aiOpen ? 320 : 'auto', maxWidth: '46%', pointerEvents: 'auto',
+          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
+          fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
+          <button type="button" onClick={() => setAiOpen(!aiOpen)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
+            title={aiOpen ? '접기' : 'AI 다듬기 라운드 보기'}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
+              background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit', whiteSpace: 'nowrap' }}>
+            <StatusChip tone={aiSkipped ? 'warn' : 'accent'}>{aiSkipped ? 'AI 다듬기 건너뜀' : 'AI 다듬기'}</StatusChip>
+            {!aiSkipped && <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>}
+            <span aria-hidden="true" style={{ marginLeft: 'auto', color: UI_DIM }}>{aiOpen ? '▾' : '▸'}</span>
+          </button>
+          {aiOpen && <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {ai.map((r, i) => {
+              const d = r.after ? r.after.hpwl - r.before.hpwl : 0
+              return (
+                <div key={`${r.round}-${r.part ?? i}`} data-ai-kept={r.kept ? '1' : '0'}
+                  style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`, color: UI_FG }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                    <StatusChip tone={r.kept ? 'ok' : 'idle'}>{r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'}</StatusChip>
+                    <span style={{ color: UI_DIM }}>
+                      {r.round > 0 ? `${r.round}라운드` : ''}{r.part ? ` ${r.part === 'width' ? '선 폭' : '배치'}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: SANS, fontSize: 11.5, lineHeight: 1.45 }}>{r.reason}</div>
+                  {r.after && (
+                    <div style={{ color: UI_DIM }}>
+                      선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
+                      비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
+                      {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
+                        <> · 디커플링 {r.before.decap.toFixed(1)}→{r.after.decap.toFixed(1)} mm</>}
+                      {r.before.powerWidth != null && r.after.powerWidth != null && (r.before.powerWidth > 0 || r.after.powerWidth > 0) &&
+                        <> · 좁은 전원선 {r.before.powerWidth}→{r.after.powerWidth}</>}
+                    </div>
+                  )}
+                  {r.note && <div style={{ color: UI_DIM }}>{r.note}</div>}
+                </div>
+              )
+            })}
+          </div>}
+        </div>
+      )}
       {frames.length > 0 && (
         // the 3D view's own toggle sits in this row too: in the 3D pane's corner it was under these buttons once
         // the open checks list made the pane narrower; a narrow drawing wraps the row instead of hiding it
-        <div style={{ position: 'absolute', right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 12, top: 12, display: 'flex', gap: 6,
-          flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: `calc(100% - ${(assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 24}px)` }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', pointerEvents: 'auto' }}>
           {!assembly && view3d !== '2d' && pcbFilename && placed && (
             <button data-testid="board-real3d-toggle"
               onClick={() => setReal3d(v => !v)}
@@ -939,48 +987,6 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </button>}
         </div>
       )}
-
-      {/* AI improvement rounds */}
-      {placed && ai.length > 0 && !assembly && (
-        <div data-testid="board-ai" style={{ position: 'absolute', left: 12, top: 12, width: aiOpen ? 320 : 'auto', maxWidth: '46%',
-          borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
-          fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
-          <button type="button" onClick={() => setAiOpen(!aiOpen)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
-            title={aiOpen ? '접기' : 'AI 다듬기 라운드 보기'}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
-              background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit', whiteSpace: 'nowrap' }}>
-            <StatusChip tone={aiSkipped ? 'warn' : 'accent'}>{aiSkipped ? 'AI 다듬기 건너뜀' : 'AI 다듬기'}</StatusChip>
-            {!aiSkipped && <span style={{ color: UI_DIM }}>채택 {ai.filter(r => r.kept).length}/{ai.filter(r => !r.actions.stop).length}</span>}
-            <span aria-hidden="true" style={{ marginLeft: 'auto', color: UI_DIM }}>{aiOpen ? '▾' : '▸'}</span>
-          </button>
-          {aiOpen && <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-            {ai.map((r, i) => {
-              const d = r.after ? r.after.hpwl - r.before.hpwl : 0
-              return (
-                <div key={`${r.round}-${r.part ?? i}`} data-ai-kept={r.kept ? '1' : '0'}
-                  style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`, color: UI_FG }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                    <StatusChip tone={r.kept ? 'ok' : 'idle'}>{r.kept ? '채택' : r.actions.stop ? '중단' : '되돌림'}</StatusChip>
-                    <span style={{ color: UI_DIM }}>
-                      {r.round > 0 ? `${r.round}라운드` : ''}{r.part ? ` ${r.part === 'width' ? '선 폭' : '배치'}` : ''}
-                    </span>
-                  </div>
-                  <div style={{ fontFamily: SANS, fontSize: 11.5, lineHeight: 1.45 }}>{r.reason}</div>
-                  {r.after && (
-                    <div style={{ color: UI_DIM }}>
-                      선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
-                      비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
-                      {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
-                        <> · 디커플링 {r.before.decap.toFixed(1)}→{r.after.decap.toFixed(1)} mm</>}
-                      {r.before.powerWidth != null && r.after.powerWidth != null && (r.before.powerWidth > 0 || r.after.powerWidth > 0) &&
-                        <> · 좁은 전원선 {r.before.powerWidth}→{r.after.powerWidth}</>}
-                    </div>
-                  )}
-                  {r.note && <div style={{ color: UI_DIM }}>{r.note}</div>}
-                </div>
-              )
-            })}
-          </div>}
         </div>
       )}
 

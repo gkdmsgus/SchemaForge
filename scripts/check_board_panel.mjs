@@ -2,7 +2,8 @@
 // (frame review of 2026-10-30: in 나란히 the open list covered most of the 3D half, so only the board's edge showed,
 // and in 2D it covered the right third of a zoomed board): B1 in 나란히 the open list shares no area with the 2D or
 // the 3D view, B2 in 2D, zoomed in, it shares none with the board drawing, B3 with the 3D pane narrowed by the list
-// no view button or the 3D view's 도형 보기 toggle is under something else, B4 folded, it is one short line in the corner.
+// no view button or the 3D view's 도형 보기 toggle is under something else, B4 folded, it is one short line in the corner,
+// B5 with the AI edit panel open too, the AI rounds box (folded or open) covers no view button.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -18,6 +19,18 @@ const pct = (s, of) => `${Math.round(s)} px² (${of ? Math.round(100 * s / (of.w
 const browser = await chromium.launch()
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  // the demo board has no AI rounds (they need a model and a login): three are added to its stream, as the server sends them
+  const m = { drcErrors: 0, unrouted: 0, hpwl: 120, vias: 4, trackLength: 140, overlaps: 0, outside: 0, decap: 6, powerWidth: 0 }
+  const rounds = [
+    { round: 1, part: 'width', reason: 'GND 선을 넓힙니다', actions: { net_widths: [{ net: 'GND', mm: 0.8 }] }, before: m, after: { ...m, hpwl: 118 }, kept: true },
+    { round: 1, part: 'place', reason: 'C3을 U1 가까이 옮깁니다', actions: { moves: [{ ref: 'C3', dx: 2, dy: 0 }] }, before: m, kept: false, note: '배치 사전 검사 불합격: C3 자리가 R2 자리와 겹침' },
+    { round: 2, part: 'place', reason: 'R1을 옮깁니다', actions: { moves: [{ ref: 'R1', dx: 1, dy: 0 }] }, before: m, after: { ...m, hpwl: 125 }, kept: false, note: '개선 없음' },
+  ]
+  await page.route(/\/generate_pcb_stream$/, async route => {
+    const res = await route.fetch({ timeout: 300000 })
+    const body = (await res.text()).replace(/^event: done$/m, rounds.map(r => `event: ai\ndata: ${JSON.stringify(r)}\n\n`).join('') + 'event: done')
+    await route.fulfill({ response: res, body })
+  })
   await page.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
   await page.getByRole('button', { name: /\.kicad_pcb/ }).waitFor({ timeout: 300000 })
@@ -71,6 +84,34 @@ try {
   const l4 = await list.boundingBox(), f3 = await view3d()
   check('B4 folded: one short line in the corner', l4.height <= 40 && l4.width <= 240,
     `${Math.round(l4.width)} × ${Math.round(l4.height)} px, over 3D ${pct(area(l4, f3), f3)}`)
+
+  // B5: the AI edit panel open beside the board and the list open (the narrowest board): the AI rounds box in the
+  // top-left corner, folded or open, covers no view button (frame review of 2026-11-01: 'AI 다듬기 · 채택 1/3' sat on
+  // 도형 보기 at 1280×720)
+  const panel = page.getByTestId('toggle-left-panel')
+  if ((await panel.getAttribute('aria-pressed')) !== 'true') { await panel.click(); await page.waitForTimeout(400) }
+  await page.getByTestId('view-both').click()
+  const aiToggle = page.getByTestId('board-ai-toggle')
+  const under = []
+  for (const list of [true, false]) {
+    await setOpen(list)
+    for (const open of [false, true]) {
+      if ((await aiToggle.getAttribute('aria-expanded')) !== String(open)) { await aiToggle.click(); await page.waitForTimeout(300) }
+      await shot(`ai_${open ? 'open' : 'folded'}_list_${list ? 'open' : 'folded'}`)
+      under.push(await page.evaluate(([list, open]) => {
+        const ai = document.querySelector('[data-testid="board-ai"]')?.getBoundingClientRect()
+        const buttons = [...document.querySelectorAll('[data-testid="view-2d"]')].flatMap(b => [...b.parentElement.querySelectorAll('button')])
+        const hit = buttons.filter(b => {
+          const r = b.getBoundingClientRect()
+          const over = ai && Math.min(r.right, ai.right) > Math.max(r.left, ai.left) && Math.min(r.bottom, ai.bottom) > Math.max(r.top, ai.top)
+          return over || !b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+        }).map(b => b.textContent.trim())
+        return { state: `list ${list ? 'open' : 'folded'}, box ${open ? 'open' : 'folded'}`, ai: ai ? Math.round(ai.width) : 0, hit }
+      }, [list, open]))
+    }
+  }
+  check('B5 narrow board: the AI rounds box, folded or open, covers no view button (list open or folded)',
+    under.length === 4 && under.every(u => u.ai > 0 && !u.hit.length), under.map(u => `${u.state}: ${u.ai} px, over [${u.hit}]`).join('; '))
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
