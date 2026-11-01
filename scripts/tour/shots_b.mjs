@@ -72,7 +72,7 @@ export async function run(rec) {
   const kicker = page.locator('.sf-flow-kicker')
   // the runner keeps lib.mjs from its start, so this take cannot rely on helpers added to it since
   page.removeAllListeners('dialog')
-  page.on('dialog', d => (/복사 완료|배치 체크|이 코드의 회로를 씁니다/.test(d.message()) ? d.accept() : d.dismiss()).catch(() => {}))
+  page.on('dialog', d => (/복사 완료|배치 체크|이 코드의 회로를 씁니다|수정한 코드를 버리/.test(d.message()) ? d.accept() : d.dismiss()).catch(() => {}))
   const onScreen = async loc => {
     const b = await loc.boundingBox().catch(() => null)
     const v = page.viewportSize()
@@ -92,6 +92,14 @@ export async function run(rec) {
     }
     return { led: leds[0]?.ref ?? null, r: null, value: null }
   })
+  // errors left on the circuit: the circuit-check box, or the netlist notice in its alert tone ("오류를 자동으로
+  // 고쳤습니다 (오류 2 → 0)" says 오류 too, and a scene took a circuit the server had fixed for a broken one)
+  const checksBroken = async () => (await T('circuit-diagnostics').count()) > 0
+    || ((await T('erc-notice').count()) > 0 && await T('erc-notice').getAttribute('role') === 'alert')
+  // the AI editor's replies, newest last (an assistant bubble lines up on the left)
+  const assistantSaid = () => T('left-panel').evaluate(p => [...p.querySelectorAll('div')]
+    .filter(d => d.style.flexDirection === 'column' && d.style.alignItems === 'flex-start')
+    .map(d => d.innerText || ''))
   // the AI editor's reply: its send button waits while the AI answers
   const replied = async () => {
     const send = "[data-testid='chat-input'] + button"
@@ -174,6 +182,68 @@ export async function run(rec) {
     await rec.recaption()
   })
 
+  // right after the circuit is made, before any AI edit: run after them, the code's own circuit came back and undid
+  // S06b's fix and S24's resistor, and its error notice stayed to the end of the video (review of 2026-11-01)
+  await rec.shot('S06a', 'Code 탭 고치고 실행', async () => {
+    await rec.caption('Code 탭에서 코드를 고쳐 실행하면, 서버가 다시 돌려 회로를 바꿉니다', 'top')
+    await rec.press(T('view-tab-schematic'))
+    // a run drops the generation's check notice (the run's own checks stay in the Code tab), so on a circuit with
+    // errors left S06b found nothing to fix (preflight of 2026-11-01): there it shows the bad line and is cancelled
+    const errorsLeft = await checksBroken()
+    // a resistor this circuit has, and a value it does not have yet
+    const rref = (await page.locator("g[data-comp^='R']").evaluateAll(es => es.map(e => e.getAttribute('data-comp')))).find(r => /^R\d+$/.test(r || ''))
+    if (!rref) throw new Error('no resistor on the schematic for the code change')
+    const now = await page.evaluate(ref => {
+      const s = JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]
+      return ((s?.graph ?? s?.result?.graph)?.components ?? []).find(c => c.ref === ref)?.value ?? ''
+    }, rref)
+    const target = /^1(\.0)?\s*k/i.test(now) ? '2.2k' : '1k'
+    const code = page.locator("textarea[aria-label='skidl 코드 편집']")
+    let original = null
+    try {
+      await rec.press(drawerTab('Code'))
+      await rec.press(btn('수정', true))
+      await code.waitFor({ timeout: 10000 })
+      original = await code.inputValue()
+      // the caret at the start of the generate_netlist line: added lines run before the netlist is written
+      const lineAt = text => text.lastIndexOf('\n', text.lastIndexOf('generate_netlist(')) + 1
+      const caret = i => code.evaluate((t, at) => { t.focus(); t.setSelectionRange(at, at); t.scrollTop = Math.max(0, t.value.slice(0, at).split('\n').length * 20 - t.clientHeight / 2) }, i)
+      await caret(lineAt(original))
+      await rec.caption('틀린 줄이 있으면 회로를 바꾸지 않고, 오류와 그 줄을 알려 줍니다', 'top')
+      await page.keyboard.type('R9 = Part(\n', { delay: 70 })
+      await page.keyboard.press('Control+Enter')
+      const err = page.locator('.sf-code-error')
+      await rec.fast(() => err.waitFor({ timeout: 120000 }), 4)
+      await rec.hover(err, 2200)
+      const jump = err.locator('button.is-bad').first()
+      if (await jump.count()) { await rec.press(jump); await rec.pause(1200) }
+      await code.fill(original)
+      if (errorsLeft) {
+        await rec.caption('이 회로는 연결 오류가 남아 있어, 먼저 AI 편집으로 고칩니다', 'top')
+        await rec.press(btn('취소', true))
+        await rec.pause(1200)
+        return
+      }
+      await caret(lineAt(original))
+      await rec.caption(`고친 줄(${rref} 값을 ${target}로)을 넣고 실행하면 회로가 바뀝니다`, 'top')
+      await page.keyboard.type(`Part.get('${rref}').value = '${target}'\n`, { delay: 60 })
+      await page.keyboard.press('Control+Enter')
+      await rec.fast(() => page.getByText('코드를 실행했습니다').first().waitFor({ timeout: 120000 }), 4)
+      await rec.pause(1200)
+      // the run's notice closed here, or S19 opened the Code tab on it later
+      const dismiss = page.getByRole('button', { name: '실행 결과 알림 닫기' })
+      if (await dismiss.isVisible().catch(() => false)) await rec.press(dismiss)
+    } finally {
+      // whatever failed, the draft is put back and the drawer closed, so S06b to S08 have the schematic to themselves
+      if (original !== null && await code.isVisible().catch(() => false) && await code.isEditable().catch(() => false)) {
+        await code.fill(original).catch(() => {})
+        await btn('취소', true).click({ timeout: 3000 }).catch(() => {})
+      }
+      await closeDrawer().catch(() => {})
+    }
+    await rec.hover(page.locator('[data-testid=right-panel]').getByText(rref, { exact: true }).first(), 2000).catch(() => {})
+  })
+
   await rec.shot('S06b', '연결 오류 해결 (OpenAI)', async () => {
     // a circuit the model left with errors is fixed the way a person would: a 해결 button puts the fix into the AI
     // editor and it is sent (blinkers of 2026-10-30 came with two batteries' pins open, or with no GND net, which
@@ -183,7 +253,7 @@ export async function run(rec) {
       .map(id => document.querySelector(`[data-testid='${id}']`)?.innerText || '').join('|'))
     // an error notice is the one with role alert: "오류를 자동으로 고쳤습니다 (오류 2 → 0)" says 오류 too, and the
     // scene took a circuit the server had fixed for a broken one (review of 2026-10-30)
-    const broken = async () => (await diag.count()) > 0 || ((await notice.count()) > 0 && await notice.getAttribute('role') === 'alert')
+    const broken = checksBroken
     const noticeText = async () => ((await notice.count()) ? await notice.innerText().catch(() => '') : '')
     if (!(await broken())) {
       const t = await noticeText()
@@ -210,6 +280,10 @@ export async function run(rec) {
       const before = await state()
       await rec.press(pick)
       await rec.pause(1200)
+      // the fix sentence as sent (sendChat empties the box), its parts, and how many replies there were before it
+      const fixText = (await T('chat-input').inputValue().catch(() => '')) || ''
+      const fixRefs = [...new Set([...fixText.matchAll(/\b([A-Z]{1,3}\d+)(?=의|\.\d|[\s,·)]|$)/g)].map(m => m[1]))]
+      const repliesBefore = (await assistantSaid()).length
       await rec.press(T('chat-input'))
       await page.keyboard.press('Enter')
       // an applied edit makes the checks run again; a reply that only asks (which net?) leaves them as they were.
@@ -223,10 +297,29 @@ export async function run(rec) {
         return moved
       }
       if (!(await rec.fast(changed, 4))) {
-        // no change: the AI asked which net. It is answered
-        await rec.caption('AI가 어느 연결인지 되물으면, 답해 주면 됩니다', 'top')
+        // no change. The new reply says why, and the answer names the parts: since the guard of 2026-11-01 the AI may
+        // re-wire only the parts the message names. It asked first: the app suggests '"응, C1 그렇게 바꿔줘"'. It moved a
+        // part the fix did not name: the note lists those parts ("요청에 없던 부품의 연결은 바꾸지 않았습니다: D1(LED)").
+        // Without either, it asked with no edit: the fix's own parts are named
+        const reply = (await assistantSaid()).slice(repliesBefore).pop() ?? ''
+        const suggested = reply.match(/"(응, [^"]*?그렇게 바꿔줘)"/)?.[1]
+        const heldLine = reply.match(/요청에 없던 부품의 (?:연결|값)은 바꾸지 않았습니다: ([^\n]+)/)?.[1] ?? ''
+        const heldRefs = [...heldLine.matchAll(/\b([A-Z]{1,3}\d+)\(/g)].map(m => m[1])
+        const named = [...new Set([...fixRefs, ...heldRefs])]
+        let answer
+        if (suggested) {
+          await rec.caption('AI가 먼저 물으면, 바꿀 부품을 넣어 답해 주면 됩니다', 'top')
+          answer = suggested
+        } else if (heldRefs.length) {
+          await rec.caption('요청에 없던 부품은 바꾸지 않으니, 그 부품을 이름으로 짚어 다시 요청합니다', 'top')
+          answer = `${named.join(', ')}의 연결을 바꿔도 돼. ${fixText}`
+        } else {
+          await rec.caption('AI가 어느 연결인지 되물으면, 답해 주면 됩니다', 'top')
+          answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
+        }
+        console.log(`  S06b: answered "${answer.slice(0, 80)}"`)
         await rec.press(T('chat-input'))
-        await page.keyboard.type('네가 판단해서 가장 알맞은 넷에 연결해줘', { delay: 50 })
+        await page.keyboard.type(answer, { delay: 30 })
         await page.keyboard.press('Enter')
         await rec.fast(changed, 4)
       }
@@ -285,7 +378,9 @@ export async function run(rec) {
     await rec.caption('부품을 옮기고 값과 연결을 바로 고칠 수 있습니다 (이 화면 안에서만 바뀝니다)')
     // only parts in view can be grabbed (some sit below the schematic's visible part), and not under the caption
     const sb = await schem.boundingBox()
-    const inView = b => b && b.x > sb.x + 5 && b.x + b.width < sb.x + sb.width - 5 && b.y > sb.y + 5 && b.y + b.height < 600
+    // the lowest y used on the schematic: its own bottom when that is higher than the fixed limits under the caption
+    const lowY = Math.min(560, sb.y + sb.height - 20)
+    const inView = b => b && b.x > sb.x + 5 && b.x + b.width < sb.x + sb.width - 5 && b.y > sb.y + 5 && b.y + b.height < Math.min(600, sb.y + sb.height - 10)
     const parts = []
     for (const g of await page.locator('g[data-comp]').all()) if (inView(await g.boundingBox())) parts.push(g)
     if (parts.length < 3) throw new Error(`only ${parts.length} parts in view`)
@@ -306,9 +401,32 @@ export async function run(rec) {
     const netUndo = btn('⌂', true).locator('xpath=../..').getByRole('button', { name: '↩ 되돌리기' })
     const checks = () => page.evaluate(() => ['erc-notice', 'circuit-diagnostics']
       .map(id => document.querySelector(`[data-testid='${id}']`)?.innerText || '').join('|'))
+    // dropped where it touches nothing: a fixed (+50, +30) put SW1 on U1's VCC symbol (review of 2026-11-01). The part
+    // and everything else drawn (part boxes with their pins, power symbols and their labels) in page pixels
+    const drop = await page.evaluate(([ref, x0, y0, x1, y1]) => {
+      const box = e => e.getBoundingClientRect()
+      const self = document.querySelector(`g[data-comp='${ref}']`)
+      const body = box(self)
+      // the power symbols at the part's own pins move with it: they count as the part, not as things in the way
+      const labels = [...document.querySelectorAll('svg text')].filter(t => !t.closest('g[data-comp]')).map(box)
+      const own = l => l.right > body.x - 30 && l.x < body.right + 30 && l.bottom > body.y - 30 && l.y < body.bottom + 30
+      const mine = labels.filter(own)
+      const me = mine.reduce((a, l) => ({ x: Math.min(a.x, l.x), right: Math.max(a.right, l.right), y: Math.min(a.y, l.y), bottom: Math.max(a.bottom, l.bottom) }),
+        { x: body.x, right: body.right, y: body.y, bottom: body.bottom })
+      const others = [...document.querySelectorAll('g[data-comp]')].filter(g => g !== self).map(box).concat(labels.filter(l => !own(l)))
+      const pad = 14
+      const hits = r => others.some(o => r.x < o.right + pad && r.right > o.x - pad && r.y < o.bottom + pad && r.bottom > o.y - pad)
+      for (const [dx, dy] of [[60, -40], [60, 40], [-60, 40], [-60, -40], [0, 70], [0, -70], [90, 0], [-90, 0], [100, 60], [-100, 60]]) {
+        const r = { x: me.x + dx, right: me.right + dx, y: me.y + dy, bottom: me.bottom + dy }
+        if (r.x > x0 + 10 && r.right < x1 - 10 && r.y > y0 + 40 && r.bottom < y1 && !hits(r)) return [dx, dy]
+      }
+      return null
+    }, [await moved.getAttribute('data-comp'), sb.x, sb.y, sb.x + sb.width, Math.min(590, sb.y + sb.height - 10)])
+    const [dx, dy] = drop ?? [50, 30]
+    if (!drop) console.log('  S08: no free spot found for the moved part, it goes (+50, +30)')
     const [mx, my] = await at(moved)
     await page.mouse.down()
-    await page.mouse.move(mx + 50, my + 30, { steps: 16 })
+    await page.mouse.move(mx + dx, my + dy, { steps: 16 })
     await page.mouse.up()
     await rec.pause(700)
     await page.mouse.click(...await at(picked))
@@ -369,7 +487,7 @@ export async function run(rec) {
     // pins in view and the net each one is wired to: pins carry no ref or net in the page, so a pin belongs
     // to the net with a wire ending on it (power pins, drawn as symbols, have none). Only the wires' ends: a wire
     // passing over another net's pin end on its way gave that pin the wrong net (review of 2026-10-30)
-    const pinMap = () => page.evaluate(([x0, y0, x1]) => {
+    const pinMap = () => page.evaluate(([x0, y0, x1, y1]) => {
       const scr = (el, x, y) => { const c = el.getScreenCTM(); return { x: x * c.a + y * c.c + c.e, y: x * c.b + y * c.d + c.f } }
       const nets = [...document.querySelectorAll('g[data-net]')].map(g => {
         const pts = []
@@ -383,7 +501,7 @@ export async function run(rec) {
       for (const comp of document.querySelectorAll('g[data-comp]')) {
         for (const hit of comp.querySelectorAll("g[style*='crosshair'] circle[r='8']")) {
           const p = scr(hit, +hit.getAttribute('cx'), +hit.getAttribute('cy'))
-          if (p.x < x0 + 20 || p.x > x1 - 20 || p.y < y0 + 20 || p.y > 560) continue
+          if (p.x < x0 + 20 || p.x > x1 - 20 || p.y < y0 + 20 || p.y > y1) continue
           // a power pin is drawn with a symbol (GND, VCC, +12V): a wire ending beside it made R2's GND pin count as
           // SENSE, and joining it to R3 put the gate on GND instead of drawing a wire (frame review of 2026-10-30)
           const power = [...document.querySelectorAll('svg text')].some(t => !t.closest('g[data-comp]')
@@ -394,7 +512,7 @@ export async function run(rec) {
         }
       }
       return { pins, nets: nets.length }
-    }, [sb.x, sb.y, sb.x + sb.width])
+    }, [sb.x, sb.y, sb.x + sb.width, lowY])
     const hint = page.getByText('연결할 핀을 클릭하세요')
 
     await rec.caption('핀을 누르고 다른 부품의 핀을 누르면 그 사이에 새 선이 이어집니다')
@@ -431,7 +549,7 @@ export async function run(rec) {
     }
 
     await rec.caption('선을 고르면 양 끝에 점이 생기고, 끝점을 다른 핀으로 끌면 연결이 옮겨집니다')
-    const wire = await page.evaluate(([x0, y0, x1]) => {
+    const wire = await page.evaluate(([x0, y0, x1, y1]) => {
       for (const p of document.querySelectorAll("g[data-net] path[stroke='transparent']")) {
         const L = p.getTotalLength()
         if (L < 40) continue
@@ -439,13 +557,13 @@ export async function run(rec) {
           const m = p.getPointAtLength(L * f)
           const c = p.getScreenCTM()
           const x = m.x * c.a + m.y * c.c + c.e, y = m.x * c.b + m.y * c.d + c.f
-          if (!(x > x0 + 20 && x < x1 - 20 && y > y0 + 20 && y < 560)) continue
+          if (!(x > x0 + 20 && x < x1 - 20 && y > y0 + 20 && y < y1)) continue
           const top = document.elementFromPoint(x, y)
           if (top?.closest('g[data-net]') && !top.closest('g[data-comp]')) return { x, y }
         }
       }
       return null
-    }, [sb.x, sb.y, sb.x + sb.width])
+    }, [sb.x, sb.y, sb.x + sb.width, lowY])
     if (!wire) throw new Error('no signal wire to pick for the endpoint drag')
     await page.mouse.move(wire.x, wire.y, { steps: 12 })
     await page.mouse.click(wire.x, wire.y)
@@ -461,7 +579,7 @@ export async function run(rec) {
     const now = await pinMap()
     let move = null
     for (const h of handles) {
-      if (h.y > 560) continue
+      if (h.y > lowY) continue
       const own = now.pins.find(p => Math.hypot(p.x - h.x, p.y - h.y) < 5)
       // another end of the same net, to see afterwards that the moved end joined it
       const keep = handles.map(o => now.pins.find(p => Math.hypot(p.x - o.x, p.y - o.y) < 5)).find(p => p && p !== own)
@@ -493,8 +611,13 @@ export async function run(rec) {
   })
 
   await rec.shot('S09', 'ERC 알림·Guide·즐겨찾기', async () => {
-    await rec.caption('만든 회로는 기록에 저장되고, 북마크를 누르면 즐겨찾기에 들어갑니다')
-    if (await T('erc-notice').count()) await rec.hover(T('erc-notice'), 2200)
+    // the caption says what the pointer is on: the bookmark caption ran over the check notice (review of 2026-11-01)
+    if (await T('erc-notice').count()) {
+      const after = /AI 편집 뒤|바뀐 회로/.test(await T('erc-notice').innerText().catch(() => ''))
+      await rec.caption(after ? 'AI로 고치면 서버가 연결을 다시 점검하고, 그 결과가 회로도 위에 남습니다'
+        : '만들 때 한 연결 점검 결과가 회로도 위에 남습니다')
+      await rec.hover(T('erc-notice'), 2200)
+    }
     await rec.caption('Guide 탭에는 회로 설명, 배선 순서, 값을 정한 근거가 정리돼 있습니다', 'top')
     await rec.press(drawerTab('Guide'))
     await rec.pause(2600)
@@ -508,9 +631,14 @@ export async function run(rec) {
   })
 
   await rec.shot('S10', 'PCB 탭 간이 보기', async () => {
-    await rec.caption('PCB를 만들기 전에는 간이 그림이 보이고, 부품 방식(SMD/THT)을 고를 수 있습니다')
+    // at the top, put up after the tab press: at the bottom it covered the app's own "간이 보기예요" note it talks about,
+    // and a top caption put up first was moved down again by the press on the tab under it (review of 2026-11-01)
+    await rec.caption('')
     await rec.press(T('view-tab-pcb'))
-    await page.getByText('간이 보기예요').first().waitFor({ timeout: 10000 })
+    const note = page.getByText('간이 보기예요').first()
+    await note.waitFor({ timeout: 10000 })
+    await rec.caption('PCB를 만들기 전에는 간이 그림이 보이고, 부품 방식(SMD/THT)을 고를 수 있습니다', 'top')
+    await rec.hover(note, 1600)
     await rec.hover(btn('SMD', true), 900)
     await rec.hover(btn('THT', true), 900)
     await rec.hover(btn('AI 다듬기 OFF'), 1100)
@@ -522,6 +650,9 @@ export async function run(rec) {
     await rec.pause(4000)
     await rec.fast(() => pcbDone().waitFor({ timeout: 300000 }), 3)
     await rec.recaption()
+    // the numbers once the placement and routing replay has settled: shown during it, the row counted up and had no
+    // DRC count yet (review of 2026-11-01)
+    await T('board-drc').first().waitFor({ timeout: 180000 })
     await rec.caption('아래 줄에 배선 수·비아·트랙 길이·기판 크기·DRC 오류가 숫자로 나옵니다')
     await rec.hover(T('board-status'), 3500)
   })
@@ -632,14 +763,18 @@ export async function run(rec) {
     await page.mouse.move(shapes.x + shapes.width / 2 + 150, shapes.y + shapes.height / 2 + 20, { steps: 45 })
     await page.mouse.up()
     await rec.pause(2200)
+    // the shapes caption would stay over the real model into S15 (preflight of 2026-11-01)
+    await rec.caption('다시 KiCad의 실제 3D로 돌아갑니다')
     await rec.press(T('board-real3d-toggle'))
     await rec.fast(() => page.waitForSelector("[data-testid='kicad-3d'][data-state='ready']", { timeout: 120000 }), 4)
     await rec.pause(1200)
   })
 
   await rec.shot('S15', '배치하기 3D 체크', async () => {
-    await rec.caption('배치하기: 실물 기판에 부품을 올리면서 하나씩 체크합니다')
+    // the caption with the tab: put up first, it stood 3.5 s over the PCB tab's 3D while the pointer moved (review of
+    // 2026-11-01)
     await rec.press(T('view-tab-assembly'))
+    await rec.caption('배치하기: 실물 기판에 부품을 올리면서 하나씩 체크합니다')
     await rec.fast(() => page.waitForSelector("[data-testid='assembly-3d'] [data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 200000 }), 6)
     const panel = T('assembly-panel')
     await rec.hover(panel.locator('[data-assembly-line]').nth(2), 1500)
@@ -730,9 +865,9 @@ export async function run(rec) {
   })
 
   await rec.shot('S19', 'Guide·Code 탭', async () => {
+    // straight to Code (Guide was shown in S09): through Guide, this caption stood 5 s over the BOM and the guide text
+    // (review of 2026-11-01)
     await rec.caption('Code 탭에는 이 회로를 만든 skidl 파이썬 코드가 있습니다')
-    await rec.press(drawerTab('Guide'))
-    await rec.pause(1400)
     await rec.press(drawerTab('Code'))
     await rec.pause(1500)
     await rec.press(btn('복사', true))
@@ -912,40 +1047,6 @@ export async function run(rec) {
     await diag.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {})
     await rec.pause(2200)
     if (!shown) throw new Error('circuit-diagnostics did not show after removing the LED')
-  })
-
-  await rec.shot('S06a', 'Code 탭 고치고 실행', async () => {
-    await rec.caption('Code 탭에서 코드를 고쳐 실행하면, 서버가 다시 돌려 회로를 바꿉니다', 'top')
-    await rec.press(T('view-tab-schematic'))
-    // a resistor this circuit has, for the line that changes its value
-    const rref = (await page.locator("g[data-comp^='R']").evaluateAll(es => es.map(e => e.getAttribute('data-comp')))).find(r => /^R\d+$/.test(r || ''))
-    if (!rref) throw new Error('no resistor on the schematic for the code change')
-    await rec.press(drawerTab('Code'))
-    await rec.press(btn('수정', true))
-    const code = page.locator("textarea[aria-label='skidl 코드 편집']")
-    await code.waitFor({ timeout: 10000 })
-    const original = await code.inputValue()
-    // the caret at the start of the generate_netlist line: added lines run before the netlist is written
-    const lineAt = text => text.lastIndexOf('\n', text.lastIndexOf('generate_netlist(')) + 1
-    const caret = i => code.evaluate((t, at) => { t.focus(); t.setSelectionRange(at, at); t.scrollTop = Math.max(0, t.value.slice(0, at).split('\n').length * 20 - t.clientHeight / 2) }, i)
-    await caret(lineAt(original))
-    await rec.caption('틀린 줄이 있으면 회로를 바꾸지 않고, 오류와 그 줄을 알려 줍니다', 'top')
-    await page.keyboard.type('R9 = Part(\n', { delay: 70 })
-    await page.keyboard.press('Control+Enter')
-    const err = page.locator('.sf-code-error')
-    await rec.fast(() => err.waitFor({ timeout: 120000 }), 4)
-    await rec.hover(err, 2200)
-    const jump = err.locator('button.is-bad').first()
-    if (await jump.count()) { await rec.press(jump); await rec.pause(1200) }
-    await code.fill(original)
-    await caret(lineAt(original))
-    await rec.caption(`고친 줄(${rref} 값을 1k로)을 넣고 실행하면 회로가 바뀝니다`, 'top')
-    await page.keyboard.type(`Part.get('${rref}').value = '1k'\n`, { delay: 60 })
-    await page.keyboard.press('Control+Enter')
-    await rec.fast(() => page.getByText('코드를 실행했습니다').first().waitFor({ timeout: 120000 }), 4)
-    await rec.pause(1200)
-    await closeDrawer().catch(() => {})
-    await rec.hover(page.locator('[data-testid=right-panel]').getByText(rref, { exact: true }).first(), 2000).catch(() => {})
   })
 
   await rec.shot('S26', '재생성과 버전 (OpenAI)', async () => {

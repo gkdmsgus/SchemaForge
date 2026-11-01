@@ -175,10 +175,13 @@ export async function turn3D(rec, canvas, { turns = 1, seconds = 10, tilt = 0 } 
   const x0 = Math.max(b.x + 10, b.x + b.width / 2 - dx / 2)
   await page.mouse.move(x0, cy, { steps: 10 })
   await page.mouse.down()
-  const n = Math.round(seconds * 1000 / 60)
-  for (let i = 1; i <= n; i++) {
-    await page.mouse.move(x0 + dx * i / n, cy)
-    await page.waitForTimeout(60)
+  // the place along the turn comes from the time gone, not a step count: over a heavy 3D model each move took far
+  // longer than its 60 ms, and an 11 s turn lasted about 32 s (review of 2026-11-01)
+  const t0 = Date.now()
+  for (let f = 0; f < 1;) {
+    f = Math.min(1, (Date.now() - t0) / (seconds * 1000))
+    await page.mouse.move(x0 + dx * f, cy)
+    await page.waitForTimeout(30)
   }
   await page.mouse.up()
   await rec.pause(1500)   // damping plays out the rest of the turn
