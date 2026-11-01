@@ -1,6 +1,8 @@
 # Generated outputs
 outputs/
 server/outputs/
+# tour recordings, their status files and downloads (scripts/record_tour.mjs)
+videos/
 
 # Claude Code local files
 .claude/
