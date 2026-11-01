@@ -1,4 +1,4 @@
-// Checks L1-L6: the model provider settings (model.ts). A mock OpenAI-compatible API runs on a local port and
+// Checks L1-L7: the model provider settings (model.ts), and a failed model call told in words (L6b, L7). A mock OpenAI-compatible API runs on a local port and
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
 // reasoning effort: circuit code (/generate, which called api.openai.com by name before), questions, plan, AI
@@ -10,7 +10,7 @@ import { readFileSync } from 'fs'
 import { createServer } from 'http'
 import { createServer as createNetServer, type AddressInfo } from 'net'
 import { join } from 'path'
-import { modelLabel, modelProvider } from './model'
+import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, modelFailure, modelLabel, modelProvider } from './model'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -20,6 +20,8 @@ const check = (name: string, pass: boolean, info = '') => {
 
 type Seen = { path: string; auth: string; model: string; effort: string; stream: boolean; json: boolean; system: string; user: string }
 const seen: Seen[] = []
+// set for L7: every model call is answered with this error, as OpenAI answers when the credit is gone or it is busy
+let failWith: { status: number; error: Record<string, string> } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
 
@@ -35,6 +37,11 @@ const mock = createServer((rq, rs) => {
       user: String(body.messages?.find((m: { role?: string }) => m.role === 'user')?.content ?? ''),
     })
     if (rq.url !== '/v1/chat/completions') { rs.writeHead(404); return rs.end('{}') }
+    if (failWith) {
+      // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower
+      rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': 'false' })
+      return rs.end(JSON.stringify({ error: failWith.error }))
+    }
     if (body.stream) {   // the AI editor streams: one text chunk, then the end
       rs.writeHead(200, { 'Content-Type': 'text/event-stream' })
       rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: '바꿀 것이 없습니다.' }, finish_reason: null }] })}\n\n`)
@@ -96,6 +103,22 @@ async function main() {
     && modelLabel('grok-4.3') === 'Grok 4.3' && modelLabel('other-model') === 'other-model'
     && modelProvider('https://api.openai.com/v1') === 'OpenAI' && modelProvider('https://api.x.ai/v1') === 'xAI',
     `${modelLabel('gpt-4o-mini')} / ${modelLabel('grok-4.3')} / ${modelProvider('https://api.x.ai/v1')}`)
+
+  // L6b. a failed model call in words: the shapes of the OpenAI SDK's error, axios's error, and xAI's message
+  const said = (e: unknown) => modelFailure(e)?.text ?? null
+  const shapes = {
+    sdkQuota: said({ status: 429, code: 'insufficient_quota', message: '429 You exceeded your current quota' }),
+    axiosQuota: said({ message: 'Request failed with status code 429', response: { status: 429, data: { error: { code: 'insufficient_quota', type: 'insufficient_quota' } } } }),
+    xaiCredit: said({ status: 429, message: '429 Your team has either used all available credits or reached its monthly spending limit' }),
+    busy: said({ status: 429, code: 'rate_limit_exceeded', message: '429 Rate limit reached for gpt-4o' }),
+    key: said({ response: { status: 401, data: { error: { code: 'invalid_api_key' } } } }),
+    other: said({ status: 500, message: 'Internal error' }),
+    plain: said(new Error('boom')),
+  }
+  check('L6b a failed model call in words: no credit, busy, key refused; anything else left to the caller',
+    shapes.sdkQuota === MODEL_NO_CREDIT && shapes.axiosQuota === MODEL_NO_CREDIT && shapes.xaiCredit === MODEL_NO_CREDIT
+    && shapes.busy === MODEL_BUSY && shapes.key === MODEL_KEY_REFUSED && shapes.other === null && shapes.plain === null,
+    JSON.stringify(Object.fromEntries(Object.entries(shapes).map(([k, v]) => [k, v?.slice(0, 18) ?? null]))))
 
   await new Promise<void>(resolve => mock.listen(0, '127.0.0.1', () => resolve()))
   const mockBase = `http://127.0.0.1:${(mock.address() as AddressInfo).port}/v1`
@@ -162,6 +185,27 @@ async function main() {
       && /Change, remove or re-wire only the parts the user's message names/.test(sys) && /Never remove or modify another part/.test(sys)
       && !/must list every ref\+pin/.test(sys),
       sys.split('\n').filter(l => /Free refs|Change, remove|never a ref/.test(l)).join(' | ') || sys.slice(0, 200))
+
+    // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
+    // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)
+    failWith = { status: 429, error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota' } }
+    const qPlan = await post(grok.base, '/plan', { description: 'LED 하나를 켜는 회로' })
+    const qPlanError = String((await qPlan.json() as { error?: string }).error ?? '')
+    const qGen = await (await post(grok.base, '/generate', { description: 'LED 하나를 켜는 회로', autoFix: true })).text()
+    const qEdit = await (await post(grok.base, '/chat_edit', { graph: blinker, message: 'R1 값을 2k로 바꿔줘' })).text()
+    const inEvent = (sseText: string) => sseText.split('\n').filter(l => l.startsWith('data:') && /message/.test(l)).join(' ')
+    check('L7 no model credit: the plan (503), the circuit and the AI editor tell it in words, not the status code',
+      qPlan.status === 503 && qPlanError === MODEL_NO_CREDIT && inEvent(qGen).includes(MODEL_NO_CREDIT) && !/status code 429|Server error/.test(qGen)
+      && inEvent(qEdit).includes(MODEL_NO_CREDIT),
+      `plan ${qPlan.status} ${qPlanError.slice(0, 30)} | gen ${inEvent(qGen).slice(0, 80)} | edit ${inEvent(qEdit).slice(0, 80)}`)
+
+    // L7b. too many requests (429 rate_limit_exceeded): try again shortly
+    failWith = { status: 429, error: { message: 'Rate limit reached for requests', type: 'requests', code: 'rate_limit_exceeded' } }
+    const busy = await post(grok.base, '/plan', { description: 'LED 하나를 켜는 회로' })
+    const busyError = String((await busy.json() as { error?: string }).error ?? '')
+    check('L7b model busy: the plan answers 429 and asks to try again shortly', busy.status === 429 && busyError === MODEL_BUSY,
+      `${busy.status} ${busyError}`)
+    failWith = null
   } finally {
     await stopServer(grok.proc)
   }

@@ -192,7 +192,7 @@ cd server && npx tsx check_auth_flow.ts
 ```bash
 cd server && npx tsx check_model_config.ts
 ```
-모델 설정 8항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, 승인한 설계 계획이 회로 요청에 들어가는지, AI 편집 프롬프트가 새 부품에 쓸 비어 있는 기호(C3가 있으면 C4)를 주고 요청에 없는 부품을 지우거나 값·연결을 바꾸지 말라고 하는지, `/health`가 화면에 보일 모델 이름을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다.
+모델 설정 11항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, 승인한 설계 계획이 회로 요청에 들어가는지, AI 편집 프롬프트가 새 부품에 쓸 비어 있는 기호(C3가 있으면 C4)를 주고 요청에 없는 부품을 지우거나 값·연결을 바꾸지 말라고 하는지, `/health`가 화면에 보일 모델 이름을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다. 모델 크레딧이 떨어졌을 때(OpenAI 429 `insufficient_quota`) 계획·회로 생성·AI 편집이 상태 코드 대신 한국어로 알리는지(계획은 503), 요청이 몰렸을 때(429 `rate_limit_exceeded`) 잠시 뒤 다시 하라고 하는지, OpenAI SDK·axios·xAI가 주는 오류 모양을 모두 같은 안내로 읽는지도 본다.
 
 ```bash
 npx tsx scripts/check_api_client.ts

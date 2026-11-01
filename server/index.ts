@@ -18,7 +18,7 @@ import {
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
-import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelLabel, modelProvider } from './model'
+import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
@@ -753,7 +753,8 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
     res.json(parsed)
   } catch (e) {
     console.error('/plan error:', e)
-    res.status(500).json({ error: (e as Error).message })
+    const f = modelFailure(e)
+    res.status(f?.status ?? 500).json({ error: f?.text ?? (e as Error).message })
   }
 })
 
@@ -886,7 +887,7 @@ changed.`
     res.write(`event: done\ndata: ${JSON.stringify({ reply, actions })}\n\n`)
     res.end()
   } catch (e) {
-    const msg = abort.signal.aborted ? '요청 시간이 초과됐습니다.' : (e as Error).message
+    const msg = abort.signal.aborted ? '요청 시간이 초과됐습니다.' : modelFailure(e)?.text ?? (e as Error).message
     res.write(`event: error\ndata: ${JSON.stringify({ message: msg })}\n\n`)
     res.end()
   } finally {
@@ -1091,7 +1092,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     if (!clientClosed) {
       const msg = abort.signal.aborted
         ? '회로 생성 시간이 초과됐습니다.'
-        : `Server error: ${(e as Error).message}`
+        : modelFailure(e)?.text ?? `Server error: ${(e as Error).message}`
       res.write(sse('error', JSON.stringify({ message: msg })))
     }
   } finally {
@@ -1396,7 +1397,7 @@ async function runAiLoop(
     }
     return kept ? { done: bestDone, drc: bestDrc } : null
   } catch (e) {
-    emit({ round: 0, reason: `AI 다듬기를 건너뜁니다: ${(e as Error).message}`, actions: {},
+    emit({ round: 0, reason: `AI 다듬기를 건너뜁니다: ${modelFailure(e)?.text ?? (e as Error).message}`, actions: {},
            before: metricsOf((doneEvent.summary || {}) as Record<string, unknown>, drc.errors ?? 0), kept: false })
     return null
   }
