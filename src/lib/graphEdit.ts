@@ -226,12 +226,20 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
   return { actions: out, held: [...held.values()], dropped, kept: [...new Set(kept)], valued: [...new Set(valued)] }
 }
 
+/** a reply that asks the person something: a question mark, or a sentence ending like one ("적용할까요.") */
+export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|나요|습니까)[.!]?(\s|$)/.test(reply)
+
 /**
  * An AI edit as the chat applies it: references filled in, what the request did not ask for held back (guardEdit),
  * the circuit after, and the note under the reply. The note names parts, not pin numbers or net names (beginners).
  * changed is false when nothing of the edit is left to apply: the circuit, the undo list and the re-check stay.
+ * A reply that asks something waits for the answer, edit and all (live, 2026-11-01 tour: "확실하지 않으면 바꾸지 말고
+ * 물어봐줘" got a new connection with "이 연결을 적용할까요?", and the app had applied it before the answer).
  */
-export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: string): { actions: ChatAction[]; graph: NetGraph; changed: boolean; note: string } {
+export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: string, reply = ''): { actions: ChatAction[]; graph: NetGraph; changed: boolean; note: string } {
+  if (proposed.length && asksBack(reply)) {
+    return { actions: [], graph, changed: false, note: '\n\nAI가 먼저 묻고 있어서 회로는 아직 바꾸지 않았습니다. 그대로 바꾸려면 "응, 그렇게 바꿔줘"처럼 답해 주세요.' }
+  }
   const filled = withRefs(graph, proposed)
   const skipped = skippedAdds(graph, filled)
   const { actions, held, dropped, kept, valued } = guardEdit(graph, filled, message)

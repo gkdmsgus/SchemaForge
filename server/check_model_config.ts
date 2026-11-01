@@ -185,6 +185,12 @@ async function main() {
       && /Change, remove or re-wire only the parts the user's message names/.test(sys) && /Never remove or modify another part/.test(sys)
       && !/must list every ref\+pin/.test(sys),
       sys.split('\n').filter(l => /Free refs|Change, remove|never a ref/.test(l)).join(' | ') || sys.slice(0, 200))
+    // L4c. a reply that asks comes with no edit: the app applies actions at once (2026-11-01 tour: "이 연결을 적용할까요?"
+    // came with the connection, and it was in before the answer)
+    check('L4c AI editor prompt: a reply that asks the user anything returns no actions',
+      /when\s+the reply asks the user anything[^]*?return an empty actions array: the\s+edit waits for the answer/.test(sys)
+      && /When you return actions, the reply says what changed and asks nothing/.test(sys),
+      sys.split('\n').filter(l => /asks|waits/.test(l)).join(' | ') || sys.slice(0, 200))
 
     // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
     // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)

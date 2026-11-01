@@ -16,7 +16,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
-import type { BoardModel, ErcFinding, NetGraph } from '../src/types.ts'
+import type { BoardModel, ChatAction, ErcFinding, NetGraph } from '../src/types.ts'
 
 let failed = 0, skipped = 0
 function check(name: string, ok: boolean, info = '') {
@@ -308,6 +308,23 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   check('G11 removals and value changes of parts the request does not name are held; a kind the circuit has one of names it, unless the edit adds that kind',
     values && removed && byKind && notUnique && adding && moveByKind,
     JSON.stringify({ values, removed, byKind, notUnique, adding, moveByKind, val: val.note, rm: rm.note, many: many.note, add: add.note, mv: mv.note }))
+}
+
+// G12. a reply that asks first changes nothing yet (2026-11-01 tour: "확실하지 않으면 바꾸지 말고 물어봐줘" got a new
+// connection and "이 연결을 적용할까요?", and the app applied it before the answer); a reply that says what it did still applies
+{
+  const open: NetGraph = { ...blinker, nets: blinker.nets.map(n => (n.name === 'TRIG_THRES' ? { ...n, nodes: n.nodes.filter(nd => nd.ref !== 'C2') } : n)) }
+  const join: ChatAction[] = [{ type: 'add_net', name: 'TRIG_THRES', nodes: [{ ref: 'C2', pin: '1' }] }]
+  const msg = 'C2의 1번 핀이 어디에도 연결되어 있지 않아. 회로에 맞게 이어줘. 어느 넷인지 확실하지 않으면 바꾸지 말고, 후보 넷을 알려 주고 물어봐줘.'
+  const ask = chatEdit(open, join, msg, 'C2의 1번 핀은 TRIG_THRES에 연결하는 것이 맞아 보입니다. 이 연결을 적용할까요?')
+  const held = ask.changed === false && JSON.stringify(ask.graph) === JSON.stringify(open) && ask.actions.length === 0
+    && /아직 바꾸지 않았습니다/.test(ask.note) && plain(ask.note)
+  const noMark = chatEdit(open, join, msg, '이 연결을 적용할까요.').changed === false
+  const did = chatEdit(open, join, msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
+  const applied = did.changed && JSON.stringify(did.graph.nets) === JSON.stringify(blinker.nets) && !/아직/.test(did.note)
+  const wired = /chatEdit\(snapshot, proposed, msg, reply\)/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
+  check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
+    held && noMark && applied && wired, JSON.stringify({ held, noMark, applied, wired, ask: ask.note, did: did.note }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
