@@ -66,13 +66,18 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
   const [dbMode, setDbMode] = useState(false)
   // why a server action failed (list, delete, rename): shown above the list instead of failing silently
   const [notice, setNotice] = useState<string | null>(null)
+  // a server list on its way: the drawer says so instead of '저장된 회로가 없습니다' (about 1.5 s on the deployed server)
+  const [loading, setLoading] = useState({ history: false, favorites: false })
 
   useEffect(() => {
     if (!open) return
+    let live = true   // an answer for a drawer since closed (or reopened) is not shown
     setNotice(null)
     if (user) {
       setDbMode(true)
+      setLoading({ history: true, favorites: true })
       getSessions().then(sessions => {
+        if (!live) return
         const entries: StoredEntry[] = sessions.map((s, i) => ({
           id: i,
           name: s.name || s.prompt,
@@ -86,20 +91,24 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
         }))
         setSavedResults(entries)
       }).catch(e => {
+        if (!live) return
         // the server list did not come: this browser's records are shown, and deletes act on them
         setDbMode(false)
         setSavedResults(getSavedResults())
         setNotice(`서버 기록을 불러오지 못해 이 브라우저의 기록을 보여 줍니다. (${(e as Error).message})`)
-      })
-      getFavorites().then(setFavorites).catch(e => {
+      }).finally(() => { if (live) setLoading(l => ({ ...l, history: false })) })
+      getFavorites().then(f => { if (live) setFavorites(f) }).catch(e => {
+        if (!live) return
         setFavorites([])
         setNotice(`즐겨찾기를 불러오지 못했습니다. (${(e as Error).message})`)
-      })
+      }).finally(() => { if (live) setLoading(l => ({ ...l, favorites: false })) })
     } else {
       setDbMode(false)
       setTab('history')
+      setLoading({ history: false, favorites: false })
       setSavedResults(getSavedResults())
     }
+    return () => { live = false }
   }, [open, user])
 
   async function deleteSaved(e: React.MouseEvent, id: number) {
@@ -248,7 +257,8 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
             </div>
           )}
           {tab === 'favorites' && user ? (
-            favorites.length === 0 ? (
+            favorites.length === 0 && loading.favorites ? <Loading what="즐겨찾기를" />
+            : favorites.length === 0 ? (
               <p style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--sf-fg-dim)', fontSize: 11, fontFamily: SANS }}>
                 즐겨찾기한 회로가 없어요<br/>
                 <span style={{ fontSize: 10, opacity: 0.6 }}>결과 화면 상단의 북마크 버튼으로 추가하세요</span>
@@ -265,7 +275,8 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
               />
             ))
           ) : (
-            savedResults.length === 0 ? (
+            savedResults.length === 0 && loading.history ? <Loading what="저장된 회로를" />
+            : savedResults.length === 0 ? (
               <p style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--sf-fg-dim)', fontSize: 11, fontFamily: SANS }}>
                 저장된 회로가 없습니다
               </p>
@@ -312,6 +323,15 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
         </div>
       </div>
     </>
+  )
+}
+
+/** in place of the empty-list line while the server list is on its way */
+function Loading({ what }: { what: string }) {
+  return (
+    <p role="status" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--sf-fg-dim)', fontSize: 11, fontFamily: SANS }}>
+      {what} 불러오는 중입니다…
+    </p>
   )
 }
 

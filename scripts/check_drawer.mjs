@@ -1,7 +1,8 @@
 // Browser checks for the history drawer of a logged-in user, with the login and the API faked by page.route:
 // R1 the ✎ button opens the name field inside the open drawer and does not open the circuit, R2 Enter sends
 // PATCH /sessions/:id with the new name and the list shows it, R3 Escape keeps the old name and sends nothing,
-// R4 a click on the item opens the circuit and closes the drawer, R5 a favourite has no ✎.
+// R4 a click on the item opens the circuit and closes the drawer, R5 a favourite has no ✎, R6-R7 a slow list shows
+// '불러오는 중' until it comes, not '저장된 회로가 없습니다'.
 // (Before R1 the name was renamed by double-click, whose first click already opened the circuit and slid the
 // drawer out with the name field in it.) Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_drawer.mjs [BASE]   (default http://localhost:3000)
@@ -77,6 +78,31 @@ try {
   await page.getByRole('button', { name: '⭐ 즐겨찾기' }).click()
   await page.waitForTimeout(500)
   check('R5 a favourite has no ✎', await page.getByText(/전원 회로/).first().isVisible() && await pen.count() === 0, `✎ ${await pen.count()}`)
+
+  // R6-R7: while the list is on its way (1.5 s here, as on the deployed server in the 2026-11-01 tour) the drawer says
+  // it is loading, not '저장된 회로가 없습니다'; then the list, or that line when the server has none
+  for (const [name, sessions, want] of [['R6', [session], session.name], ['R7', [], '저장된 회로가 없습니다']]) {
+    const slow = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+    await slow.addInitScript(() => {
+      localStorage.setItem('sf_token', 'fake-token')
+      localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    })
+    await slow.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+    await slow.route(/\/favorites$/, async r => { await new Promise(ok => setTimeout(ok, 1500)); return json(r, { favorites: [] }) })
+    await slow.route(/\/sessions$/, async r => { await new Promise(ok => setTimeout(ok, 1500)); return json(r, { sessions }) })
+    await slow.goto(BASE, { waitUntil: 'networkidle' })
+    await slow.locator("button[aria-label='메뉴']").click()
+    await slow.waitForTimeout(500)
+    const during = { empty: await slow.getByText('저장된 회로가 없습니다').isVisible(), loading: await slow.getByText('불러오는 중').first().isVisible() }
+    await slow.getByRole('button', { name: '⭐ 즐겨찾기' }).click()
+    const favDuring = { empty: await slow.getByText('즐겨찾기한 회로가 없어요').isVisible(), loading: await slow.getByText('불러오는 중').first().isVisible() }
+    await slow.getByRole('button', { name: '히스토리' }).click()
+    const shown = await slow.getByText(want).first().waitFor({ timeout: 5000 }).then(() => true, () => false)
+    const after = await slow.getByText('불러오는 중').count()
+    check(`${name} loading ${sessions.length ? 'a list' : 'an empty list'}: '불러오는 중' first (history and favourites), then ${sessions.length ? 'the list' : "'저장된 회로가 없습니다'"}`,
+      !during.empty && during.loading && !favDuring.empty && favDuring.loading && shown && after === 0, JSON.stringify({ during, favDuring, shown, after }))
+    await slow.context().close()
+  }
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])

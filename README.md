@@ -217,7 +217,7 @@ node scripts/check_live.mjs https://schemaforge.kro.kr
 ```bash
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
 ```
-로그인한 사용자의 기록 서랍 5항목 (로그인과 기록 API는 브라우저 안에서 흉내 낸다). ✎ 버튼이 서랍을 연 채 이름 칸을 여는지, Enter가 새 이름으로 `PATCH /sessions/:id`를 보내는지, Esc는 아무것도 보내지 않는지, 항목을 누르면 회로가 열리고 서랍이 닫히는지, 즐겨찾기에는 ✎가 없는지 확인한다.
+로그인한 사용자의 기록 서랍 7항목 (로그인과 기록 API는 브라우저 안에서 흉내 낸다). ✎ 버튼이 서랍을 연 채 이름 칸을 여는지, Enter가 새 이름으로 `PATCH /sessions/:id`를 보내는지, Esc는 아무것도 보내지 않는지, 항목을 누르면 회로가 열리고 서랍이 닫히는지, 즐겨찾기에는 ✎가 없는지, 목록이 늦게 와도(1.5초) 그동안 "저장된 회로가 없습니다" 대신 불러오는 중이라고 보이는지(목록이 있을 때와 빈 목록일 때) 확인한다.
 
 ```bash
 node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로
