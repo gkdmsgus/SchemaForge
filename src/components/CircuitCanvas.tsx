@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
 import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
+import { DIFF_EDGE, DIFF_FILL, NAME_TEXT, VALUE_TEXT, type DiffKind } from '../lib/diffColors'
 
 // ── Color palette ─────────────────────────────────────────────
 const NET_COLORS = ['#6a4cb5','#1d7a6a','#c87515','#2563eb','#b04826','#0891b2','#c2410c','#4d7c0f']
@@ -10,8 +11,8 @@ const COMP_FILL = '#f6f0e0'
 const COMP_BORDER = '#d6cdb6'
 const GRID_DOT = '#e3dcc7'
 const TEXT_DIM = '#b0a895'
-const TEXT_LABEL = '#1a1611'
-const TEXT_VALUE = '#5c5444'
+const TEXT_LABEL = NAME_TEXT
+const TEXT_VALUE = VALUE_TEXT
 const PIN_IDLE = '#d6cdb6'
 const PIN_HOVER = '#6a4cb5'
 const PIN_ACTIVE = '#c87515'
@@ -885,6 +886,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
               const diffAdded    = graphDiff?.added?.has(c.ref)
               const diffRemoved  = graphDiff?.removed?.has(c.ref)
               const diffModified = graphDiff?.modified?.has(c.ref)
+              const diffKind: DiffKind | null = diffRemoved ? 'removed' : diffAdded ? 'added' : diffModified ? 'modified' : null
               const invalid = invalidRefs.has(c.ref)
 
               return (
@@ -930,13 +932,13 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                   })}
 
                   {/* diff glow */}
-                  {(diffAdded || diffRemoved || diffModified) && (
+                  {diffKind && (
                     <rect x={-l.w/2-4} y={-l.h/2-4} width={l.w+8} height={l.h+8} rx="9"
                           fill="none"
-                          stroke={diffRemoved ? '#ff5c5c' : diffAdded ? '#34d3a0' : '#f59e0b'}
+                          stroke={DIFF_EDGE[diffKind]}
                           strokeWidth="2"
                           strokeOpacity="0.8"
-                          style={{ filter: `drop-shadow(0 0 6px ${diffRemoved ? '#ff5c5c' : diffAdded ? '#34d3a0' : '#f59e0b'})`, animation: diffRemoved ? 'pulse 0.35s ease-in-out infinite' : undefined }}
+                          style={{ filter: `drop-shadow(0 0 6px ${DIFF_EDGE[diffKind]})`, animation: diffRemoved ? 'pulse 0.35s ease-in-out infinite' : undefined }}
                     />
                   )}
 
@@ -948,8 +950,8 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
                   {/* component body */}
                   <rect x={-l.w/2} y={-l.h/2} width={l.w} height={l.h} rx="6"
-                        fill={diffRemoved ? '#241010' : diffAdded ? '#0d2018' : diffModified ? '#1a1506' : COMP_FILL}
-                        stroke={invalid || diffRemoved ? '#ff5c5c' : isSel ? color : diffAdded ? '#34d3a0' : diffModified ? '#f59e0b' : COMP_BORDER}
+                        fill={diffKind ? DIFF_FILL[diffKind] : COMP_FILL}
+                        stroke={invalid || diffRemoved ? DIFF_EDGE.removed : isSel ? color : diffKind ? DIFF_EDGE[diffKind] : COMP_BORDER}
                         strokeWidth={invalid || diffRemoved ? 2 : isSel || diffAdded || diffModified ? 1.5 : 1}
                         style={{ filter: isSel ? `drop-shadow(0 0 8px ${color}66)` : 'none' }}
                   />

@@ -263,7 +263,7 @@ npx tsx scripts/check_operating.ts
 ```bash
 npx tsx scripts/check_code_view.ts
 ```
-Code 탭 87항목. 코드 강조가 원문을 바꾸지 않는지, 오류 출력에서 사용자 코드의 줄 번호를 찾는지(skidl 내부 줄은 건너뛰고, 색 코드가 섞인 출력도 읽음), 들여쓰기, 실제 python에 오류를 넣었을 때의 줄 번호, 글자색 대비.
+Code 탭 94항목. 코드 강조가 원문을 바꾸지 않는지, 오류 출력에서 사용자 코드의 줄 번호를 찾는지(skidl 내부 줄은 건너뛰고, 색 코드가 섞인 출력도 읽음), 들여쓰기, 실제 python에 오류를 넣었을 때의 줄 번호, 글자색 대비. 회로도에서 바뀐 부품이 잠깐 빛날 때 그 이름과 값이 강조색 위에서 읽히는지(대비 7:1·4.5:1 이상)도 본다.
 
 ```bash
 npx tsx scripts/check_bom.ts

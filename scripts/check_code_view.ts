@@ -6,7 +6,8 @@
  * (c) error lines from recorded stderr (anonymised), (d) error summaries, (e) line ranges and
  * Tab indentation, (f) a live fault injected into led_basic.py and run through the installed
  * python + skidl (a missing python or skidl is a FAIL), (g) WCAG AA contrast of every text
- * colour in src/styles/_code.scss on its surface. Exit code 0 only if every check passes.
+ * colour in src/styles/_code.scss on its surface, (h) the first changed line of a fix, (i) a changed part's name and
+ * value readable on its schematic flash fill (src/lib/diffColors.ts). Exit code 0 only if every check passes.
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -14,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { errorLine, firstChangedLine, indentLines, lineRange, summarizeError, toLF, tokenizePython, type Tok } from '../src/lib/pythonCode.ts'
 import { draftWith } from '../src/lib/fixes.ts'
+import { contrast, DIFF_FILL, NAME_TEXT, VALUE_TEXT } from '../src/lib/diffColors.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 let failed = 0
@@ -214,6 +216,18 @@ function runPython(source: string): { ok: boolean; stderr: string; why: string }
   const at = firstChangedLine(code, text)
   check('h: the first line a fix put in is found (CRLF code, LF draft)', at === 6 && text.split('\n')[at - 1] === '# 고침: 저항을 470 Ω으로', `line ${at}: ${text.split('\n')[at - 1]}`)
   check('h: no change, no line past the end', firstChangedLine(code, code) === code.split('\r\n').length + 1)
+}
+
+// i. a part an edit changed flashes on the schematic with its name still readable: the dark-theme fills made it a
+// black box with the name gone, after a Code tab run and an AI edit (tour frame review of 2026-11-02)
+{
+  for (const k of ['added', 'removed', 'modified'] as const) {
+    const name = contrast(NAME_TEXT, DIFF_FILL[k]), value = contrast(VALUE_TEXT, DIFF_FILL[k])
+    check(`i: ${k} part: name ≥ 7:1 and value ≥ 4.5:1 on its flash fill`, name >= 7 && value >= 4.5, `${DIFF_FILL[k]} name ${name.toFixed(1)} value ${value.toFixed(1)}`)
+  }
+  // the fills it replaces, to show the check catches them
+  check('i: the old dark fills fail it', ['#0d2018', '#241010', '#1a1506'].every(f => contrast(NAME_TEXT, f) < 2),
+    ['#0d2018', '#241010', '#1a1506'].map(f => contrast(NAME_TEXT, f).toFixed(2)).join(' '))
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nall code view checks passed')
