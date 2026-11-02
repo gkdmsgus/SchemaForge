@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
 import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
-import { partKey, placeAdded, type Spots } from '../lib/schematicPlace'
+import { carryOver, type Spots } from '../lib/schematicPlace'
 import { DIFF_EDGE, DIFF_FILL, NAME_TEXT, VALUE_TEXT, type DiffKind } from '../lib/diffColors'
 
 // ── Color palette ─────────────────────────────────────────────
@@ -314,15 +314,11 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   const edited = useRef(false)
   if (placedFor !== graph) {
     const from = placedFor ?? spots?.graph, was = placedFor ? positions : spots?.at ?? {}
-    const kept = from ? Object.fromEntries(comps.filter(c => was[c.ref]).map(c => [c.ref, was[c.ref]])) : {}
-    const gone = spots?.gone ?? {}
-    if (from) for (const ref of Object.keys(was)) if (!comps.some(c => c.ref === ref)) gone[ref] = { at: was[ref], key: partKey(from, ref) }
-    const back = graph ? Object.fromEntries(comps.filter(c => !kept[c.ref] && gone[c.ref]?.key === partKey(graph, c.ref)).map(c => [c.ref, gone[c.ref].at])) : {}
+    const carried = graph ? carryOver(from, was, graph, spots?.gone ?? {}, layouts, visible()) : null
     // only an edit of the circuit on screen keeps the view; shown again, the circuit opens fitted
-    edited.current = !!placedFor && Object.keys(kept).length > 0
+    edited.current = !!placedFor && comps.some(c => was[c.ref])
     setPlacedFor(graph)
-    setPositions(Object.keys(kept).length || Object.keys(back).length
-      ? placeAdded(kept, comps.map(c => c.ref).filter(r => !kept[r]), layouts, nets, visible(), back) : auto.positions)
+    setPositions(carried ?? auto.positions)
     setLocalNets(null)
   }
   // the layout as it is, dragged parts too, for when the schematic is shown again

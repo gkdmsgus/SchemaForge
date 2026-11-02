@@ -15,7 +15,7 @@ import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
-import { GAP_X, GAP_Y, partKey, placeAdded } from '../src/lib/schematicPlace.ts'
+import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -391,7 +391,8 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const inView = room.ok && room.c.x + 40 <= 900 && room.c.x > 545 && rows.has(room.c.y)
   const column = wide.ok && (wide.c.x < 85 || wide.c.x > 545) && rows.has(wide.c.y)
   const row = tall.ok && (tall.c.y < 182 || tall.c.y > 470)
-  const wired = /placeAdded\(kept, /.test(fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8'))
+  const wired = /placeAdded\(kept, /.test(fs.readFileSync(path.join('src', 'lib', 'schematicPlace.ts'), 'utf8'))
+    && /carryOver\(/.test(fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8'))
   check('G13 an added part takes a free spot (in view when there is room, else a column or row by the view), the others stay',
     inView && column && row && any.ok && wired, JSON.stringify({ room: room.c, wide: wide.c, tall: tall.c, any: any.c, wired }))
 
@@ -408,17 +409,34 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const taken = placeAdded({ ...others, C4: kept.D1 }, ['D1'], size, nets, null, { D1: kept.D1 })
   const moved = !same(taken.D1, kept.D1)
     && Object.values({ ...others, C4: kept.D1 }).every(p => Math.abs(taken.D1.x - p.x) >= 80 + GAP_X || Math.abs(taken.D1.y - p.y) >= 44 + GAP_Y)
-  const withC4 = (a: string, b: string): NetGraph => ({ components: [...blinker.components, { ref: 'C4', name: 'C', value: '100nF' }],
-    nets: [...blinker.nets.map(n => (n.name === a ? { ...n, nodes: [...n.nodes, { ref: 'C4', pin: '1' }] } : n.name === b ? { ...n, nodes: [...n.nodes, { ref: 'C4', pin: '2' }] } : n))] })
-  const [n0, n1, n2] = blinker.nets.map(n => n.name)
-  const keys = partKey(blinker, 'D1') === partKey(structuredClone(blinker), 'D1') && partKey(withC4(n0, n1), 'C4') === partKey(withC4(n0, n1), 'C4')
-    && partKey(withC4(n0, n1), 'C4') !== partKey(withC4(n2, n1), 'C4')
+  // the edits and tab switches as carryOver sees them (CircuitCanvas calls it with the last layout and graph)
+  const add = (g: NetGraph, ref: string, name: string, a: string, b: string): NetGraph => ({ components: [...g.components, { ref, name, value: '' }],
+    nets: g.nets.map(n => (n.name === a ? { ...n, nodes: [...n.nodes, { ref, pin: '1' }] } : n.name === b ? { ...n, nodes: [...n.nodes, { ref, pin: '2' }] } : n)) })
+  const drop = (g: NetGraph, ref: string): NetGraph => ({ components: g.components.filter(c => c.ref !== ref), nets: g.nets.map(n => ({ ...n, nodes: n.nodes.filter(nd => nd.ref !== ref) })) })
+  const sizes = { ...size, D1: { w: 80, h: 44 } }
+  // shown again after another tab: as it was, two parts dragged over each other too
+  const overlap = { ...kept, R1: { x: kept.R2.x + 10, y: kept.R2.y + 5 } }
+  const again = carryOver(blinker, overlap, blinker, {}, sizes, null)
+  const asWas = !!again && refs.every(r => same(again[r], overlap[r]))
+  // C4 on VCC and GND, undone, then a C4 by the LED (LED_A, OUT): it goes by its own nets, as with nothing remembered
+  const gone: Record<string, { x: number; y: number }> = {}
+  const c4a = add(blinker, 'C4', 'C', 'VCC', 'GND'), c4b = add(blinker, 'C4', 'C', 'LED_A', 'OUT')
+  const p1 = carryOver(blinker, kept, c4a, gone, sizes, null)!, p2 = carryOver(c4a, p1, blinker, gone, sizes, null)!
+  const p3 = carryOver(blinker, p2, c4b, gone, sizes, null)!, fresh = carryOver(blinker, p2, c4b, {}, sizes, null)!
+  const ownNets = same(p3.C4, fresh.C4) && !same(fresh.C4, p1.C4)
+  // the LED D1 dragged aside and taken out, a diode given the ref D1 and undone, then the LED undone back: it returns
+  // to where it was dragged (recheck of 2026-11-03: by ref alone the diode wrote over the LED's spot)
+  const g2: Record<string, { x: number; y: number }> = {}, aside = { ...kept, D1: { x: 900, y: 700 } }
+  const noLed = drop(blinker, 'D1'), diode = add(noLed, 'D1', 'D', 'VCC', 'OUT')
+  const q1 = carryOver(blinker, aside, noLed, g2, sizes, null)!, q2 = carryOver(noLed, q1, diode, g2, sizes, null)!
+  const q3 = carryOver(diode, q2, noLed, g2, sizes, null)!, q4 = carryOver(noLed, q3, blinker, g2, sizes, null)!
+  const ledBack = same(q4.D1, aside.D1) && !same(q2.D1, aside.D1)
   const canvas = fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8')
-  const kept13 = /placeAdded\([^\n]*visible\(\), back\)/.test(canvas) && /spots\.at = positions/.test(canvas)
-    && /gone\[c\.ref\]\?\.key === partKey\(graph, c\.ref\)/.test(canvas)
+  const kept13 = /carryOver\(from, was, graph, spots\?\.gone \?\? \{\}, layouts, visible\(\)\)/.test(canvas) && /spots\.at = positions/.test(canvas)
     && /<CircuitCanvas [^\n]*spots=\{schematicSpots\.current\}/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
-  check('G13b a part coming back (same kind, same nets) takes its last spot first, unless a part sits there; the spots outlive the schematic',
-    first && same(pulled.D1, kept.D1) && moved && keys && kept13, JSON.stringify({ D1: home.D1, C4: home.C4, pulled: pulled.D1, taken: taken.D1, keys, kept13 }))
+  check('G13b a part coming back (same kind, same nets) takes its last spot first, unless a part sits there; shown again the layout is as it was',
+    first && same(pulled.D1, kept.D1) && moved && asWas && ownNets && ledBack && kept13,
+    JSON.stringify({ D1: home.D1, C4: home.C4, pulled: pulled.D1, taken: taken.D1, asWas, c4: [p1.C4, p3.C4, fresh.C4], led: [q2.D1, q4.D1], kept13 }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in

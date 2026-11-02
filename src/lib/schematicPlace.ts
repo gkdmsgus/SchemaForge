@@ -17,14 +17,34 @@ export interface Size { w: number; h: number }
 /**
  * Where the parts sat on one result's schematic, kept by the result panel: the schematic is unmounted on the other
  * tabs, and laid out again it moved every part (2026-11-03 tour, 328 s). `at` is the last layout with the graph it was
- * for; `gone` the parts that graph changes took out, by what they were.
+ * for; `gone` the last spot of each part a graph change took out, by its ref and partKey: by ref alone a diode that
+ * took the ref D1 after "LED D1 빼줘" wrote over the LED's spot, and two undos put the LED by its nets (recheck of
+ * 2026-11-03).
  */
-export interface Spots { graph?: NetGraph; at: Record<string, Pt>; gone: Record<string, { at: Pt; key: string }> }
+export interface Spots { graph?: NetGraph; at: Record<string, Pt>; gone: Record<string, Pt> }
 
-/** a part's kind and the net on each of its pins: the same for a part an undo brings back */
+/** a part's ref, kind and the net on each of its pins: the same for a part an undo brings back */
 export function partKey(graph: NetGraph, ref: string): string {
   const pins = (graph.nets || []).flatMap(n => n.nodes.filter(nd => nd.ref === ref).map(nd => `${nd.pin}=${n.name}`)).sort()
-  return `${(graph.components || []).find(c => c.ref === ref)?.name ?? ''}|${pins.join(',')}`
+  return `${ref}|${(graph.components || []).find(c => c.ref === ref)?.name ?? ''}|${pins.join(',')}`
+}
+
+/**
+ * The spots for `graph` from the layout `was` of graph `from` (the circuit on screen before an edit, or the one the
+ * schematic left when another tab was shown; undefined: a new circuit). The parts in both keep their spots exactly,
+ * even over each other; those `from` loses go into `gone`; a part that comes back with the same kind and nets gets its
+ * spot back when its body clears the others; the rest go by placeAdded. null when there is nothing to keep: the auto
+ * layout then.
+ */
+export function carryOver(from: NetGraph | undefined, was: Record<string, Pt>, graph: NetGraph, gone: Record<string, Pt>,
+  size: Record<string, Size>, view: Box | null): Record<string, Pt> | null {
+  if (!from) return null
+  const refs = (graph.components || []).map(c => c.ref)
+  const kept = Object.fromEntries(refs.filter(r => was[r]).map(r => [r, was[r]]))
+  for (const ref of Object.keys(was)) if (!refs.includes(ref)) gone[partKey(from, ref)] = was[ref]
+  const back = Object.fromEntries(refs.filter(r => !kept[r] && gone[partKey(graph, r)]).map(r => [r, gone[partKey(graph, r)]]))
+  if (!Object.keys(kept).length && !Object.keys(back).length) return null
+  return placeAdded(kept, refs.filter(r => !kept[r]), size, graph.nets || [], view, back)
 }
 
 /** the room between parts, as the auto layout leaves it (CircuitCanvas autoLayout HGAP, VGAP) */
