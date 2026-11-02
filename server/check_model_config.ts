@@ -219,12 +219,15 @@ async function main() {
     const whole = await edited('{"reply":"","actions":[{"type":"modify_component","ref":"R1","value":"2k"}]}')
     // the cut reply's escapes read (2 is 2, \t a tab), the escape cut at its end left out (review of 2026-11-03)
     const esc = await edited('{"reply":"R1 값을 \\u0032k로\\t바꾸고 \\u00', 'length')
+    // an escaped backslash stays one backslash: "\\u0041" is not A, "\\t" not a tab (recheck of 2026-11-03)
+    const esc2 = await edited(String.raw`{"reply":"see \\u0041 and C:\\temp\t끝`, 'length')
     check('L4d AI editor: no reply and no edit is not "완료"; an edit cut short keeps its reply (escapes read), applies nothing and asks for it in parts; "완료" with an edit',
       /^바꿀 내용을 정하지 못했습니다/.test(empty.reply) && !empty.actions.length
       && /^C1을 TRIG에 연결했습니다\.\n\n답이 길어 중간에 끊겼습니다\. 바꿀 것을 몇 개씩 나눠서/.test(cut.reply) && !cut.actions.length
       && whole.reply === '완료했습니다.' && whole.actions.length === 1
-      && /^R1 값을 2k로\t바꾸고 \n\n답이 길어 중간에 끊겼습니다/.test(esc.reply) && !esc.reply.includes('\\'),
-      JSON.stringify({ empty, cut, whole, esc }))
+      && /^R1 값을 2k로\t바꾸고 \n\n답이 길어 중간에 끊겼습니다/.test(esc.reply) && !esc.reply.includes('\\')
+      && esc2.reply.startsWith(String.raw`see \u0041 and C:\temp` + '\t끝\n\n'),
+      JSON.stringify({ empty, cut, whole, esc, esc2 }))
 
     // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
     // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)

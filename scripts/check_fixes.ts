@@ -337,7 +337,9 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   // G12b. a reply that changed nothing says so first, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no
   // edit, C1's pin still on its own): with parts held back, and after a question too (review of 2026-11-03: "연결했습니다.
   // 다른 수정이 필요하신가요?" with no edit, and a wrong part held, kept only the held note); not under an applied edit
-  const none = (r: { changed: boolean; note: string }) => !r.changed && /^\n\n이 답으로 회로는 바뀌지 않았습니다\./.test(r.note) && plain(r.note)
+  // no action chips either (recheck of 2026-11-03: "+TRIG_THRES" stayed under the line, and was kept with the message)
+  const none = (r: { changed: boolean; note: string; actions: ChatAction[] }) => !r.changed && !r.actions.length
+    && /^\n\n이 답으로 회로는 바뀌지 않았습니다\./.test(r.note) && plain(r.note)
   const empty = chatEdit(open, [], msg, '완료했습니다.'), same = chatEdit(blinker, join, msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
   const question = chatEdit(open, [], msg, '어느 넷에 연결할까요?'), claimAsk = chatEdit(open, [], msg, 'C2의 1번 핀을 연결했습니다. 다른 수정이 필요하신가요?')
   const wrong = chatEdit(open, [{ type: 'add_net', name: 'TRIG_THRES', nodes: [{ ref: 'C1', pin: '1' }] }], 'C2의 1번 핀을 TRIG_THRES에 이어줘', 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')

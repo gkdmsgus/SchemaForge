@@ -278,5 +278,6 @@ export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: strin
   // nothing changed, said first whatever the reply says: it may still say it did (2026-11-03 tour: "완료했습니다." with
   // no edit at all), name the parts held back, or end in a question after saying it connected a pin
   if (!changed) note = `\n\n이 답으로 회로는 바뀌지 않았습니다.${note}`
-  return { actions, graph: changed ? after : graph, changed, note }
+  // and no action chips under that line, none kept with the message (a session holding them reopened as an AI edit)
+  return { actions: changed ? actions : [], graph: changed ? after : graph, changed, note }
 }

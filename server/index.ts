@@ -762,14 +762,28 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
 
 /**
  * A JSON string's body as far as it came in, its escapes read: \n \" \\ only left "é" and "\t" raw in a reply
- * that became the final one when the edit was cut (review of 2026-11-03). An escape cut at the end is left out.
+ * that became the final one when the edit was cut (review of 2026-11-03). Read left to right, so a longer body always
+ * reads as a longer text (the text events go by length); an escape cut at the end is left out, a raw control
+ * character kept.
  */
 function jsonText(body: string): string {
-  for (let cut = 0; cut <= 6 && cut <= body.length; cut++) {
-    try { return JSON.parse(`"${body.slice(0, body.length - cut)}"`) as string } catch { /* cut inside an escape, or a raw control character */ }
+  const one: Record<string, string> = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' }
+  let out = ''
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') { out += body[i]; continue }
+    const e = body[i + 1]
+    if (e === undefined) break
+    if (e === 'u') {
+      const hex = body.slice(i + 2, i + 6)
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) break
+      out += String.fromCharCode(parseInt(hex, 16))
+      i += 5
+    } else {
+      out += one[e] ?? e
+      i++
+    }
   }
-  return body.replace(/\\u([0-9a-fA-F]{4})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))).replace(/\\n/g, '\n').replace(/\\t/g, '\t')
-    .replace(/\\(["\\/])/g, '$1').replace(/\\u[0-9a-fA-F]{0,3}$|\\$/, '')
+  return out
 }
 
 app.post('/chat_edit', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
@@ -860,7 +874,8 @@ changed.`
   res.setHeader('Connection', 'keep-alive')
 
   const abort = new AbortController()
-  const timeout = setTimeout(() => abort.abort(), 25000)
+  // room for max_tokens 1200 at about 30 tokens/s, so a long edit ends cut short (asked for in parts), not timed out
+  const timeout = setTimeout(() => abort.abort(), 45000)
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
