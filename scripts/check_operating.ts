@@ -209,6 +209,16 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     show(run(variant(r7805, setValue('BT1', '7V'))), 'op_reg'))
   check('O7e3 7812: limits not looked up → 판단 불가', is(run(variant(reg, setValue('U1', 'LM7812'))), 'op_reg', 'unknown', 'U1'),
     show(run(variant(reg, setValue('U1', 'LM7812'))), 'op_reg'))
+  // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
+  // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
+  // the ADJ one has no voltage in its name, and AMS1117 keeps its own limits
+  const shunt = circuit([['J1', 'Conn_01x02', 'USB'], ['U1', 'REG', 'LM1117-3.3'], ['C1', 'C', '10uF'], ['C2', 'C', '10uF'], ['R1', 'R', '0.1']],
+    [['+5V', 'J1.1', 'U1.3', 'C1.1'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2', 'R1.2'], ['VOUT', 'U1.2', 'C2.1', 'R1.1']])
+  const adj = run(variant(shunt, setValue('U1', 'LM1117-ADJ'))), ld = run(variant(shunt, setValue('U1', 'LD1117S33')))
+  check('O7e4 LM1117-3.3: no verdict on it, but its 3.3 V output finds 0.1 Ω to GND (109 W); ADJ reads no voltage',
+    is(run(shunt), 'op_reg', 'unknown', 'U1', /LM1117-3\.3/) && is(run(shunt), 'op_rpower', 'error', 'R1', /109 W/)
+    && is(ld, 'op_rpower', 'error', 'R1', /109 W/) && !pick(adj, 'op_rpower', 'R1') && is(adj, 'op_reg', 'unknown', 'U1', /자료가 없습니다/),
+    [show(run(shunt), 'op_rpower', 'R1'), show(ld, 'op_rpower', 'R1'), show(adj, 'op_reg')].join(' / '))
   // the regulator output becomes a known supply for what it feeds
   const fed = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
     [['VIN', 'BT1.1', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'D1.2'], ['V3', 'U1.2', 'C1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1']])

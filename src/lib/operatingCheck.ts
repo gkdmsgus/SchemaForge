@@ -232,6 +232,11 @@ function regSpec(value: string) {
   const v = value.toUpperCase().replace(/\s+/g, '')
   const ams = /AMS1117-?(\d)\.?(\d)/.exec(v)
   if (ams) return { name: `AMS1117-${ams[1]}.${ams[2]}`, vout: Number(`${ams[1]}.${ams[2]}`), spec: SPECS.reg.AMS1117 }
+  // the other fixed 1117s (LM1117-3.3, LD1117V33, AZ1117-3.3) keep their output voltage but get no verdict, their
+  // limits not looked up: with none, an LM1117-3.3's output had no voltage and 0.1 Ω from it to GND went unseen
+  // (2026-11-03 tour, the power circuit of S28). The ADJ ones have no voltage in the name
+  const x1117 = /([A-Z]*)1117[A-Z]*-?(\d)\.?(\d)/.exec(v)
+  if (x1117) return { name: `${x1117[1]}1117-${x1117[2]}.${x1117[3]}`, vout: Number(`${x1117[2]}.${x1117[3]}`), spec: null }
   const s78 = /(?:^|[^0-9])78(05|06|08|09|12|15)/.exec(v)
   // only the 7805's limits were looked up; other 78xx keep their output voltage but no verdict
   if (s78) return { name: `78${s78[1]}`, vout: Number(s78[1]), spec: s78[1] === '05' ? SPECS.reg.L7805 : null }
@@ -2010,7 +2015,7 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     const reg = regSpec(r.value)
     if (!reg) { res('unknown', `${r.ref} (${r.value || '값 없음'}): 이 레귤레이터의 자료가 없습니다`, ['AMS1117-x.x와 7805만 데이터시트 수치가 있습니다']); continue }
     const spec = reg.spec
-    if (!spec) { res('unknown', `${r.ref} (${reg.name}): 데이터시트 수치를 아직 확인하지 못해 판단하지 않습니다`, ['78xx 중에는 7805만 데이터시트 수치를 확인했습니다']); continue }
+    if (!spec) { res('unknown', `${r.ref} (${reg.name}): 데이터시트 수치를 아직 확인하지 못해 판단하지 않습니다`, [`데이터시트 수치는 AMS1117-x.x와 7805만 확인했습니다. 출력 ${V(reg.vout)}는 부품 이름에서 읽어 다른 검사에 씁니다`]); continue }
     const g = x.net(r.ref, 1), o = x.net(r.ref, 2), i = x.net(r.ref, 3)
     const pins = `핀 넷: 1 GND ${g ?? '-'}, 2 OUT ${o ?? '-'}, 3 IN ${i ?? '-'}`
     const gs = x.gndState(g)
