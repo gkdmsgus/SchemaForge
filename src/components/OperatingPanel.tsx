@@ -14,8 +14,10 @@ const FG = '#23262b'
 const DIM = '#6b7079'
 const RANK: Record<OpState, number> = { pass: 0, unknown: 1, warn: 2, error: 3 }
 
-export default function OperatingPanel({ results, style, fixes, onDraft, onChat, onClose }: {
+export default function OperatingPanel({ results, style, circuitErrors = 0, fixes, onDraft, onChat, onClose }: {
   results: OpResult[]; style: 'smd' | 'tht'
+  /** errors of the circuit check: the whole circuit is not judged while a pin is left on its own */
+  circuitErrors?: number
   /** fixes found by re-running the checks on a changed copy, keyed rule|ref */
   fixes?: Map<string, Fix>
   /** put a fix's lines into the Code tab (absent: the code no longer describes the circuit) */
@@ -25,7 +27,7 @@ export default function OperatingPanel({ results, style, fixes, onDraft, onChat,
   /** shown from the chip in the tab bar; the close button and Esc hide it again */
   onClose: () => void
 }) {
-  const head = operatingHeadline(results)
+  const head = operatingHeadline(results, circuitErrors)
   const [detail, setDetail] = useState<Record<string, boolean>>({})
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -55,6 +57,11 @@ export default function OperatingPanel({ results, style, fixes, onDraft, onChat,
           <div style={{ padding: '6px 10px', color: DIM, fontFamily: SANS, lineHeight: 1.45 }}>
             부품 값으로 계산해 "실제로 동작하는지"를 봅니다. 필요한 값(커넥터로 들어오는 전원, 모터 전류)을 모르면 판단 불가로 둡니다. PCB 생성은 막지 않습니다.
           </div>
+          {circuitErrors > 0 && (
+            <div data-testid="operating-blocked" style={{ padding: '0 10px 6px', color: TONE_COLOR.warn, fontFamily: SANS, lineHeight: 1.45 }}>
+              회로 오류가 있어 회로 전체의 동작은 판단하지 않았습니다. 아래는 지금 이어진 부분만 본 결과입니다. 회로 오류를 먼저 고치세요.
+            </div>
+          )}
           {sorted.map((r, i) => {
             const key = `${r.rule}-${r.ref}-${i}`
             const shown = detail[key] ?? r.state === 'error'

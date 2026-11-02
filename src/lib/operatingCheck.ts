@@ -2288,8 +2288,12 @@ function rootOf(r: OpResult, results: OpResult[]): OpResult {
   return chain[chain.length - 1]
 }
 
-/** Worst state and a one-line headline; a fault and the failures it causes count once. */
-export function operatingHeadline(results: OpResult[]): { state: OpState; text: string } {
+/**
+ * Worst state and a one-line headline; a fault and the failures it causes count once. With the circuit check
+ * failing (circuitErrors) a pass only covers what is still wired, so it reads as not judged instead
+ * (2026-11-02 tour: '동작 검사 통과' beside '회로 오류 1' after the LED was taken out).
+ */
+export function operatingHeadline(results: OpResult[], circuitErrors = 0): { state: OpState; text: string } {
   if (!results.length) return { state: 'pass', text: '검사할 부품 없음' }
   // a result counts unless it follows a fault at least as severe as itself (a knock-on of that fault)
   const counts = (r: OpResult) => { const root = rootOf(r, results); return root === r || RANK[root.state] < RANK[r.state] }
@@ -2299,5 +2303,6 @@ export function operatingHeadline(results: OpResult[]): { state: OpState; text: 
   if (any('error')) return { state: 'error', text: `동작 안 됨 ${Math.max(1, n('error'))}${unk}` }
   if (any('warn')) return { state: 'warn', text: `동작 경고 ${n('warn')}${unk}` }
   if (any('unknown')) return { state: 'unknown', text: `판단 불가 ${Math.max(1, n('unknown'))}` }
+  if (circuitErrors > 0) return { state: 'unknown', text: '판단 불가 · 회로 오류' }
   return { state: 'pass', text: '동작 검사 통과' }
 }

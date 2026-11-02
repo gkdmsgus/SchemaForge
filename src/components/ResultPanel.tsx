@@ -210,9 +210,11 @@ export default function ResultPanel({
     return () => { off = true }
   }, [authUser, sessionId])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
+  const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
-  const opHead = operatingHeadline(opResults)
+  // a circuit error (a pin left on its own) makes a pass read as not judged
+  const opHead = operatingHeadline(opResults, circuitErrors.length)
   const opFixMap = useMemo(() => (effectiveGraph ? opFixes(fromGraph(effectiveGraph, pcbStyle), opResults) : new Map<string, Fix>()), [effectiveGraph, pcbStyle, opResults])
   const aiErcNow = aiEdited && aiErc?.graph === localGraph ? aiErc : null
   const ercShown = aiEdited ? aiErcNow?.findings ?? [] : result?.erc?.findings ?? []
@@ -253,7 +255,6 @@ export default function ResultPanel({
     return null
   }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
-  const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
   function computeDiff(before: NetGraph | null, after: NetGraph | null) {
@@ -890,7 +891,7 @@ export default function ResultPanel({
               {opResults.length > 0 && (
                 <button type="button" data-testid="op-toggle" aria-expanded={opOpen && viewMode === 'schematic'} aria-controls="operating-panel"
                   onClick={() => { if (viewMode !== 'schematic') { setViewMode('schematic'); setOpOpen(true) } else setOpOpen(o => !o) }}
-                  title={`${opResults.filter(r => r.state !== 'pass').map(r => r.summary).join('\n') || '모든 동작 검사 통과'}\n(눌러서 동작 검사 ${opOpen && viewMode === 'schematic' ? '닫기' : '보기'})`}
+                  title={`${opResults.filter(r => r.state !== 'pass').map(r => r.summary).join('\n') || (circuitErrors.length ? '회로 오류를 먼저 고쳐야 동작을 판단할 수 있습니다' : '모든 동작 검사 통과')}\n(눌러서 동작 검사 ${opOpen && viewMode === 'schematic' ? '닫기' : '보기'})`}
                   style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', flexShrink: 0 }}>
                   <StatusChip tone={STATE_TONE[opHead.state]} testId="op-chip">
                     {opHead.text} {opOpen && viewMode === 'schematic' ? '▴' : '▾'}
@@ -1048,7 +1049,7 @@ export default function ResultPanel({
                       간이 보기예요. PCB 생성을 누르면 실제 부품으로 배치되는 과정이 보여요.
                     </div>
                   </>}
-            {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
+            {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} circuitErrors={circuitErrors.length} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               <div role="alert" data-testid="circuit-diagnostics" style={{

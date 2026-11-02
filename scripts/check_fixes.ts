@@ -10,11 +10,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { draftWith, ercFixes, graphFromBoard, ohmsText, opFixes, pinoutStyleFix, ro, splitWarnings, withFixes } from '../src/lib/fixes.ts'
-import { fromBoard, fromGraph, operatingChecks } from '../src/lib/operatingCheck.ts'
+import { fromBoard, fromGraph, operatingChecks, operatingHeadline } from '../src/lib/operatingCheck.ts'
+import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
+import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
 import type { BoardModel, ChatAction, ErcFinding, NetGraph } from '../src/types.ts'
 
@@ -330,6 +332,24 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const answered = !!answer && chatEdit(blinker, move, answer, 'C1의 연결을 바꿨습니다.').graph.nets.find(n => n.name === 'TRIG_THRES')!.nodes.some(nd => nd.ref === 'C1')
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
+}
+
+// F10. with the circuit check failing, the operating chip does not say it passed (2026-11-02 tour, 348-352 s: "LED 빼줘"
+// left the resistor on one pin and the tab bar read '● 동작 검사 통과' beside '회로 오류 1'): what is still wired passes,
+// but nothing can be said of the whole circuit. Found faults and warnings still show
+{
+  const noLed = chatEdit(blinker, [{ type: 'remove_component', ref: 'D1' }], 'LED 빼줘').graph
+  const errors = validateCircuit(noLed).filter(i => i.severity === 'error').length
+  const rs = operatingChecks(fromGraph(noLed, 'smd')), head = operatingHeadline(rs, errors)
+  const blocked = errors > 0 && rs.every(r => r.state === 'pass') && head.state === 'unknown' && !/통과/.test(head.text) && /회로 오류/.test(head.text)
+  const clean = operatingHeadline(operatingChecks(fromGraph(blinker, 'smd')), 0).text === '동작 검사 통과'
+  const fault = operatingHeadline([{ rule: 'op_led', ref: 'D1', state: 'error', summary: '', detail: [] }], 1).text === '동작 안 됨 1'
+  const panel = renderToStaticMarkup(createElement(OperatingPanel, { results: rs, style: 'smd', circuitErrors: errors, onClose: () => {} }))
+  const shown = panel.includes(head.text) && !panel.includes('동작 검사 통과') && /회로 오류가 있어/.test(panel)
+  const src = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8')
+  const wired = /operatingHeadline\(opResults, circuitErrors\.length\)/.test(src) && /circuitErrors=\{circuitErrors\.length\}/.test(src)
+  check('F10 circuit errors: the operating chip and panel say it cannot be judged, not passed; faults still show',
+    blocked && clean && fault && shown && wired, JSON.stringify({ errors, head, blocked, clean, fault, shown, wired }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
