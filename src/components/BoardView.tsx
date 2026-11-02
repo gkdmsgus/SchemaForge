@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
@@ -472,6 +472,27 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const listOpen = panelOpen ?? (!checkSum.pending && checkHead.tone === 'bad')
   const docked = placed && !assembly && listOpen
   const checksRef = useRef<HTMLDivElement>(null)
+  // the view buttons, the AI rounds box and the folded checks header share a strip above the drawing, and the
+  // drawing starts below it (frame review of 2026-11-02: floating in the corner, the folded header covered about
+  // 40% of the 3D board once the Code drawer made the pane low, and a zoomed 2D board's mounting hole)
+  const strip = !assembly && frames.length > 0
+  const buttonsRef = useRef<HTMLDivElement>(null)
+  const aiHeadRef = useRef<HTMLButtonElement>(null)
+  const [bar, setBar] = useState({ h: 0, w: 0 })    // the strip's height, the folded header's width
+  useLayoutEffect(() => {
+    if (!strip || typeof ResizeObserver === 'undefined') { setBar({ h: 0, w: 0 }); return }
+    const head = docked ? null : checksRef.current
+    const measure = () => {
+      // the AI box's header only: its open list hangs over the drawing like any opened panel
+      const h = Math.max(buttonsRef.current?.offsetHeight ?? 0, aiHeadRef.current ? aiHeadRef.current.offsetHeight + 2 : 0, head?.offsetHeight ?? 0)
+      const w = head?.offsetWidth ?? 0
+      setBar(b => (b.h === h && b.w === w ? b : { h, w }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    for (const el of [buttonsRef.current, aiHeadRef.current, head]) if (el) ro.observe(el)
+    return () => ro.disconnect()
+  }, [strip, docked, showAi, placed])
   // a part picked in 3D scrolls its review item into view
   useEffect(() => {
     if (!pickRef) return
@@ -675,7 +696,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       display: 'flex', flexDirection: 'column' }}>
       {/* drawing area: 2D and 3D panes with the panels floating over them, and the open checks list beside them */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, bottom: 0, right: docked ? CHECKS_W : 0, display: 'flex' }}>
+      <div style={{ position: 'absolute', top: strip && bar.h ? 12 + bar.h + 6 : 0, left: 0, bottom: 0, right: docked ? CHECKS_W : 0, display: 'flex' }}>
       <div style={{ flex: 1, minWidth: 0, display: (view3d === '3d' && !assembly) || (asm3d && placed) ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
@@ -873,13 +894,13 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         // the AI rounds box (left) and the view buttons (right) share the top edge, so with the AI edit panel open
         // beside a narrow board the buttons wrap beside the box instead of running under it (frame review 2026-11-01:
         // the folded box sat on 도형 보기)
-        <div style={{ position: 'absolute', left: 12, right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : 0) + 12, top: 12,
+        <div style={{ position: 'absolute', left: 12, right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : bar.w ? bar.w + 6 : 0) + 12, top: 12,
           display: 'flex', alignItems: 'flex-start', gap: 6, pointerEvents: 'none' }}>
       {showAi && (
         <div data-testid="board-ai" style={{ flexShrink: 0, width: aiOpen ? 320 : 'auto', maxWidth: '46%', pointerEvents: 'auto',
           borderRadius: 8, background: UI_BG, color: UI_FG, border: `1px solid ${UI_LINE}`,
           fontFamily: MONO, fontSize: 11, overflow: 'hidden' }}>
-          <button type="button" onClick={() => setAiOpen(!aiOpen)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
+          <button ref={aiHeadRef} type="button" onClick={() => setAiOpen(!aiOpen)} aria-expanded={aiOpen} data-testid="board-ai-toggle"
             title={aiOpen ? '접기' : 'AI 다듬기 라운드 보기'}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none',
               background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit', whiteSpace: 'nowrap' }}>
@@ -920,7 +941,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {frames.length > 0 && (
         // the 3D view's own toggle sits in this row too: in the 3D pane's corner it was under these buttons once
         // the open checks list made the pane narrower; a narrow drawing wraps the row instead of hiding it
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', pointerEvents: 'auto' }}>
+        <div ref={buttonsRef} style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', pointerEvents: 'auto' }}>
           {!assembly && view3d !== '2d' && pcbFilename && placed && (
             <button data-testid="board-real3d-toggle"
               onClick={() => setReal3d(v => !v)}
@@ -991,15 +1012,15 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       )}
 
       {/* checks: one row per rule, passed rules included; failed rows open to their findings. Open, the list is a
-          column beside the drawing; folded, its one-line header sits in the corner under the view buttons */}
+          column beside the drawing; folded, its one-line header ends the strip of view buttons above the drawing */}
       {placed && !assembly && (
         <div ref={checksRef} data-testid="board-checks" data-docked={docked ? '1' : '0'} style={{ position: 'absolute', display: 'flex',
           flexDirection: 'column', background: UI_BG, color: UI_FG, fontFamily: MONO, fontSize: 11, overflow: 'hidden',
           ...(docked
             ? { top: 0, right: 0, bottom: 0, width: CHECKS_W, boxSizing: 'border-box', borderLeft: `1px solid ${UI_LINE}` }
-            : { right: 12, top: 48, borderRadius: 8, border: `1px solid ${UI_LINE}` }) }}>
+            : { right: 12, top: 12, borderRadius: 8, border: `1px solid ${UI_LINE}` }) }}>
           <button type="button" onClick={() => setPanelOpen(!listOpen)} aria-expanded={listOpen}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', flexShrink: 0,
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: docked ? '7px 10px' : '3px 8px', flexShrink: 0,
               border: 'none', background: 'transparent', cursor: 'pointer', color: UI_FG, font: 'inherit' }}>
             <StatusChip tone={checkHead.tone} busy={checkSum.pending} testId="board-checks-summary">{checkHead.text}</StatusChip>
             <span data-testid="board-checks-passed" style={{ color: UI_DIM, whiteSpace: 'nowrap' }}>

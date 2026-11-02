@@ -3,7 +3,9 @@
 // and in 2D it covered the right third of a zoomed board): B1 in 나란히 the open list shares no area with the 2D or
 // the 3D view, B2 in 2D, zoomed in, it shares none with the board drawing, B3 with the 3D pane narrowed by the list
 // no view button or the 3D view's 도형 보기 toggle is under something else, B4 folded, it is one short line in the corner,
-// B5 with the AI edit panel open too, the AI rounds box (folded or open) covers no view button.
+// B5 with the AI edit panel open too, the AI rounds box (folded or open) covers no view button, B6 with the Code drawer
+// open (a low board pane) in 나란히 the folded header shares no area with the 2D or the 3D view, B7 in 2D, zoomed in,
+// the folded header shares none with the board drawing.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -112,6 +114,34 @@ try {
   }
   check('B5 narrow board: the AI rounds box, folded or open, covers no view button (list open or folded)',
     under.length === 4 && under.every(u => u.ai > 0 && !u.hit.length), under.map(u => `${u.state}: ${u.ai} px, over [${u.hit}]`).join('; '))
+
+  // B6, B7: the folded list's header shares no area with the drawing (frame review of 2026-11-02: floating in the
+  // corner it covered about 40% of the 3D board once the Code drawer made the board pane low, 257-265 s, and the
+  // board's top-right mounting hole in 2D zoomed in, 120-126 s). The AI edit panel is closed again first.
+  if ((await panel.getAttribute('aria-pressed')) === 'true') { await panel.click(); await page.waitForTimeout(400) }
+  await page.locator('button.sf-drawer-tab', { hasText: 'Code' }).first().click()
+  await page.waitForTimeout(800)
+  await page.getByTestId('view-both').click()
+  await setOpen(false)
+  await page.waitForTimeout(400)
+  await shot('both_folded_drawer')
+  const h6 = await list.boundingBox(), b6 = await view3d(), a6 = await view2d()
+  check('B6 Code drawer open, 나란히, folded: the header covers neither the 2D nor the 3D view',
+    !!b6 && !!a6 && b6.height > 0 && area(h6, b6) === 0 && area(h6, a6) === 0,
+    `board pane ${Math.round(b6?.height ?? 0)} px high; over 3D ${pct(area(h6, b6), b6)}, over 2D ${pct(area(h6, a6), a6)}`)
+  await page.locator('button.sf-drawer-tab', { hasText: 'Code' }).first().click()
+  await page.waitForTimeout(800)
+
+  await page.getByTestId('view-2d').click()
+  await page.waitForTimeout(400)
+  const v7 = await view2d()
+  await page.mouse.move(v7.x + v7.width / 2, v7.y + v7.height / 2)
+  for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -200); await page.waitForTimeout(100) }
+  await page.waitForTimeout(400)
+  await shot('2d_folded_zoomed')
+  const h7 = await list.boundingBox(), d7 = await view2d()
+  check('B7 2D zoomed in, folded: the header covers none of the board drawing', !!h7 && area(h7, d7) === 0,
+    `over the drawing ${pct(area(h7, d7), d7)}`)
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
