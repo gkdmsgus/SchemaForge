@@ -864,8 +864,11 @@ changed.`
 
     let argsBuf = ''
     let sentReplyLen = 0
+    let streamed = ''   // the reply as far as it came in
+    let cut = false     // the model ran out of tokens before the edit was whole
 
     for await (const chunk of stream) {
+      if (chunk.choices[0]?.finish_reason === 'length') cut = true
       const args = chunk.choices[0]?.delta?.tool_calls?.[0]?.function?.arguments
       if (!args) continue
       argsBuf += args
@@ -873,6 +876,7 @@ changed.`
       const m = argsBuf.match(/^[^{]*\{"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
       if (m) {
         const decoded = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+        streamed = decoded
         if (decoded.length > sentReplyLen) {
           res.write(`event: text\ndata: ${JSON.stringify(decoded.slice(sentReplyLen))}\n\n`)
           sentReplyLen = decoded.length
@@ -880,12 +884,19 @@ changed.`
       }
     }
 
-    let reply = '완료했습니다.', actions: ChatAction[] = []
+    let reply = '', actions: ChatAction[] = [], read = false
     try {
       const parsed = JSON.parse(argsBuf)
-      reply = parsed.reply || reply
+      reply = parsed.reply || ''
       actions = (parsed.actions || []).filter((a: ChatAction) => a?.type)
+      read = true
     } catch (_) {}
+    // "완료" only with an edit to apply: an edit that did not come in whole, or no words from the model, went out as
+    // "완료했습니다." with nothing changed (2026-11-03 tour, 52 s). The app says under it that the circuit stayed
+    if (!read) {
+      console.warn(`chat_edit: the edit did not parse (${argsBuf.length} chars${cut ? ', cut at max_tokens' : ''})`)
+      reply = `${streamed ? `${streamed}\n\n` : ''}${cut ? '답이 길어 중간에 끊겼습니다' : '답을 읽지 못했습니다'}. 다시 요청해 주세요.`
+    } else if (!reply) reply = actions.length ? '완료했습니다.' : '바꿀 내용을 정하지 못했습니다. 부품 기호와 원하는 연결을 적어 다시 요청해 주세요.'
 
     res.write(`event: done\ndata: ${JSON.stringify({ reply, actions })}\n\n`)
     res.end()

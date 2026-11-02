@@ -325,7 +325,7 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const noMark = chatEdit(open, join, msg, '이 연결을 적용할까요.').changed === false
   const did = chatEdit(open, join, msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
   const applied = did.changed && JSON.stringify(did.graph.nets) === JSON.stringify(blinker.nets) && !/아직/.test(did.note)
-  const wired = /chatEdit\(snapshot, proposed, msg, reply\)/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
+  const wired = /chatEdit\(snapshot, proposed \?\? \[\], msg, reply\)/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
   // the answer the note suggests names the part, so it goes through guardEdit when the pin moves off another net
   const move = [{ type: 'add_net', name: 'TRIG_THRES', nodes: [{ ref: 'C1', pin: '1' }] }] as ChatAction[]
   const asked = chatEdit(blinker, move, 'C1 연결을 확인해줘', '이렇게 바꿀까요?')
@@ -333,6 +333,18 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const answered = !!answer && chatEdit(blinker, move, answer, 'C1의 연결을 바꿨습니다.').graph.nets.find(n => n.name === 'TRIG_THRES')!.nodes.some(nd => nd.ref === 'C1')
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
+
+  // G12b. a reply that changed nothing says so, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no edit,
+  // C1's pin still on its own); a question does not get the note, nor a reply whose edit went in
+  const none = (r: { changed: boolean; note: string }) => !r.changed && /회로는 바뀌지 않았습니다/.test(r.note) && plain(r.note)
+  const empty = chatEdit(open, [], msg, '완료했습니다.'), same = chatEdit(blinker, join, msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
+  const question = chatEdit(open, [], msg, '어느 넷에 연결할까요?')
+  const server = fs.readFileSync(path.join('server', 'index.ts'), 'utf8')
+  const serverSays = /else if \(!reply\) reply = actions\.length \? '완료했습니다\.' : '바꿀 내용을 정하지 못했습니다/.test(server)
+    && /if \(!read\) \{/.test(server)
+  check('G12b a reply that changed nothing says so under it; a question or an applied edit does not; the server says "완료" only with an edit',
+    none(empty) && none(same) && question.note === '' && !/바뀌지 않았습니다/.test(did.note) && serverSays,
+    JSON.stringify({ empty: empty.note, same: same.note, question: question.note, serverSays }))
 }
 
 // F10. with the circuit check failing, the operating chip does not say it passed (2026-11-02 tour, 348-352 s: "LED 빼줘"

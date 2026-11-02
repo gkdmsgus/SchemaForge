@@ -22,6 +22,8 @@ type Seen = { path: string; auth: string; model: string; effort: string; stream:
 const seen: Seen[] = []
 // set for L7: every model call is answered with this error, as OpenAI answers when the credit is gone or it is busy
 let failWith: { status: number; error: Record<string, string> } | null = null
+// set for L4d: the AI editor's streamed answer is this tool call's arguments, ending with this finish reason
+let editArgs: { args: string; finish: string } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
 
@@ -41,6 +43,16 @@ const mock = createServer((rq, rs) => {
       // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower
       rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': 'false' })
       return rs.end(JSON.stringify({ error: failWith.error }))
+    }
+    if (body.stream && editArgs) {   // the edit as a tool call, in two pieces
+      const { args, finish } = editArgs, half = Math.ceil(args.length / 2)
+      const call = (part: string) => ({ tool_calls: [{ index: 0, id: 't', type: 'function', function: { name: 'edit_circuit', arguments: part } }] })
+      rs.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      for (const part of [args.slice(0, half), args.slice(half)]) {
+        rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: call(part), finish_reason: null }] })}\n\n`)
+      }
+      rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\n`)
+      return rs.end('data: [DONE]\n\n')
     }
     if (body.stream) {   // the AI editor streams: one text chunk, then the end
       rs.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -191,6 +203,25 @@ async function main() {
       /when\s+the reply asks the user anything[^]*?return an empty actions array: the\s+edit waits for the answer/.test(sys)
       && /When you return actions, the reply says what changed and asks nothing/.test(sys),
       sys.split('\n').filter(l => /asks|waits/.test(l)).join(' | ') || sys.slice(0, 200))
+
+    // L4d. "완료" only with an edit (2026-11-03 tour, 52 s: "완료했습니다." with nothing changed): no reply and no actions,
+    // an edit cut at max_tokens (its reply as far as it came, no actions), and a whole edit with no reply
+    const edited = async (args: string, finish = 'stop') => {
+      editArgs = { args, finish }
+      try {
+        const sse = await (await post(grok.base, '/chat_edit', { graph: blinker, message: 'C1을 연결해줘' })).text()
+        const m = /event: done\ndata: (.+)/.exec(sse)
+        return m ? JSON.parse(m[1]) as { reply: string; actions: unknown[] } : { reply: `(no done event) ${sse.slice(0, 120)}`, actions: [] }
+      } finally { editArgs = null }
+    }
+    const empty = await edited('{"reply":"","actions":[]}')
+    const cut = await edited('{"reply":"C1을 TRIG에 연결했습니다.","actions":[{"type":"add_net","name":"TRIG","nodes":[{"ref":"C1"', 'length')
+    const whole = await edited('{"reply":"","actions":[{"type":"modify_component","ref":"R1","value":"2k"}]}')
+    check('L4d AI editor: no reply and no edit is not "완료"; an edit cut short keeps its reply, applies nothing and says so; "완료" with an edit',
+      /^바꿀 내용을 정하지 못했습니다/.test(empty.reply) && !empty.actions.length
+      && /^C1을 TRIG에 연결했습니다\.\n\n답이 길어 중간에 끊겼습니다/.test(cut.reply) && !cut.actions.length
+      && whole.reply === '완료했습니다.' && whole.actions.length === 1,
+      JSON.stringify({ empty, cut, whole }))
 
     // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
     // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)

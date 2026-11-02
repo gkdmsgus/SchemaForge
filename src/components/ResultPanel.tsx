@@ -519,8 +519,8 @@ export default function ResultPanel({
             const snapshot = effectiveGraph ?? null
             // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit): a pin of a part the
             // message does not name keeps its net, and a reply that asks first changes nothing yet. Nothing left to
-            // apply leaves the circuit, undo list and re-check alone
-            const edit = snapshot && proposed?.length ? chatEdit(snapshot, proposed, msg, reply) : null
+            // apply leaves the circuit, undo list and re-check alone, and says so under a reply that does not ask
+            const edit = snapshot ? chatEdit(snapshot, proposed ?? [], msg, reply) : null
             const actions: ChatAction[] = edit?.actions ?? proposed
             let newGraph: NetGraph | null = snapshot
             const note = edit?.note ?? ''
