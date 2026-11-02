@@ -227,19 +227,26 @@ function mosSpec(value: string, style: 'smd' | 'tht' | null): { spec: MosSpec; n
   return { spec: SPECS.mos[name], note: `값 ${value || '(없음)'}의 자료가 없어 ${name} 기준으로 계산` }
 }
 
-/** A known regulator by part number: its output voltage, and its limits when they are verified. */
+/**
+ * A known regulator by part number: its output voltage, its limits when they are verified, and the least input over
+ * the output its output is given at (`gate`, the verified dropout, or a family's when the part's own is not looked up).
+ */
 function regSpec(value: string) {
   const v = value.toUpperCase().replace(/\s+/g, '')
-  const ams = /AMS1117-?(\d)\.?(\d)/.exec(v)
-  if (ams) return { name: `AMS1117-${ams[1]}.${ams[2]}`, vout: Number(`${ams[1]}.${ams[2]}`), spec: SPECS.reg.AMS1117 }
-  // the other fixed 1117s (LM1117-3.3, LD1117V33, AZ1117-3.3) keep their output voltage but get no verdict, their
-  // limits not looked up: with none, an LM1117-3.3's output had no voltage and 0.1 Ω from it to GND went unseen
-  // (2026-11-03 tour, the power circuit of S28). The ADJ ones have no voltage in the name
-  const x1117 = /([A-Z]*)1117[A-Z]*-?(\d)\.?(\d)/.exec(v)
-  if (x1117) return { name: `${x1117[1]}1117-${x1117[2]}.${x1117[3]}`, vout: Number(`${x1117[2]}.${x1117[3]}`), spec: null }
+  // with a package letter too (AMS1117CD-3.3: the review of 2026-11-03 found it read as an unknown 1117)
+  const ams = /AMS1117[A-Z]*-?(\d)\.?(\d)/.exec(v)
+  if (ams) return { name: `AMS1117-${ams[1]}.${ams[2]}`, vout: Number(`${ams[1]}.${ams[2]}`), spec: SPECS.reg.AMS1117, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
+  // the other fixed 1117s (LM1117-3.3, AZ1117-3.3) keep their output voltage but get no verdict, their limits not
+  // looked up: with none, an LM1117-3.3's output had no voltage and 0.1 Ω from it to GND went unseen (2026-11-03 tour,
+  // the power circuit of S28). Their output is given only with the AMS1117's dropout over it, or the parts it feeds
+  // passed on 3.7 V in. Only a voltage after a dash, d or d.d(d): 1117 ST12 (12 V) is not 1.2 V, 2.85 not 2.8, ADJ none
+  const x1117 = /([A-Z]*)1117[A-Z]*-(\d\.\d{1,2}|\d)(?![\d.])/.exec(v)
+  if (x1117 && !/ADJ/.test(v)) {
+    return { name: `${x1117[1]}1117-${x1117[2]}`, vout: Number(x1117[2]), spec: null, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
+  }
   const s78 = /(?:^|[^0-9])78(05|06|08|09|12|15)/.exec(v)
   // only the 7805's limits were looked up; other 78xx keep their output voltage but no verdict
-  if (s78) return { name: `78${s78[1]}`, vout: Number(s78[1]), spec: s78[1] === '05' ? SPECS.reg.L7805 : null }
+  if (s78) return { name: `78${s78[1]}`, vout: Number(s78[1]), spec: s78[1] === '05' ? SPECS.reg.L7805 : null, gate: s78[1] === '05' ? SPECS.reg.L7805?.dropout_max ?? null : null }
   return null
 }
 
@@ -625,8 +632,8 @@ function analyzePower(b: Base, force = false) {
       changed = true
       // after a series diode the input can be as low as its forward drop allows
       const vinLo = i ? volts.get(i)?.lo ?? vin : vin
-      if (!force && vinLo != null && reg.spec && vinLo - gv - reg.vout < reg.spec.dropout_max.v - 1e-9) {
-        blocked.set(o, { why: `${r.ref} 입력이 모자라 출력 ${V(reg.vout)}를 보장하지 못합니다 (레귤레이터 전압 참고)`, cause: r.ref })
+      if (!force && vinLo != null && reg.gate && vinLo - gv - reg.vout < reg.gate.v - 1e-9) {
+        blocked.set(o, { why: `${r.ref} 입력이 모자라 출력 ${V(reg.vout)}를 보장하지 못합니다 (레귤레이터 전압 참고${reg.spec ? '' : `, 이 부품의 수치가 없어 같은 1117 계열인 AMS1117의 최소 전압 차 ${V(reg.gate.v)} 기준`})`, cause: r.ref })
         continue
       }
       const v = gv + reg.vout
@@ -2015,7 +2022,7 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     const reg = regSpec(r.value)
     if (!reg) { res('unknown', `${r.ref} (${r.value || '값 없음'}): 이 레귤레이터의 자료가 없습니다`, ['AMS1117-x.x와 7805만 데이터시트 수치가 있습니다']); continue }
     const spec = reg.spec
-    if (!spec) { res('unknown', `${r.ref} (${reg.name}): 데이터시트 수치를 아직 확인하지 못해 판단하지 않습니다`, [`데이터시트 수치는 AMS1117-x.x와 7805만 확인했습니다. 출력 ${V(reg.vout)}는 부품 이름에서 읽어 다른 검사에 씁니다`]); continue }
+    if (!spec) { res('unknown', `${r.ref} (${reg.name}): 데이터시트 수치를 아직 확인하지 못해 판단하지 않습니다`, [`데이터시트 수치는 AMS1117-x.x와 7805만 확인했습니다. 출력 ${V(reg.vout)}는 부품 이름에서 읽어 다른 검사에 씁니다${reg.gate ? ` (입력이 출력보다 같은 1117 계열인 AMS1117의 최소 전압 차 ${V(reg.gate.v)} 이상 높을 때만)` : ''}`]); continue }
     const g = x.net(r.ref, 1), o = x.net(r.ref, 2), i = x.net(r.ref, 3)
     const pins = `핀 넷: 1 GND ${g ?? '-'}, 2 OUT ${o ?? '-'}, 3 IN ${i ?? '-'}`
     const gs = x.gndState(g)

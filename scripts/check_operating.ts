@@ -211,18 +211,31 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     show(run(variant(reg, setValue('U1', 'LM7812'))), 'op_reg'))
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
-  // the ADJ one has no voltage in its name, and AMS1117 keeps its own limits
+  // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package
+  // suffix after it stays; ADJ ones, and ST12 with no dash (12 V, not 1.2 V), read none
   const shunt = circuit([['J1', 'Conn_01x02', 'USB'], ['U1', 'REG', 'LM1117-3.3'], ['C1', 'C', '10uF'], ['C2', 'C', '10uF'], ['R1', 'R', '0.1']],
     [['+5V', 'J1.1', 'U1.3', 'C1.1'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2', 'R1.2'], ['VOUT', 'U1.2', 'C2.1', 'R1.1']])
-  const adj = run(variant(shunt, setValue('U1', 'LM1117-ADJ'))), ld = run(variant(shunt, setValue('U1', 'LD1117S33')))
-  check('O7e4 LM1117-3.3: no verdict on it, but its 3.3 V output finds 0.1 Ω to GND (109 W); ADJ reads no voltage',
+  const as = (value: string) => run(variant(shunt, setValue('U1', value)))
+  const none = ['LM1117-ADJ', 'LM1117 ADJ 1.25V', 'NCP1117ST12T3G'].filter(x => pick(as(x), 'op_rpower', 'R1') || !is(as(x), 'op_reg', 'unknown', 'U1', /자료가 없습니다/))
+  check('O7e4 LM1117-3.3: no verdict on it, but its 3.3 V output finds 0.1 Ω to GND (109 W); 2.85 V read whole; ADJ and no-dash read no voltage',
     is(run(shunt), 'op_reg', 'unknown', 'U1', /LM1117-3\.3/) && is(run(shunt), 'op_rpower', 'error', 'R1', /109 W/)
-    && is(ld, 'op_rpower', 'error', 'R1', /109 W/) && !pick(adj, 'op_rpower', 'R1') && is(adj, 'op_reg', 'unknown', 'U1', /자료가 없습니다/),
-    [show(run(shunt), 'op_rpower', 'R1'), show(ld, 'op_rpower', 'R1'), show(adj, 'op_reg')].join(' / '))
+    && is(as('AZ1117H-3.3TRE1'), 'op_rpower', 'error', 'R1', /109 W/) && is(as('LM1117-2.85'), 'op_rpower', 'error', 'R1', /81\.2 W/)
+    && is(as('LM1117-2.85'), 'op_reg', 'unknown', 'U1', /LM1117-2\.85/) && !none.length,
+    [show(run(shunt), 'op_rpower', 'R1'), show(as('LM1117-2.85'), 'op_rpower', 'R1'), `read a voltage: [${none}]`].join(' / '))
   // the regulator output becomes a known supply for what it feeds
   const fed = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
     [['VIN', 'BT1.1', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'D1.2'], ['V3', 'U1.2', 'C1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1']])
   check('O7f LED fed by the 3.3 V output: (3.3 − 1.9) / 100 = 14 mA', is(run(fed), 'op_led', 'pass', 'D1', /14 mA/), show(run(fed), 'op_led'))
+  // an LM1117-3.3 gives its output only with the AMS1117's 1.3 V dropout over it: on 3.7 V in its LED is not passed,
+  // caused by U1, as with an AMS1117 (review of 2026-11-03: it passed at 10~14 mA); on 9 V it passes. An AMS1117 with
+  // a package letter (AMS1117CD-3.3) keeps the AMS1117's own limits
+  const lm = variant(fed, setValue('U1', 'LM1117-3.3')), lmLow = run(variant(lm, setValue('BT1', '3.7V')))
+  const lowLed = pick(lmLow, 'op_led', 'D1')
+  check('O7f2 LM1117-3.3 on 3.7 V: its LED not passed (cause U1, AMS1117 dropout named); on 9 V it passes; AMS1117CD-3.3 reads as AMS1117',
+    !!lowLed && lowLed.state === 'unknown' && lowLed.cause === 'U1' && lowLed.detail.concat(lowLed.summary).some(t => /AMS1117의 최소 전압 차 1\.3 V/.test(t))
+    && is(run(lm), 'op_led', 'pass', 'D1', /14 mA/)
+    && is(run(variant(variant(fed, setValue('U1', 'AMS1117CD-3.3')), setValue('BT1', '3.7V'))), 'op_reg', 'error', 'U1', /유지하지 못합니다/),
+    [show(lmLow, 'op_led'), lowLed?.detail.join(' | ') ?? '', show(run(lm), 'op_led')].join(' / '))
 }
 
 // O8. headline ──────────────────────────────────────────────────────────────────
