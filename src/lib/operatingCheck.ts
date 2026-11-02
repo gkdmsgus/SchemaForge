@@ -233,16 +233,18 @@ function mosSpec(value: string, style: 'smd' | 'tht' | null): { spec: MosSpec; n
  */
 function regSpec(value: string) {
   const v = value.toUpperCase().replace(/\s+/g, '')
-  // with a package letter too (AMS1117CD-3.3: the review of 2026-11-03 found it read as an unknown 1117)
-  const ams = /AMS1117[A-Z]*-?(\d)\.?(\d)/.exec(v)
-  if (ams) return { name: `AMS1117-${ams[1]}.${ams[2]}`, vout: Number(`${ams[1]}.${ams[2]}`), spec: SPECS.reg.AMS1117, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
-  // the other fixed 1117s (LM1117-3.3, AZ1117-3.3) keep their output voltage but get no verdict, their limits not
-  // looked up: with none, an LM1117-3.3's output had no voltage and 0.1 Ω from it to GND went unseen (2026-11-03 tour,
-  // the power circuit of S28). Their output is given only with the AMS1117's dropout over it, or the parts it feeds
-  // passed on 3.7 V in. Only a voltage after a dash, d or d.d(d): 1117 ST12 (12 V) is not 1.2 V, 2.85 not 2.8, ADJ none
-  const x1117 = /([A-Z]*)1117[A-Z]*-(\d\.\d{1,2}|\d)(?![\d.])/.exec(v)
+  // a 1117's voltage: d.d(d) right after its package letters (AMS1117CD-3.3, LM1117MPX-3.3, 'LM1117 3.3V'), or one
+  // digit after a dash (LM1117-5). Not two bare digits (ST12 is 12 V, S12 1.2 V by maker), not a package name
+  // (AMS1117 SOT-223 read 2.2 V), never an ADJ (review of 2026-11-03)
+  const x1117 = /([A-Z]*)1117(?!SOT|TO)[A-Z]{0,4}(?:-?(\d\.\d{1,2})|-(\d))(?![\d.])/.exec(v)
   if (x1117 && !/ADJ/.test(v)) {
-    return { name: `${x1117[1]}1117-${x1117[2]}`, vout: Number(x1117[2]), spec: null, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
+    const out = x1117[2] ?? x1117[3]
+    // the AMS1117's limits are looked up
+    if (x1117[1] === 'AMS') return { name: `AMS1117-${out}`, vout: Number(out), spec: SPECS.reg.AMS1117, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
+    // the other fixed 1117s keep their output voltage but get no verdict: with none, an LM1117-3.3's output had no
+    // voltage and 0.1 Ω from it to GND went unseen (2026-11-03 tour, the power circuit of S28). Their output is given
+    // only with the AMS1117's dropout over it, or the parts it feeds passed on 3.7 V in
+    return { name: `${x1117[1]}1117-${out}`, vout: Number(out), spec: null, gate: SPECS.reg.AMS1117?.dropout_max ?? null }
   }
   const s78 = /(?:^|[^0-9])78(05|06|08|09|12|15)/.exec(v)
   // only the 7805's limits were looked up; other 78xx keep their output voltage but no verdict
@@ -2173,8 +2175,9 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
   }
 
   // A regulator short of input hides what its output feeds: with the input enough, a failure that shows
-  // there is a fault of its own
-  if (base.some(r => r.rule === 'op_reg' && r.state === 'error')) {
+  // there is a fault of its own. Also when the regulator is not judged: an LM1117 with no limits of its own,
+  // its output held back by the 1117 family's dropout, hid 0.1 Ω across that output (review of 2026-11-03)
+  if (base.some(r => r.rule === 'op_reg' && (r.state === 'error' || r.state === 'unknown'))) {
     const forced = collect(c, new Set(openSet), true).out
     for (const r of base) {
       const cur = out[idx.get(r)!]

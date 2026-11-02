@@ -216,12 +216,17 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const shunt = circuit([['J1', 'Conn_01x02', 'USB'], ['U1', 'REG', 'LM1117-3.3'], ['C1', 'C', '10uF'], ['C2', 'C', '10uF'], ['R1', 'R', '0.1']],
     [['+5V', 'J1.1', 'U1.3', 'C1.1'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2', 'R1.2'], ['VOUT', 'U1.2', 'C2.1', 'R1.1']])
   const as = (value: string) => run(variant(shunt, setValue('U1', value)))
-  const none = ['LM1117-ADJ', 'LM1117 ADJ 1.25V', 'NCP1117ST12T3G'].filter(x => pick(as(x), 'op_rpower', 'R1') || !is(as(x), 'op_reg', 'unknown', 'U1', /자료가 없습니다/))
-  check('O7e4 LM1117-3.3: no verdict on it, but its 3.3 V output finds 0.1 Ω to GND (109 W); 2.85 V read whole; ADJ and no-dash read no voltage',
+  const none = ['LM1117-ADJ', 'LM1117 ADJ 1.25V', 'NCP1117ST12T3G', 'AMS1117 SOT-223', 'AMS1117 ADJ 1.25V']
+    .filter(x => pick(as(x), 'op_rpower', 'R1') || !is(as(x), 'op_reg', 'unknown', 'U1', /자료가 없습니다/))
+  // on 3.7 V in the 1117 dropout holds its output back, and the short is still found, as with an AMS1117 short of input
+  const low = run(variant(shunt, c => { c.components.push({ ref: 'BT1', name: 'Battery', value: '3.7V' }); movePin('BT1.1', '+5V')(c); movePin('BT1.2', 'GND')(c) }))
+  const lowR1 = pick(low, 'op_rpower', 'R1')
+  check('O7e4 LM1117-3.3: no verdict on it, but its 3.3 V output finds 0.1 Ω to GND (109 W), on 3.7 V in too; 2.85 V read whole; ADJ, a package name and no-dash read no voltage',
     is(run(shunt), 'op_reg', 'unknown', 'U1', /LM1117-3\.3/) && is(run(shunt), 'op_rpower', 'error', 'R1', /109 W/)
     && is(as('AZ1117H-3.3TRE1'), 'op_rpower', 'error', 'R1', /109 W/) && is(as('LM1117-2.85'), 'op_rpower', 'error', 'R1', /81\.2 W/)
-    && is(as('LM1117-2.85'), 'op_reg', 'unknown', 'U1', /LM1117-2\.85/) && !none.length,
-    [show(run(shunt), 'op_rpower', 'R1'), show(as('LM1117-2.85'), 'op_rpower', 'R1'), `read a voltage: [${none}]`].join(' / '))
+    && is(as('LM1117-2.85'), 'op_reg', 'unknown', 'U1', /LM1117-2\.85/) && !none.length
+    && lowR1?.state === 'error' && /109 W/.test(lowR1.summary) && lowR1.detail.some(t => /입력이 충분하다고 보면/.test(t)),
+    [show(run(shunt), 'op_rpower', 'R1'), show(as('LM1117-2.85'), 'op_rpower', 'R1'), `read a voltage: [${none}]`, `3.7 V in: ${show(low, 'op_rpower', 'R1')}`].join(' / '))
   // the regulator output becomes a known supply for what it feeds
   const fed = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
     [['VIN', 'BT1.1', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'D1.2'], ['V3', 'U1.2', 'C1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1']])
