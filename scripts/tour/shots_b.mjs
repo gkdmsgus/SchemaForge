@@ -96,10 +96,11 @@ export async function run(rec) {
   // 고쳤습니다 (오류 2 → 0)" says 오류 too, and a scene took a circuit the server had fixed for a broken one)
   const checksBroken = async () => (await T('circuit-diagnostics').count()) > 0
     || ((await T('erc-notice').count()) > 0 && await T('erc-notice').getAttribute('role') === 'alert')
-  // the AI editor's replies, newest last (an assistant bubble lines up on the left)
+  // the AI editor's replies, newest last (an assistant bubble lines up on the left): the text only, not the action
+  // chips under it (an add_net with no name reads "+?", a question mark the reply never had; review of 2026-11-03)
   const assistantSaid = () => T('left-panel').evaluate(p => [...p.querySelectorAll('div')]
     .filter(d => d.style.flexDirection === 'column' && d.style.alignItems === 'flex-start')
-    .map(d => d.innerText || ''))
+    .map(d => d.firstElementChild?.innerText || ''))
   // the AI editor's reply: its send button waits while the AI answers
   const replied = async () => {
     const send = "[data-testid='chat-input'] + button"
@@ -316,10 +317,14 @@ export async function run(rec) {
         } else if (/[?？]|(까요|나요|습니까)[.!]?(\s|$)/.test(reply)) {
           await rec.caption('AI가 어느 연결인지 되물으면, 답해 주면 됩니다', 'top')
           answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
-        } else {
+        } else if (/회로는 바뀌지 않았습니다/.test(reply)) {
           // no question and no change: the app says so under the reply (2026-11-03 tour, 52 s: "완료했습니다." with no
           // edit, under the caption that the AI had asked)
           await rec.caption('AI가 회로를 바꾸지 못하면 그렇다고 알려 주니, 더 분명하게 다시 요청합니다', 'top')
+          answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
+        } else {
+          // anything else (an error reply, a front end without the note): nothing said of why
+          await rec.caption('바로 고쳐지지 않으면, 바꿀 부품을 짚어 다시 요청합니다', 'top')
           answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
         }
         console.log(`  S06b: answered "${answer.slice(0, 80)}"`)
@@ -1026,12 +1031,13 @@ export async function run(rec) {
     // back to the rows failing before the wrong value
     await rec.fast(() => page.waitForFunction(n => document.querySelectorAll("#operating-panel [data-op-state='error']").length <= n, before.length, { timeout: 120000 }), 4)
     await rec.pause(1200)
-    // a row failing from the start still reads 동작 안 됨 after the fix: the scene ends on that row, said to be the
-    // circuit's own (2026-11-03 tour: it ended on the red chip under "보내면 고쳐집니다", the fix looking failed)
+    // a row failing before the wrong value still reads 동작 안 됨 after the fix: the scene ends on that row, said to be
+    // there before (2026-11-03 tour: it ended on the red chip under "보내면 고쳐집니다", the fix looking failed). Before
+    // is this scene's start, not the generation: S06b and S20 change the circuit and its style (review of 2026-11-03)
     let left = null
     for (const row of await T('operating-panel').locator("[data-op-state='error']").all()) if (!left && before.includes(await rowKey(row))) left = row
     if (left) {
-      await rec.caption('남은 빨간 줄은 이 회로가 처음 생성될 때부터 있던 문제입니다', 'top')
+      await rec.caption('남은 빨간 줄은 방금 바꾼 값과 상관없이 전부터 있던 문제입니다', 'top')
       await left.scrollIntoViewIfNeeded()
       await rec.hover(left, 2500)
       await panelClose()
@@ -1062,7 +1068,8 @@ export async function run(rec) {
       // the operating chip beside it now reads 판단 불가 · 회로 오류, not 통과 (683c88c); a circuit failing a row from the
       // start keeps 동작 안 됨 there, nothing new to point at
       const chip = T('op-chip')
-      if (await chip.count() && await rec.onScreen(chip) && /판단 불가/.test(await chip.innerText())) await rec.hover(chip, 1500)
+      // the circuit-error headline only: '동작 안 됨 1 · 판단 불가 1' has 판단 불가 too (review of 2026-11-03)
+      if (await chip.count() && await rec.onScreen(chip) && /판단 불가 · 회로 오류/.test(await chip.innerText())) await rec.hover(chip, 1500)
     }
     // undone only when this edit changed the circuit
     if (shown || await page.locator('g[data-comp]').count() !== parts) await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
