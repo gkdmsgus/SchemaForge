@@ -760,6 +760,18 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
 
 // ── POST /chat_edit ────────────────────────────────────────────────
 
+/**
+ * A JSON string's body as far as it came in, its escapes read: \n \" \\ only left "é" and "\t" raw in a reply
+ * that became the final one when the edit was cut (review of 2026-11-03). An escape cut at the end is left out.
+ */
+function jsonText(body: string): string {
+  for (let cut = 0; cut <= 6 && cut <= body.length; cut++) {
+    try { return JSON.parse(`"${body.slice(0, body.length - cut)}"`) as string } catch { /* cut inside an escape, or a raw control character */ }
+  }
+  return body.replace(/\\u([0-9a-fA-F]{4})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))).replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+    .replace(/\\(["\\/])/g, '$1').replace(/\\u[0-9a-fA-F]{0,3}$|\\$/, '')
+}
+
 app.post('/chat_edit', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
   const { graph, message, history = [] } = req.body as {
     graph: NetGraph; message: string; history: { role: string; content: string }[]
@@ -858,7 +870,8 @@ changed.`
       tools,
       tool_choice: { type: 'function', function: { name: 'edit_circuit' } },
       temperature: 0,
-      max_tokens: 700,
+      // an edit cut short is not applied: 700 left a dozen actions no room (review of 2026-11-03)
+      max_tokens: 1200,
       stream: true,
     }, { signal: abort.signal })
 
@@ -875,7 +888,7 @@ changed.`
 
       const m = argsBuf.match(/^[^{]*\{"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
       if (m) {
-        const decoded = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+        const decoded = jsonText(m[1])
         streamed = decoded
         if (decoded.length > sentReplyLen) {
           res.write(`event: text\ndata: ${JSON.stringify(decoded.slice(sentReplyLen))}\n\n`)
@@ -895,7 +908,8 @@ changed.`
     // "완료했습니다." with nothing changed (2026-11-03 tour, 52 s). The app says under it that the circuit stayed
     if (!read) {
       console.warn(`chat_edit: the edit did not parse (${argsBuf.length} chars${cut ? ', cut at max_tokens' : ''})`)
-      reply = `${streamed ? `${streamed}\n\n` : ''}${cut ? '답이 길어 중간에 끊겼습니다' : '답을 읽지 못했습니다'}. 다시 요청해 주세요.`
+      // asked again whole, the same edit is cut again: in parts it fits
+      reply = `${streamed ? `${streamed}\n\n` : ''}${cut ? '답이 길어 중간에 끊겼습니다. 바꿀 것을 몇 개씩 나눠서 요청해 주세요.' : '답을 읽지 못했습니다. 다시 요청해 주세요.'}`
     } else if (!reply) reply = actions.length ? '완료했습니다.' : '바꿀 내용을 정하지 못했습니다. 부품 기호와 원하는 연결을 적어 다시 요청해 주세요.'
 
     res.write(`event: done\ndata: ${JSON.stringify({ reply, actions })}\n\n`)

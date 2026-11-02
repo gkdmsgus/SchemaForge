@@ -233,7 +233,7 @@ export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(�
  * An AI edit as the chat applies it: references filled in, what the request did not ask for held back (guardEdit),
  * the circuit after, and the note under the reply. The note names parts, not pin numbers or net names (beginners).
  * changed is false when nothing of the edit is left to apply: the circuit, the undo list and the re-check stay, and
- * a reply that does not ask anything says so under it (no edit proposed counts too).
+ * the note says so first (no edit proposed counts too).
  * A reply that asks something waits for the answer, edit and all (live, 2026-11-01 tour: "확실하지 않으면 바꾸지 말고
  * 물어봐줘" got a new connection with "이 연결을 적용할까요?", and the app had applied it before the answer).
  */
@@ -275,8 +275,8 @@ export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: strin
       + (reused ? ` 새 부품은 비어 있는 기호(예: ${p}${Math.max(0, ...used.map(r => Number(r.slice(p.length)) || 0)) + 1})를 붙여 다시 요청해 주세요.`
         : ' 부품 기호(예: C3)를 붙여 다시 요청해 주세요.')
   }
-  // nothing changed and nothing above says why: the reply may still say it did (2026-11-03 tour: "완료했습니다." with
-  // no edit at all, the pin it was asked to connect still on its own)
-  if (!changed && !note && !asksBack(reply)) note = '\n\n이 답으로 회로는 바뀌지 않았습니다.'
+  // nothing changed, said first whatever the reply says: it may still say it did (2026-11-03 tour: "완료했습니다." with
+  // no edit at all), name the parts held back, or end in a question after saying it connected a pin
+  if (!changed) note = `\n\n이 답으로 회로는 바뀌지 않았습니다.${note}`
   return { actions, graph: changed ? after : graph, changed, note }
 }

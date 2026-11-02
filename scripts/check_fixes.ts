@@ -334,17 +334,20 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
 
-  // G12b. a reply that changed nothing says so, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no edit,
-  // C1's pin still on its own); a question does not get the note, nor a reply whose edit went in
-  const none = (r: { changed: boolean; note: string }) => !r.changed && /회로는 바뀌지 않았습니다/.test(r.note) && plain(r.note)
+  // G12b. a reply that changed nothing says so first, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no
+  // edit, C1's pin still on its own): with parts held back, and after a question too (review of 2026-11-03: "연결했습니다.
+  // 다른 수정이 필요하신가요?" with no edit, and a wrong part held, kept only the held note); not under an applied edit
+  const none = (r: { changed: boolean; note: string }) => !r.changed && /^\n\n이 답으로 회로는 바뀌지 않았습니다\./.test(r.note) && plain(r.note)
   const empty = chatEdit(open, [], msg, '완료했습니다.'), same = chatEdit(blinker, join, msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
-  const question = chatEdit(open, [], msg, '어느 넷에 연결할까요?')
+  const question = chatEdit(open, [], msg, '어느 넷에 연결할까요?'), claimAsk = chatEdit(open, [], msg, 'C2의 1번 핀을 연결했습니다. 다른 수정이 필요하신가요?')
+  const wrong = chatEdit(open, [{ type: 'add_net', name: 'TRIG_THRES', nodes: [{ ref: 'C1', pin: '1' }] }], 'C2의 1번 핀을 TRIG_THRES에 이어줘', 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
   const server = fs.readFileSync(path.join('server', 'index.ts'), 'utf8')
   const serverSays = /else if \(!reply\) reply = actions\.length \? '완료했습니다\.' : '바꿀 내용을 정하지 못했습니다/.test(server)
     && /if \(!read\) \{/.test(server)
-  check('G12b a reply that changed nothing says so under it; a question or an applied edit does not; the server says "완료" only with an edit',
-    none(empty) && none(same) && question.note === '' && !/바뀌지 않았습니다/.test(did.note) && serverSays,
-    JSON.stringify({ empty: empty.note, same: same.note, question: question.note, serverSays }))
+  check('G12b a reply that changed nothing says so first (held parts, questions too); an applied edit does not; the server says "완료" only with an edit',
+    none(empty) && none(same) && none(question) && none(claimAsk) && none(wrong) && /요청에 없던 부품의 연결은 바꾸지 않았습니다/.test(wrong.note)
+    && !/바뀌지 않았습니다/.test(did.note) && serverSays,
+    JSON.stringify({ empty: empty.note, same: same.note, question: question.note, claimAsk: claimAsk.note, wrong: wrong.note, serverSays }))
 }
 
 // F10. with the circuit check failing, the operating chip does not say it passed (2026-11-02 tour, 348-352 s: "LED 빼줘"
