@@ -15,7 +15,7 @@ import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
-import { GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
+import { GAP_X, GAP_Y, partKey, placeAdded } from '../src/lib/schematicPlace.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -394,20 +394,29 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     inView && column && row && any.ok && wired, JSON.stringify({ room: room.c, wide: wide.c, tall: tall.c, any: any.c, wired }))
 
   // G13b. a part coming back takes its last spot (2026-11-03 tour, 350-360 s: undoing "LED D1 빼줘" put D1 under U1,
-  // not beside R1 where it was), before a new part can take it; a spot another part sits on now is not taken. The spots
-  // live in the result panel, so the layout outlives the PCB tab (328 s: the schematic was laid out again)
-  // R1 dragged closer: D1's old spot still clears its body, but not the layout's gap a new part needs
-  const others = { ...Object.fromEntries(refs.filter(r => r !== 'D1').map(r => [r, kept[r]])), R1: { x: kept.R1.x - 65, y: kept.R1.y } }
+  // not beside R1 where it was), before a new part can take it, and when only its body clears the parts there (R1
+  // dragged closer since); a spot another part sits on now is not taken. Coming back is the same kind on the same nets:
+  // a new capacitor that gets the ref C4 again after an undo goes by its own nets (review of 2026-11-03). The spots
+  // live in the result panel, so the layout outlives the PCB tab as it was (328 s: laid out again, every part moved)
+  const others = Object.fromEntries(refs.filter(r => r !== 'D1').map(r => [r, kept[r]]))
+  const same = (a: { x: number; y: number }, b: { x: number; y: number }) => a.x === b.x && a.y === b.y
   const home = placeAdded(others, ['C4', 'D1'], size, nets, null, { D1: kept.D1 })
-  const homeOk = home.D1.x === kept.D1.x && home.D1.y === kept.D1.y && !(home.C4.x === kept.D1.x && home.C4.y === kept.D1.y)
+  const first = same(home.D1, kept.D1) && !same(home.C4, kept.D1)
+  const pulled = placeAdded({ ...others, R1: { x: kept.R1.x - 65, y: kept.R1.y } }, ['D1'], size, nets, null, { D1: kept.D1 })
   const taken = placeAdded({ ...others, C4: kept.D1 }, ['D1'], size, nets, null, { D1: kept.D1 })
-  const moved = !(taken.D1.x === kept.D1.x && taken.D1.y === kept.D1.y)
-    && Object.entries({ ...others, C4: kept.D1 }).every(([, p]) => Math.abs(taken.D1.x - p.x) >= 80 + GAP_X || Math.abs(taken.D1.y - p.y) >= 44 + GAP_Y)
+  const moved = !same(taken.D1, kept.D1)
+    && Object.values({ ...others, C4: kept.D1 }).every(p => Math.abs(taken.D1.x - p.x) >= 80 + GAP_X || Math.abs(taken.D1.y - p.y) >= 44 + GAP_Y)
+  const withC4 = (a: string, b: string): NetGraph => ({ components: [...blinker.components, { ref: 'C4', name: 'C', value: '100nF' }],
+    nets: [...blinker.nets.map(n => (n.name === a ? { ...n, nodes: [...n.nodes, { ref: 'C4', pin: '1' }] } : n.name === b ? { ...n, nodes: [...n.nodes, { ref: 'C4', pin: '2' }] } : n))] })
+  const [n0, n1, n2] = blinker.nets.map(n => n.name)
+  const keys = partKey(blinker, 'D1') === partKey(structuredClone(blinker), 'D1') && partKey(withC4(n0, n1), 'C4') === partKey(withC4(n0, n1), 'C4')
+    && partKey(withC4(n0, n1), 'C4') !== partKey(withC4(n2, n1), 'C4')
   const canvas = fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8')
-  const kept13 = /placeAdded\([^\n]*visible\(\), back\)/.test(canvas) && /Object\.assign\(spots, positions\)/.test(canvas)
+  const kept13 = /placeAdded\([^\n]*visible\(\), back\)/.test(canvas) && /spots\.at = positions/.test(canvas)
+    && /gone\[c\.ref\]\?\.key === partKey\(graph, c\.ref\)/.test(canvas)
     && /<CircuitCanvas [^\n]*spots=\{schematicSpots\.current\}/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
-  check('G13b a part coming back takes its last spot unless another part sits there; the spots outlive the schematic',
-    homeOk && moved && kept13, JSON.stringify({ D1: home.D1, C4: home.C4, taken: taken.D1, kept13 }))
+  check('G13b a part coming back (same kind, same nets) takes its last spot first, unless a part sits there; the spots outlive the schematic',
+    first && same(pulled.D1, kept.D1) && moved && keys && kept13, JSON.stringify({ D1: home.D1, C4: home.C4, pulled: pulled.D1, taken: taken.D1, keys, kept13 }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in

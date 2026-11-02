@@ -5,12 +5,27 @@
 // on screen when there is room there, so the view need not move either; with no room there, the spot that makes the
 // view zoom out least (a fourth column in a wide view, not a row on top). Free means the auto layout's room to every
 // part: GAP_X beside it or GAP_Y above or below, where the wires and power symbols go.
-// A part that comes back (undo of its removal, the schematic shown again after another tab) takes its last spot when
-// that spot clears every part there: undoing "LED D1 빼줘" put D1 on the free spot nearest its nets, under U1 instead
-// of beside R1 (2026-11-03 tour, 350-360 s).
+// A part that comes back (undo of its removal) takes its last spot when that spot clears every part there: undoing
+// "LED D1 빼줘" put D1 on the free spot nearest its nets, under U1 instead of beside R1 (2026-11-03 tour, 350-360 s).
+// Coming back means the same kind on the same nets (partKey): a new capacitor that gets the ref C4 again after an undo
+// goes by its own nets, not to the spot of the C4 undone (review of 2026-11-03).
 import type { Box, Pt } from './schematicRoute'
+import type { NetGraph } from '../types'
 
 export interface Size { w: number; h: number }
+
+/**
+ * Where the parts sat on one result's schematic, kept by the result panel: the schematic is unmounted on the other
+ * tabs, and laid out again it moved every part (2026-11-03 tour, 328 s). `at` is the last layout with the graph it was
+ * for; `gone` the parts that graph changes took out, by what they were.
+ */
+export interface Spots { graph?: NetGraph; at: Record<string, Pt>; gone: Record<string, { at: Pt; key: string }> }
+
+/** a part's kind and the net on each of its pins: the same for a part an undo brings back */
+export function partKey(graph: NetGraph, ref: string): string {
+  const pins = (graph.nets || []).flatMap(n => n.nodes.filter(nd => nd.ref === ref).map(nd => `${nd.pin}=${n.name}`)).sort()
+  return `${(graph.components || []).find(c => c.ref === ref)?.name ?? ''}|${pins.join(',')}`
+}
 
 /** the room between parts, as the auto layout leaves it (CircuitCanvas autoLayout HGAP, VGAP) */
 export const GAP_X = 110, GAP_Y = 100

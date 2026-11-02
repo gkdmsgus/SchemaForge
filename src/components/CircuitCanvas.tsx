@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
 import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
-import { placeAdded } from '../lib/schematicPlace'
+import { partKey, placeAdded, type Spots } from '../lib/schematicPlace'
 import { DIFF_EDGE, DIFF_FILL, NAME_TEXT, VALUE_TEXT, type DiffKind } from '../lib/diffColors'
 
 // ── Color palette ─────────────────────────────────────────────
@@ -251,8 +251,8 @@ interface CircuitCanvasProps {
   graph?: NetGraph
   graphDiff?: GraphDiff | null
   invalidRefs?: Set<string>
-  /** each part's last spot in this result, kept by the result panel: the schematic is unmounted on the other tabs */
-  spots?: Record<string, Pos>
+  /** the parts' spots in this result, kept by the result panel: the schematic is unmounted on the other tabs */
+  spots?: Spots
 }
 
 export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set(), spots }: CircuitCanvasProps) {
@@ -307,23 +307,26 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   // in the effect below: a resize in between refit the view to no parts at all and left it at zoom 1 from the origin
   // (3 of 30 openings of the tour's 555, 2026-10-31). An edit of the circuit on screen (AI edit, undo, a code run)
   // keeps the parts that stay where they are and puts only new ones on free spots, in view where there is room: laid
-  // out again, the 555's nine parts plus C4 went from three columns to four (2026-11-02 tour). A part with a spot in
-  // `spots` goes back there: the layout outlives the PCB tab, which laid it out again (2026-11-03 tour, 328 s), and a
-  // part taken out comes back to its place on undo
+  // out again, the 555's nine parts plus C4 went from three columns to four (2026-11-02 tour). Shown again after
+  // another tab, the schematic starts from the layout it left in `spots`, as it was (2026-11-03 tour, 328 s: laid out
+  // again, every part moved), and a part an edit took out goes back to its spot when an undo brings it back
   const [placedFor, setPlacedFor] = useState<NetGraph>()
   const edited = useRef(false)
   if (placedFor !== graph) {
-    const kept = placedFor ? Object.fromEntries(comps.filter(c => positions[c.ref]).map(c => [c.ref, positions[c.ref]])) : {}
-    const back = spots ?? {}
+    const from = placedFor ?? spots?.graph, was = placedFor ? positions : spots?.at ?? {}
+    const kept = from ? Object.fromEntries(comps.filter(c => was[c.ref]).map(c => [c.ref, was[c.ref]])) : {}
+    const gone = spots?.gone ?? {}
+    if (from) for (const ref of Object.keys(was)) if (!comps.some(c => c.ref === ref)) gone[ref] = { at: was[ref], key: partKey(from, ref) }
+    const back = graph ? Object.fromEntries(comps.filter(c => !kept[c.ref] && gone[c.ref]?.key === partKey(graph, c.ref)).map(c => [c.ref, gone[c.ref].at])) : {}
     // only an edit of the circuit on screen keeps the view; shown again, the circuit opens fitted
-    edited.current = Object.keys(kept).length > 0
+    edited.current = !!placedFor && Object.keys(kept).length > 0
     setPlacedFor(graph)
-    setPositions(edited.current || comps.some(c => back[c.ref])
+    setPositions(Object.keys(kept).length || Object.keys(back).length
       ? placeAdded(kept, comps.map(c => c.ref).filter(r => !kept[r]), layouts, nets, visible(), back) : auto.positions)
     setLocalNets(null)
   }
-  // every spot a part takes, dragged ones too; a part taken out keeps its last one
-  useEffect(() => { if (spots) Object.assign(spots, positions) }, [positions, spots])
+  // the layout as it is, dragged parts too, for when the schematic is shown again
+  useEffect(() => { if (spots) { spots.graph = placedFor; spots.at = positions } }, [positions, placedFor, spots])
 
   /** the part of the drawing on screen, in drawing units (null before the schematic has a size) */
   function visible(): Box | null {

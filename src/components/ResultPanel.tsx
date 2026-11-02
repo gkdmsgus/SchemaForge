@@ -10,6 +10,7 @@ import PCBLayout from './PCBLayout'
 import BomTable from './BomTable'
 import { buildBom, compactRefs, type BomBoard } from '../lib/bom'
 import { assemblyRefs } from '../lib/assembly'
+import type { Spots } from '../lib/schematicPlace'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import { firstChangedLine, toLF, type CodeEdit } from '../lib/pythonCode'
@@ -145,7 +146,7 @@ export default function ResultPanel({
   const [favLoading, setFavLoading] = useState(false)
   const [graphHistory, setGraphHistory] = useState<NetGraph[]>([])
   // where each part sat on the schematic, for this result: the schematic is unmounted on the other tabs
-  const schematicSpots = useRef<Record<string, { x: number; y: number }>>({})
+  const schematicSpots = useRef<Spots>({ at: {}, gone: {} })
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
   // Code tab: the draft and the last run outlive drawer tab switches
   const [codeEdit, setCodeEdit] = useState<CodeEdit | null>(null)

@@ -317,23 +317,36 @@ try {
     await p11.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
     await p11.waitForTimeout(600)
   }
+  const say = async (msg, body) => {
+    await p11.unroute(/\/chat_edit$/)
+    await p11.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(body)}\n\n` }))
+    await p11.getByTestId('chat-input').fill(msg)
+    await p11.getByTestId('chat-input').press('Enter')
+  }
+  const undoEdit = () => p11.getByRole('button', { name: /되돌리기/ }).first().click()
+  // with C4 added (ten parts, a layout of its own) the PCB tab and back
+  await say('VCC와 GND 사이에 100nF 커패시터 C4를 하나 추가해줘', answer)
+  await p11.locator("g[data-comp='C4']").waitFor({ timeout: 10000 })
+  await p11.waitForTimeout(800)
+  const s3a = await spots()
   await tabs()
   const s3 = await spots()
-  const gone = { reply: 'LED D1을 뺐습니다.', actions: [{ type: 'remove_component', ref: 'D1' }] }
-  await p11.unroute(/\/chat_edit$/)
-  await p11.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(gone)}\n\n` }))
-  await p11.getByTestId('chat-input').fill('LED D1 빼줘')
-  await p11.getByTestId('chat-input').press('Enter')
+  await undoEdit()
+  await p11.locator("g[data-comp='C4']").waitFor({ state: 'detached', timeout: 10000 })
+  await p11.waitForTimeout(800)
+  const s3b = await spots()
+  // D1 out, the PCB tab, undo
+  await say('LED D1 빼줘', { reply: 'LED D1을 뺐습니다.', actions: [{ type: 'remove_component', ref: 'D1' }] })
   await p11.locator("g[data-comp='D1']").waitFor({ state: 'detached', timeout: 10000 })
   await tabs()
-  await p11.getByRole('button', { name: /되돌리기/ }).first().click()
+  await undoEdit()
   await p11.locator("g[data-comp='D1']").waitFor({ timeout: 10000 })
   await p11.waitForTimeout(800)
   const s4 = await spots()
-  const tabMoved = leftPlace(s2, s3, false), undoMoved = leftPlace(s3, s4, false)
-  check('S12 the PCB tab and back moves no part; a part taken out comes back to its spot on undo, the PCB tab in between',
-    Object.keys(s3).length >= 9 && !tabMoved.length && !undoMoved.length,
-    `moved by the tabs [${tabMoved}]; moved after removing D1 and undoing [${undoMoved}]${s3.D1 && s4.D1 ? `; D1 ${s3.D1.at} -> ${s4.D1.at}` : ''}`)
+  const tabMoved = leftPlace(s3a, s3, false), undoMoved = leftPlace(s3b, s4, false)
+  check('S12 the PCB tab and back moves no part (C4 added); a part taken out comes back to its spot on undo, the PCB tab in between',
+    Object.keys(s3).length >= 10 && !!s3.C4 && !tabMoved.length && !undoMoved.length && !leftPlace(s2, s3b, false).length,
+    `moved by the tabs [${tabMoved}]; moved after removing D1 and undoing [${undoMoved}]${s3b.D1 && s4.D1 ? `; D1 ${s3b.D1.at} -> ${s4.D1.at}` : ''}`)
 } finally {
   await browser.close()
 }
