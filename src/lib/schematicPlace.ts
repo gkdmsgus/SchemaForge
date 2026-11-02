@@ -5,6 +5,9 @@
 // on screen when there is room there, so the view need not move either; with no room there, the spot that makes the
 // view zoom out least (a fourth column in a wide view, not a row on top). Free means the auto layout's room to every
 // part: GAP_X beside it or GAP_Y above or below, where the wires and power symbols go.
+// A part that comes back (undo of its removal, the schematic shown again after another tab) takes its last spot when
+// that spot clears every part there: undoing "LED D1 빼줘" put D1 on the free spot nearest its nets, under U1 instead
+// of beside R1 (2026-11-03 tour, 350-360 s).
 import type { Box, Pt } from './schematicRoute'
 
 export interface Size { w: number; h: number }
@@ -17,14 +20,20 @@ const STEP = 10, ALIGN = 40, EDGE = 40
 
 /**
  * The kept spots plus one for each added part (in order, each one then taken), from the parts' sizes, the nets
- * (which parts an added one is near) and the visible part of the drawing (null: anywhere).
+ * (which parts an added one is near) and the visible part of the drawing (null: anywhere). An added part with a spot
+ * in `back` (where it was last) goes there first when its body overlaps no part there, the gaps aside: the parts
+ * around it may have been dragged closer since.
  */
 export function placeAdded(kept: Record<string, Pt>, added: string[], size: Record<string, Size>,
-  nets: { nodes: { ref: string }[] }[], view: Box | null = null): Record<string, Pt> {
+  nets: { nodes: { ref: string }[] }[], view: Box | null = null, back: Record<string, Pt> = {}): Record<string, Pt> {
   const pos: Record<string, Pt> = { ...kept }
   const sz = (ref: string) => size[ref] ?? { w: 80, h: 60 }
   const mean = (v: number[]) => v.reduce((s, x) => s + x, 0) / v.length
-  for (const ref of added) {
+  const clear = (ref: string, p: Pt) => Object.keys(pos).every(r => Math.abs(p.x - pos[r].x) >= (sz(ref).w + sz(r).w) / 2
+    || Math.abs(p.y - pos[r].y) >= (sz(ref).h + sz(r).h) / 2)
+  // the ones coming back first, so a new part does not take their spot
+  for (const ref of [...added.filter(r => back[r]), ...added.filter(r => !back[r])]) {
+    if (back[ref] && clear(ref, back[ref])) { pos[ref] = back[ref]; continue }
     const there = Object.keys(pos), { w, h } = sz(ref)
     if (!there.length) { pos[ref] = { x: w / 2 + GAP_X, y: h / 2 + GAP_Y }; continue }
     const near = [...new Set(nets.filter(n => n.nodes.some(nd => nd.ref === ref)).flatMap(n => n.nodes.map(nd => nd.ref)))]

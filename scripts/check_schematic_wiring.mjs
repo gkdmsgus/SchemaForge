@@ -306,6 +306,34 @@ try {
     Object.keys(s0).length >= 9 && !!c4 && !add.length && look.miss <= 1 && c4.inView && clear && !undo.length && !s2.C4,
     `${Object.keys(s0).length} parts; moved in the drawing by the add [${add}], on screen zoom ×${look.k.toFixed(3)} (off by ${look.miss.toFixed(1)} px); `
     + `moved by undo [${undo}]; C4 ${c4 ? `at ${c4.at}, ${c4.inView ? 'in view' : 'out of view'}, ${clear ? 'clear of the others' : 'over another part'}` : 'not drawn'}`)
+
+  // S12: the layout outlives the PCB tab, and a part taken out comes back to its spot on undo (2026-11-03 tour: back
+  // from the PCB tab after adding C4 every part had moved, 328 s; undoing "LED D1 빼줘" put D1 under U1, not beside R1
+  // where it was, 350-360 s). On S11's page, with the PCB tab in between the removal and the undo
+  const tabs = async () => {
+    await p11.getByTestId('view-tab-pcb').click()
+    await p11.waitForTimeout(600)
+    await p11.getByTestId('view-tab-schematic').click()
+    await p11.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+    await p11.waitForTimeout(600)
+  }
+  await tabs()
+  const s3 = await spots()
+  const gone = { reply: 'LED D1을 뺐습니다.', actions: [{ type: 'remove_component', ref: 'D1' }] }
+  await p11.unroute(/\/chat_edit$/)
+  await p11.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(gone)}\n\n` }))
+  await p11.getByTestId('chat-input').fill('LED D1 빼줘')
+  await p11.getByTestId('chat-input').press('Enter')
+  await p11.locator("g[data-comp='D1']").waitFor({ state: 'detached', timeout: 10000 })
+  await tabs()
+  await p11.getByRole('button', { name: /되돌리기/ }).first().click()
+  await p11.locator("g[data-comp='D1']").waitFor({ timeout: 10000 })
+  await p11.waitForTimeout(800)
+  const s4 = await spots()
+  const tabMoved = leftPlace(s2, s3, false), undoMoved = leftPlace(s3, s4, false)
+  check('S12 the PCB tab and back moves no part; a part taken out comes back to its spot on undo, the PCB tab in between',
+    Object.keys(s3).length >= 9 && !tabMoved.length && !undoMoved.length,
+    `moved by the tabs [${tabMoved}]; moved after removing D1 and undoing [${undoMoved}]${s3.D1 && s4.D1 ? `; D1 ${s3.D1.at} -> ${s4.D1.at}` : ''}`)
 } finally {
   await browser.close()
 }

@@ -251,9 +251,11 @@ interface CircuitCanvasProps {
   graph?: NetGraph
   graphDiff?: GraphDiff | null
   invalidRefs?: Set<string>
+  /** each part's last spot in this result, kept by the result panel: the schematic is unmounted on the other tabs */
+  spots?: Record<string, Pos>
 }
 
-export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set() }: CircuitCanvasProps) {
+export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set(), spots }: CircuitCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -305,16 +307,23 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   // in the effect below: a resize in between refit the view to no parts at all and left it at zoom 1 from the origin
   // (3 of 30 openings of the tour's 555, 2026-10-31). An edit of the circuit on screen (AI edit, undo, a code run)
   // keeps the parts that stay where they are and puts only new ones on free spots, in view where there is room: laid
-  // out again, the 555's nine parts plus C4 went from three columns to four (2026-11-02 tour)
+  // out again, the 555's nine parts plus C4 went from three columns to four (2026-11-02 tour). A part with a spot in
+  // `spots` goes back there: the layout outlives the PCB tab, which laid it out again (2026-11-03 tour, 328 s), and a
+  // part taken out comes back to its place on undo
   const [placedFor, setPlacedFor] = useState<NetGraph>()
   const edited = useRef(false)
   if (placedFor !== graph) {
     const kept = placedFor ? Object.fromEntries(comps.filter(c => positions[c.ref]).map(c => [c.ref, positions[c.ref]])) : {}
+    const back = spots ?? {}
+    // only an edit of the circuit on screen keeps the view; shown again, the circuit opens fitted
     edited.current = Object.keys(kept).length > 0
     setPlacedFor(graph)
-    setPositions(edited.current ? placeAdded(kept, comps.map(c => c.ref).filter(r => !kept[r]), layouts, nets, visible()) : auto.positions)
+    setPositions(edited.current || comps.some(c => back[c.ref])
+      ? placeAdded(kept, comps.map(c => c.ref).filter(r => !kept[r]), layouts, nets, visible(), back) : auto.positions)
     setLocalNets(null)
   }
+  // every spot a part takes, dragged ones too; a part taken out keeps its last one
+  useEffect(() => { if (spots) Object.assign(spots, positions) }, [positions, spots])
 
   /** the part of the drawing on screen, in drawing units (null before the schematic has a size) */
   function visible(): Box | null {

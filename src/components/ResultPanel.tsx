@@ -144,6 +144,8 @@ export default function ResultPanel({
   const [favId, setFavId] = useState<string | null>(null)
   const [favLoading, setFavLoading] = useState(false)
   const [graphHistory, setGraphHistory] = useState<NetGraph[]>([])
+  // where each part sat on the schematic, for this result: the schematic is unmounted on the other tabs
+  const schematicSpots = useRef<Record<string, { x: number; y: number }>>({})
   const [graphDiff, setGraphDiff] = useState<{ added: Set<string>; removed: Set<string>; modified: Set<string> } | null>(null)
   // Code tab: the draft and the last run outlive drawer tab switches
   const [codeEdit, setCodeEdit] = useState<CodeEdit | null>(null)
@@ -1028,7 +1030,7 @@ export default function ResultPanel({
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
-              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} />
+              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} spots={schematicSpots.current} />
               : viewMode === 'assembly'
                 ? board?.final && board.status === 'done'
                   ? <BoardView key="assembly" mode="assembly" pcbFilename={pcbFilename ?? undefined}

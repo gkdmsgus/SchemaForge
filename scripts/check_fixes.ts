@@ -377,6 +377,22 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const wired = /placeAdded\(kept, /.test(fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8'))
   check('G13 an added part takes a free spot (in view when there is room, else a column or row by the view), the others stay',
     inView && column && row && any.ok && wired, JSON.stringify({ room: room.c, wide: wide.c, tall: tall.c, any: any.c, wired }))
+
+  // G13b. a part coming back takes its last spot (2026-11-03 tour, 350-360 s: undoing "LED D1 빼줘" put D1 under U1,
+  // not beside R1 where it was), before a new part can take it; a spot another part sits on now is not taken. The spots
+  // live in the result panel, so the layout outlives the PCB tab (328 s: the schematic was laid out again)
+  // R1 dragged closer: D1's old spot still clears its body, but not the layout's gap a new part needs
+  const others = { ...Object.fromEntries(refs.filter(r => r !== 'D1').map(r => [r, kept[r]])), R1: { x: kept.R1.x - 65, y: kept.R1.y } }
+  const home = placeAdded(others, ['C4', 'D1'], size, nets, null, { D1: kept.D1 })
+  const homeOk = home.D1.x === kept.D1.x && home.D1.y === kept.D1.y && !(home.C4.x === kept.D1.x && home.C4.y === kept.D1.y)
+  const taken = placeAdded({ ...others, C4: kept.D1 }, ['D1'], size, nets, null, { D1: kept.D1 })
+  const moved = !(taken.D1.x === kept.D1.x && taken.D1.y === kept.D1.y)
+    && Object.entries({ ...others, C4: kept.D1 }).every(([, p]) => Math.abs(taken.D1.x - p.x) >= 80 + GAP_X || Math.abs(taken.D1.y - p.y) >= 44 + GAP_Y)
+  const canvas = fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8')
+  const kept13 = /placeAdded\([^\n]*visible\(\), back\)/.test(canvas) && /Object\.assign\(spots, positions\)/.test(canvas)
+    && /<CircuitCanvas [^\n]*spots=\{schematicSpots\.current\}/.test(fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8'))
+  check('G13b a part coming back takes its last spot unless another part sits there; the spots outlive the schematic',
+    homeOk && moved && kept13, JSON.stringify({ D1: home.D1, C4: home.C4, taken: taken.D1, kept13 }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in
