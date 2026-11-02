@@ -247,6 +247,65 @@ try {
   check('S10 the circuit opens fitted when the schematic changes size before its parts are placed',
     shrunk !== null && atOpen === homed && outAtOpen10.length === 0,
     `${shrunk === null ? 'the schematic was never made shorter' : `made ${shrunk} px tall`}, outside at open [${outAtOpen10}], view at open ${atOpen === homed ? 'as ⌂ gives' : `${atOpen}, after ⌂ ${homed}`}`)
+
+  // S11: an AI edit that adds a part leaves the parts already there where they were in the drawing, so on screen they
+  // keep their arrangement (one zoom for all: the check notice the edit brings above the schematic makes it lower), and
+  // the new part goes on a free spot in view; undo takes it away and moves nothing (2026-11-02 tour, 325-329 s: adding
+  // C4 to the 555's nine parts laid every part out again, three columns became four, and undo laid them back).
+  // On the 555 demo, with the login and the AI editor's answer faked
+  const ctx11 = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await ctx11.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+  })
+  const p11 = await ctx11.newPage()
+  const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  await p11.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await p11.route(/\/(favorites|sessions)(\/.*)?$/, r => json(r, { favorites: [], sessions: [], messages: [], id: 's1' }))
+  await p11.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  const answer = { reply: 'VCC와 GND 사이에 100nF 커패시터 C4를 추가했습니다.', actions: [
+    { type: 'add_component', ref: 'C4', name: 'C', value: '100nF' },
+    { type: 'add_net', name: 'VCC', nodes: [{ ref: 'C4', pin: '1' }] },
+    { type: 'add_net', name: 'GND', nodes: [{ ref: 'C4', pin: '2' }] }] }
+  await p11.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(answer)}\n\n` }))
+  await p11.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+  await p11.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
+  const editor = p11.getByTestId('toggle-left-panel')
+  if ((await editor.getAttribute('aria-pressed')) !== 'true') await editor.click()
+  await p11.waitForTimeout(600)
+  // each part's place in the drawing (its translate) and where that point is on screen; boxes for the new part's room
+  const spots = () => p11.evaluate(() => {
+    const v = document.querySelector('svg:has(g[data-comp])').getBoundingClientRect()
+    return Object.fromEntries([...document.querySelectorAll('g[data-comp]')].map(g => {
+      const m = g.getScreenCTM(), b = g.getBoundingClientRect()
+      return [g.getAttribute('data-comp'), { at: g.getAttribute('transform'), x: m.e, y: m.f,
+        box: [b.left, b.top, b.right, b.bottom], inView: b.left >= v.left && b.right <= v.right && b.top >= v.top && b.bottom <= v.bottom }]
+    }))
+  })
+  const leftPlace = (a, b, onScreen) => Object.keys(a).filter(r => !b[r] || a[r].at !== b[r].at || (onScreen && Math.hypot(a[r].x - b[r].x, a[r].y - b[r].y) > 0.5))
+  // the parts' screen points against the ones before, as one zoom k and shift: the worst miss in px
+  const arranged = (a, b) => {
+    const [p, q] = Object.keys(a), k = Math.hypot(b[p].x - b[q].x, b[p].y - b[q].y) / Math.hypot(a[p].x - a[q].x, a[p].y - a[q].y)
+    const miss = Math.max(...Object.keys(a).map(r => Math.hypot(b[r].x - (b[p].x + k * (a[r].x - a[p].x)), b[r].y - (b[p].y + k * (a[r].y - a[p].y)))))
+    return { k, miss }
+  }
+  const s0 = await spots()
+  await p11.getByTestId('chat-input').fill('VCC와 GND 사이에 100nF 커패시터 C4를 하나 추가해줘')
+  await p11.getByTestId('chat-input').press('Enter')
+  await p11.locator("g[data-comp='C4']").waitFor({ timeout: 10000 })
+  await p11.waitForTimeout(800)
+  const s1 = await spots()
+  const c4 = s1.C4, clear = !!c4 && Object.entries(s1).every(([r, o]) => r === 'C4'
+    || Math.min(c4.box[2], o.box[2]) <= Math.max(c4.box[0], o.box[0]) || Math.min(c4.box[3], o.box[3]) <= Math.max(c4.box[1], o.box[1]))
+  await p11.getByRole('button', { name: /되돌리기/ }).first().click()
+  await p11.locator("g[data-comp='C4']").waitFor({ state: 'detached', timeout: 10000 })
+  await p11.waitForTimeout(800)
+  const s2 = await spots()
+  const add = leftPlace(s0, s1, false), undo = leftPlace(s0, s2, true), look = arranged(s0, s1)
+  check('S11 adding a part moves none of the parts there (one zoom for all on screen), the new one sits in view on its own; undo moves nothing',
+    Object.keys(s0).length >= 9 && !!c4 && !add.length && look.miss <= 1 && c4.inView && clear && !undo.length && !s2.C4,
+    `${Object.keys(s0).length} parts; moved in the drawing by the add [${add}], on screen zoom ×${look.k.toFixed(3)} (off by ${look.miss.toFixed(1)} px); `
+    + `moved by undo [${undo}]; C4 ${c4 ? `at ${c4.at}, ${c4.inView ? 'in view' : 'out of view'}, ${clear ? 'clear of the others' : 'over another part'}` : 'not drawn'}`)
 } finally {
   await browser.close()
 }

@@ -15,6 +15,7 @@ import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
+import { GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -350,6 +351,32 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const wired = /operatingHeadline\(opResults, circuitErrors\.length\)/.test(src) && /circuitErrors=\{circuitErrors\.length\}/.test(src)
   check('F10 circuit errors: the operating chip and panel say it cannot be judged, not passed; faults still show',
     blocked && clean && fault && shown && wired, JSON.stringify({ errors, head, blocked, clean, fault, shown, wired }))
+}
+
+// G13. a part an edit adds goes on a free spot and the parts there keep theirs (2026-11-02 tour, 325-329 s: C4 added to
+// the 555's nine parts laid them all out again, three columns became four). Nine parts in the auto layout's grid, C4 on
+// the nets of all of them: with room in view it goes there, in a row of the others; with none, the side that makes the
+// view zoom out least (a column in a wide view, a row in a tall one); always clear of every part by the layout's gaps
+{
+  const refs = ['BT1', 'C1', 'C2', 'C3', 'D1', 'R1', 'R2', 'R3', 'U1']
+  const kept = Object.fromEntries(refs.map((r, i) => [r, { x: 125 + (i % 3) * 190, y: 182 + Math.floor(i / 3) * 144 }]))
+  const size = Object.fromEntries([...refs, 'C4'].map(r => [r, { w: 80, h: 44 }]))
+  const nets = [{ nodes: [...refs, 'C4'].map(ref => ({ ref })) }]
+  const rows = new Set(refs.map(r => kept[r].y))
+  const at = (view: { x0: number; y0: number; x1: number; y1: number } | null) => {
+    const p = placeAdded(kept, ['C4'], size, nets, view), c = p.C4
+    const stay = refs.every(r => p[r].x === kept[r].x && p[r].y === kept[r].y)
+    const clear = refs.every(r => Math.abs(c.x - kept[r].x) >= 80 + GAP_X || Math.abs(c.y - kept[r].y) >= 44 + GAP_Y)
+    return { c, ok: stay && clear }
+  }
+  const room = at({ x0: 0, y0: 100, x1: 900, y1: 560 }), wide = at({ x0: 45, y0: 120, x1: 585, y1: 532 })
+  const tall = at({ x0: 45, y0: 0, x1: 585, y1: 900 }), any = at(null)
+  const inView = room.ok && room.c.x + 40 <= 900 && room.c.x > 545 && rows.has(room.c.y)
+  const column = wide.ok && (wide.c.x < 85 || wide.c.x > 545) && rows.has(wide.c.y)
+  const row = tall.ok && (tall.c.y < 182 || tall.c.y > 470)
+  const wired = /placeAdded\(kept, /.test(fs.readFileSync(path.join('src', 'components', 'CircuitCanvas.tsx'), 'utf8'))
+  check('G13 an added part takes a free spot (in view when there is room, else a column or row by the view), the others stay',
+    inView && column && row && any.ok && wired, JSON.stringify({ room: room.c, wide: wide.c, tall: tall.c, any: any.c, wired }))
 }
 
 // G6. a part already saved with an empty reference still draws on the schematic and the PCB sketch (it threw in

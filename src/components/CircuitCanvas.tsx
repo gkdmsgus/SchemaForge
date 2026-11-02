@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
 import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
+import { placeAdded } from '../lib/schematicPlace'
 import { DIFF_EDGE, DIFF_FILL, NAME_TEXT, VALUE_TEXT, type DiffKind } from '../lib/diffColors'
 
 // ── Color palette ─────────────────────────────────────────────
@@ -302,12 +303,25 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   // a new circuit's parts are placed, and the edits to the last one's nets dropped, in the render it arrives in, not
   // in the effect below: a resize in between refit the view to no parts at all and left it at zoom 1 from the origin
-  // (3 of 30 openings of the tour's 555, 2026-10-31)
+  // (3 of 30 openings of the tour's 555, 2026-10-31). An edit of the circuit on screen (AI edit, undo, a code run)
+  // keeps the parts that stay where they are and puts only new ones on free spots, in view where there is room: laid
+  // out again, the 555's nine parts plus C4 went from three columns to four (2026-11-02 tour)
   const [placedFor, setPlacedFor] = useState<NetGraph>()
+  const edited = useRef(false)
   if (placedFor !== graph) {
+    const kept = placedFor ? Object.fromEntries(comps.filter(c => positions[c.ref]).map(c => [c.ref, positions[c.ref]])) : {}
+    edited.current = Object.keys(kept).length > 0
     setPlacedFor(graph)
-    setPositions(auto.positions)
+    setPositions(edited.current ? placeAdded(kept, comps.map(c => c.ref).filter(r => !kept[r]), layouts, nets, visible()) : auto.positions)
     setLocalNets(null)
+  }
+
+  /** the part of the drawing on screen, in drawing units (null before the schematic has a size) */
+  function visible(): Box | null {
+    const el = containerRef.current
+    if (!el || !el.clientWidth || !el.clientHeight) return null
+    // on screen a point sits at zoom * (u + pan)
+    return { x0: -pan.x, y0: -pan.y, x1: el.clientWidth / zoom - pan.x, y1: el.clientHeight / zoom - pan.y }
   }
 
   // every part in view, centred, never enlarged past 1:1 (⌂, and each circuit as it opens). Zoom 1 at the origin
@@ -358,7 +372,9 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     setWireDrag(null)
     wireDragRef.current = null
     setWireBends({})
-    fitTo()
+    // after an edit the view stays while all of the drawing is still in it, so nothing on screen moves
+    const v = visible(), b = drawing(effectiveNets, positions, layouts).box
+    if (!edited.current || !v || !b || b.x0 < v.x0 || b.y0 < v.y0 || b.x1 > v.x1 || b.y1 > v.y1) fitTo()
   }, [graph])
 
   // routed again only when a part moves or a net changes, not on every hover
