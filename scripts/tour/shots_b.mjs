@@ -955,6 +955,14 @@ export async function run(rec) {
     }, 4)
     await rec.pause(2500)
     const added = await page.locator('g[data-comp]').count() === parts + 1 && await page.locator(`g[data-comp='${cNew}']`).count() === 1
+    // the AI can still wire the new part wrong (2026-11-03 take 2: C4 on two new nets of its own, "VCC와 GND 사이에
+    // 추가되었습니다" in the reply, and two broken connections under a caption that said nothing of them)
+    if (await checksBroken()) {
+      console.log(`  S23: ${cNew} came with connection errors`)
+      await rec.caption('AI가 연결을 잘못 만들면 연결 점검이 바로 알려 주고, 되돌리기로 취소할 수 있습니다', 'top')
+      const diag = T('circuit-diagnostics')
+      await rec.hover((await diag.count()) ? diag : T('erc-notice'), 3000)
+    }
     await rec.caption('회로가 바뀌면 예전 기판은 쓰지 않도록 PCB 탭에서 알려 줍니다')
     await rec.press(T('view-tab-pcb'))
     await rec.hover(T('pcb-stale'), 2500)
