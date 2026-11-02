@@ -324,7 +324,7 @@ export async function run(rec) {
           answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
         } else {
           // anything else (an error reply, a front end without the note): nothing said of why
-          await rec.caption('바로 고쳐지지 않으면, 바꿀 부품을 짚어 다시 요청합니다', 'top')
+          await rec.caption('바로 고쳐지지 않으면, 더 분명하게 다시 요청합니다', 'top')
           answer = `${named.length ? `${named.join(', ')}의 ` : ''}핀을 네가 판단해서 가장 알맞은 넷에 연결해줘`
         }
         console.log(`  S06b: answered "${answer.slice(0, 80)}"`)
