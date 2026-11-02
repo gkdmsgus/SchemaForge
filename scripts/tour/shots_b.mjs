@@ -653,6 +653,9 @@ export async function run(rec) {
     // the numbers once the placement and routing replay has settled: shown during it, the row counted up and had no
     // DRC count yet (review of 2026-11-01)
     await T('board-drc').first().waitFor({ timeout: 180000 })
+    // the side-by-side 3D half said "불러오는 중" for 9 s at 1x under the next caption (review of 2026-11-02)
+    if (await page.locator("[data-testid='kicad-3d']").count())
+      await rec.fast(() => page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 120000 }).catch(() => {}), 4)
     await rec.caption('아래 줄에 배선 수·비아·트랙 길이·기판 크기·DRC 오류가 숫자로 나옵니다')
     await rec.hover(T('board-status'), 3500)
   })
