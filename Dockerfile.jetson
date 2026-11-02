@@ -1,0 +1,56 @@
+# SchemaForge for Jetson (ARM64) — same app as Dockerfile, different runtime base.
+#
+# The kicad/kicad image is published for amd64 only, so this image installs
+# kicad-cli from the official KiCad 10 PPA, which has jammy/arm64 builds
+# (10.0.8 as of 2026-11-03; the amd64 image is pinned to 10.0.5).
+# Build on the Jetson itself:  docker build -f Dockerfile.jetson -t schemaforge:jetson .
+
+# ── 1) frontend build ─────────────────────────────────────────────────
+FROM node:22-slim AS web
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ── 2) API dependencies ───────────────────────────────────────────────
+FROM node:22-slim AS api
+WORKDIR /app/server
+COPY server/package.json server/package-lock.json* ./
+RUN npm ci --omit=dev
+
+# ── 3) runtime ────────────────────────────────────────────────────────
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends software-properties-common gpg-agent ca-certificates \
+ && add-apt-repository -y ppa:kicad/kicad-10.0-releases \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends kicad kicad-symbols kicad-footprints python3-venv python3-pip \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=api /usr/local/bin/node /usr/local/bin/node
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN python3 -m venv /venv && /venv/bin/pip install --no-cache-dir -r requirements.txt
+# the server spawns `python`; the venv provides it
+ENV PATH="/venv/bin:$PATH"
+
+COPY --from=api /app/server/node_modules ./server/node_modules
+COPY --from=web /app/dist ./dist
+COPY server/ ./server/
+
+WORKDIR /app/server
+RUN mkdir -p outputs
+# the demo circuits run once here, so opening a demo copies a stored netlist (demo_cache.ts)
+RUN ./node_modules/.bin/tsx build_demo_cache.ts
+# no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
+ENV NODE_ENV=production \
+    KICAD_CLI_PATH=/usr/bin/kicad-cli \
+    KICAD10_3DMODEL_DIR=/app/server/pcb/3dmodels \
+    HOME=/tmp
+EXPOSE 8002
+
+CMD ["./node_modules/.bin/tsx", "index.ts"]
