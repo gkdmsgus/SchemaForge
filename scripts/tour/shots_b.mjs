@@ -979,10 +979,11 @@ export async function run(rec) {
     await chat.fill('')
     await chat.pressSequentially(series ? `LED에 연결된 저항 ${series}의 값을 10Ω으로 바꿔줘` : 'LED에 연결된 저항 값을 10Ω으로 바꿔줘', { delay: 60 })
     await page.keyboard.press('Enter')
-    // the reply first: a circuit failing a row from the start already shows 동작 안 됨 (review of 2026-10-30)
+    // the reply first: a circuit failing a row from the start already shows 동작 안 됨 (review of 2026-10-30); with a
+    // circuit error left the chip reads 판단 불가 instead and the new rows are looked for below (683c88c)
     await rec.fast(async () => {
       await replied()
-      await page.waitForFunction(() => /동작 안 됨/.test(document.querySelector("[data-testid='op-chip']")?.innerText || ''), null, { timeout: 120000 })
+      await page.waitForFunction(() => /동작 안 됨|판단 불가/.test(document.querySelector("[data-testid='op-chip']")?.innerText || ''), null, { timeout: 120000 })
     }, 4)
     await panelOpen()
     // a row that was not failing before, the one with a 해결 button first (10 Ω fails the LED current, which has
@@ -1042,6 +1043,8 @@ export async function run(rec) {
       await rec.hover(diag, 3000)
       const errBtn = page.getByRole('button', { name: /회로 오류/ }).first()
       if (await errBtn.count()) await rec.hover(errBtn, 1500)
+      // the operating chip beside it now reads 판단 불가 · 회로 오류, not 통과 (683c88c)
+      if (await T('op-chip').count() && await rec.onScreen(T('op-chip'))) await rec.hover(T('op-chip'), 1500)
     }
     // undone only when this edit changed the circuit
     if (shown || await page.locator('g[data-comp]').count() !== parts) await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
