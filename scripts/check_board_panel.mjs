@@ -4,8 +4,9 @@
 // the 3D view, B2 in 2D, zoomed in, it shares none with the board drawing, B3 with the 3D pane narrowed by the list
 // no view button or the 3D view's 도형 보기 toggle is under something else, B4 folded, it is one short line in the corner,
 // B5 with the AI edit panel open too, the AI rounds box (folded or open) covers no view button, B6 with the Code drawer
-// open (a low board pane) in 나란히 the folded header shares no area with the 2D or the 3D view, B7 in 2D, zoomed in,
-// the folded header shares none with the board drawing.
+// open (a low board pane) in 나란히 the folded header shares no area with the 2D or the 3D view, B8 on that low 3D pane
+// the hint is an ⓘ chip, not the line, and with the BOM drawer or none the line is back, B7 in 2D, zoomed in, the
+// folded header shares none with the board drawing.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -129,8 +130,25 @@ try {
   check('B6 Code drawer open, 나란히, folded: the header covers neither the 2D nor the 3D view',
     !!b6 && !!a6 && b6.height > 0 && area(h6, b6) === 0 && area(h6, a6) === 0,
     `board pane ${Math.round(b6?.height ?? 0)} px high; over 3D ${pct(area(h6, b6), b6)}, over 2D ${pct(area(h6, a6), a6)}`)
-  await page.locator('button.sf-drawer-tab', { hasText: 'Code' }).first().click()
+
+  // B8: on that low 3D pane the hint is an ⓘ chip with the words in its title (frame review of 2026-11-03, S19: the
+  // one-line hint covered a third of the 3D board); the BOM drawer (80 px shorter than Code's at 720 px) and none keep the line
+  const hint3d = () => page.evaluate(() => {
+    const model = document.querySelector('[data-testid="kicad-3d"], [data-testid="board-3d"]'), pane = model?.parentElement
+    const chip = pane?.querySelector(':scope > [data-testid="hint-3d-chip"]')
+    const line = pane ? [...pane.children].some(e => e !== model && e !== chip && /드래그 회전|배치 애니메이션/.test(e.textContent || '')) : false
+    return { h: pane?.clientHeight ?? 0, chip: chip?.getAttribute('title') ?? null, line }
+  })
+  const c8 = await hint3d()
+  await page.locator('button.sf-drawer-tab', { hasText: 'BOM' }).first().click()
   await page.waitForTimeout(800)
+  const m8 = await hint3d()
+  await page.locator('button.sf-drawer-tab', { hasText: 'BOM' }).first().click()
+  await page.waitForTimeout(800)
+  const o8 = await hint3d()
+  check('B8 a low 3D pane (Code drawer) has the hint as an ⓘ chip; with the BOM drawer or none, the line',
+    c8.h > 0 && /드래그 회전|배치 애니메이션/.test(c8.chip ?? '') && !c8.line && m8.line && !m8.chip && o8.line && !o8.chip,
+    `3D pane ${c8.h} px with Code (${c8.chip ? 'chip' : 'no chip'}${c8.line ? ', line' : ''}), ${m8.h} px with BOM (${m8.line ? 'line' : 'no line'}${m8.chip ? ', chip' : ''}), ${o8.h} px with none (${o8.line ? 'line' : 'no line'}${o8.chip ? ', chip' : ''})`)
 
   await page.getByTestId('view-2d').click()
   await page.waitForTimeout(400)

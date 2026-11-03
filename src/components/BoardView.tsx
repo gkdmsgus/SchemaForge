@@ -87,6 +87,23 @@ const ASSEMBLY_W = 300
 /** width of the open checks list: a column beside the drawing too. Floating over it, it covered most of the 3D
  *  half of 나란히 and the right third of a zoomed 2D board (frame review of 2026-10-30) */
 const CHECKS_W = 300
+/** a 3D pane lower than this (px) shows its hint as an ⓘ chip, not a line: with the Code drawer open the line over
+ *  the pane's bottom covered a third of the 3D board (frame review of 2026-11-03, S19). Measured at 1280×720 on
+ *  ?demo=led: the PCB tab's pane is 82 px with the Code drawer (360 px high there) and 162 px with BOM or Netlist
+ *  (280 px); 배치하기's is 152 px with Code, its line under the board */
+const LOW_3D = 150
+
+/** a low 3D pane's hint: the words in the title of a chip in the corner (a title on the whole pane would pop up
+ *  wherever the mouse is, over the 3D viewer's own part label) */
+function HintChip({ text }: { text: string }) {
+  return (
+    <span data-testid="hint-3d-chip" title={text} aria-label={text} style={{ position: 'absolute', right: 8, bottom: 8,
+      width: 18, height: 18, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`, fontSize: 11, lineHeight: 1, cursor: 'help' }}>
+      ⓘ
+    </span>
+  )
+}
 
 interface Finding {
   id: string
@@ -493,6 +510,21 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     for (const el of [buttonsRef.current, aiHeadRef.current, head]) if (el) ro.observe(el)
     return () => ro.disconnect()
   }, [strip, docked, showAi, placed])
+  // the 3D pane's height, for its hint (LOW_3D). One ref: the PCB tab's pane and 배치하기's are never both drawn. A pane
+  // not measured yet (0), or no ResizeObserver, keeps the line
+  const pane3d = useRef<HTMLDivElement>(null)
+  const [low3d, setLow3d] = useState(false)
+  useLayoutEffect(() => {
+    const el = pane3d.current
+    if (!el || typeof ResizeObserver === 'undefined') { setLow3d(false); return }
+    const measure = () => setLow3d(el.clientHeight > 0 && el.clientHeight < LOW_3D)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [view3d, assembly, asm3d, placed, pcbFilename])
+  const hint3d = assembly ? '드래그 회전 · 오른쪽 드래그 이동 · 휠 확대 · 부품을 누르면 배치 체크'
+    : real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'
   // a part picked in 3D scrolls its review item into view
   useEffect(() => {
     if (!pickRef) return
@@ -843,15 +875,17 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
       {/* 배치하기 in 3D: KiCad's own model, a click on a part ticks it */}
       {asm3d && placed && pcbFilename && (
-        <div data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
+        <div ref={pane3d} data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
           <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={[...placedRefs]} focus={focusRefs ?? []}
             marks={marks3d} layout={layout3d} hoverLabel={hoverLabel} view={topView ? 'top' : 'iso'} resetKey={camReset} margin={1.08}
             onPick={togglePlaced} onLoad={(refs, ok) => { setModelled3d(refs); setMarksIn3d(ok) }} onError={() => setGlbFailed(true)} />
-          <div style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
-            padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
-            fontFamily: MONO, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none' }}>
-            드래그 회전 · 오른쪽 드래그 이동 · 휠 확대 · 부품을 누르면 배치 체크
-          </div>
+          {low3d ? <HintChip text={hint3d} /> : (
+            <div style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
+              padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
+              fontFamily: MONO, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none' }}>
+              {hint3d}
+            </div>
+          )}
         </div>
       )}
 
@@ -867,7 +901,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
       {/* 3D: the same poses and the same copper, tilted (stage 5) */}
       {view3d !== '2d' && !assembly && (
-        <div style={{ flex: 1, minWidth: 0, position: 'relative', cursor: real3d && placed ? 'grab' : (drag3d.current ? 'grabbing' : 'grab'),
+        <div ref={pane3d} style={{ flex: 1, minWidth: 0, position: 'relative', cursor: real3d && placed ? 'grab' : (drag3d.current ? 'grabbing' : 'grab'),
           borderLeft: view3d === 'both' ? `1px solid ${UI_LINE}` : 'none', touchAction: 'none' }}
           onPointerDown={real3d && placed ? undefined : on3dDown}
           onPointerMove={real3d && placed ? undefined : on3dMove}
@@ -879,13 +913,14 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
-          {/* one line always (cut with … on narrow panes) so the checks panel can stop just above it */}
-          <div title={real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
-            style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
-            padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
-            fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'}
-          </div>
+          {/* one line (cut with … on a narrow pane, the whole of it in the title), an ⓘ chip on a low pane (LOW_3D) */}
+          {low3d ? <HintChip text={hint3d} /> : (
+            <div title={hint3d} style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
+              padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
+              fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {hint3d}
+            </div>
+          )}
         </div>
       )}
       </div>
