@@ -166,8 +166,13 @@ async function main() {
       specs: brief.includes('a frequency only for a circuit that oscillates or switches') && brief.includes('efficiency is at most Vout/Vin')
         && !brief.includes('frequency, efficiency)'),
       refs: brief.includes('Use standard reference designators (R, C, L, D, Q, U, SW, K, LS, BT, J, Y) numbered from 1.')
-        && brief.includes('"value" is a real part number or E-series value.') }
-    check('L2b plan prompt: no part floor, specs that apply', Object.values(briefRules).every(Boolean), JSON.stringify(briefRules))
+        && brief.includes('"value" is a real part number or E-series value.'),
+      // and every part the circuit needs, checked before the answer: "only parts the design needs, up to 6" made the
+      // blinker's brief drop its LED resistor or a timing resistor (2026-11-03 take 4, S05: 4 parts; against the
+      // live model the tour's blinker kept its LED resistor and both timing resistors in 0 of 5 briefs, 19 of 20 after)
+      needed: brief.includes('every part the circuit cannot work without') && brief.includes('every LED has its series resistor listed')
+        && brief.includes('a revision keeps every part the circuit still needs') }
+    check('L2b plan prompt: no part floor, every part the circuit needs, specs that apply', Object.values(briefRules).every(Boolean), JSON.stringify(briefRules))
 
     n = seen.length
     const gen = await post(grok.base, '/generate', { description: 'LED 하나를 켜는 회로', autoFix: true })

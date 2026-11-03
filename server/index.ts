@@ -728,9 +728,11 @@ Content rules:
 - specs: 3-5 entries. Every value carries a unit. Include the numbers the user asked for
   and the next ones that apply to THIS circuit: a frequency only for a circuit that
   oscillates or switches; a linear regulator's efficiency is at most Vout/Vin.
-- parts: up to 6 entries — the parts that define the design, not every passive. List only
-  parts the design needs: a linear regulator with its input and output capacitors is three
-  parts. A fixed-output regulator (LM1117-3.3, 7805) takes no voltage-setting resistor; only
+- parts: up to 8 entries — every part the circuit cannot work without, and only those: a
+  555 astable has its two timing resistors and its timing capacitor, an LED its series
+  resistor, a transistor switch its base or gate resistor, a linear regulator its input and
+  output capacitors (three parts). Leave out the decoupling capacitors that only support
+  them. A fixed-output regulator (LM1117-3.3, 7805) takes no voltage-setting resistor; only
   an adjustable one (LM317, LM1117-ADJ) does. Never add a part to reach a count, and give
   each part only a role it really has. Use standard reference designators (R, C, L, D, Q, U,
   SW, K, LS, BT, J, Y) numbered from 1.
@@ -739,6 +741,10 @@ Content rules:
   power dissipation, thermal headroom, current limits, polarity, stability, tolerance
   stack-up. Not generic safety advice.
 - Any figure you state must follow from the parts you listed. Do not invent numbers.
+
+Before you answer, check the parts list: every LED has its series resistor listed; a 555
+astable lists two timing resistors and one timing capacitor; a revision keeps every part the
+circuit still needs and changes only what was asked.
 
 Output the JSON object only. No markdown, no prose.`
 
