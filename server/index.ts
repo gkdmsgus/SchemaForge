@@ -3,7 +3,7 @@ import express, { Request, Response, NextFunction } from 'express'
 import cors from 'cors'
 import { spawn } from 'child_process'
 import {
-  mkdirSync, existsSync,
+  mkdirSync, mkdtempSync, existsSync, rmSync,
   readdirSync, writeFileSync, readFileSync, unlinkSync,
 } from 'fs'
 import { join, basename } from 'path'
@@ -18,6 +18,7 @@ import {
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
+import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
@@ -109,6 +110,20 @@ if (existsSync(distPath)) {
 
 const OUTPUTS_DIR = join(process.cwd(), 'outputs')
 if (!existsSync(OUTPUTS_DIR)) mkdirSync(OUTPUTS_DIR)
+// a deployed server keeps a day of outputs/, at most 1 GB (outputs_sweep.ts); a dev server keeps everything, the
+// checks' fixtures included
+if (process.env.NODE_ENV === 'production') {
+  const keepHours = Number(process.env.SF_OUTPUTS_KEEP_HOURS) || 24
+  const maxBytes = (Number(process.env.SF_OUTPUTS_MAX_MB) || 1024) * 1024 * 1024
+  const sweep = () => {
+    try {
+      const s = sweepOutputs(OUTPUTS_DIR, keepHours, maxBytes)
+      if (s.removed.length) console.log(`[outputs] removed ${s.removed.length} old entries, ${Math.round(s.bytes / 1048576)} MB left`)
+    } catch (e) { console.warn('[outputs] sweep failed:', (e as Error).message) }
+  }
+  sweep()
+  setInterval(sweep, 15 * 60_000).unref()
+}
 
 // ── Auth Middleware ────────────────────────────────────────────────
 
@@ -1475,7 +1490,10 @@ app.get('/board_model', async (req: Request, res: Response) => {
   if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
   const pcbPath = join(OUTPUTS_DIR, file)
   if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
-  const out = join(tmpdir(), `sf_model_${randomUUID().slice(0, 8)}.glb`)
+  // a folder of its own: kicad-cli writes '$tempfile$.glb' and '$tempfile$.bin.tmp' beside the output, so exports at
+  // the same time in one folder overwrote each other (8 at once: 2 failed, 1 came back cut short, review of 2026-11-03)
+  const dir = mkdtempSync(join(tmpdir(), 'sf_model_'))
+  const out = join(dir, 'board.glb')
   try {
     await runKicadCli(['pcb', 'export', 'glb', '--output', out, '--force',
       '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen',
@@ -1486,7 +1504,7 @@ app.get('/board_model', async (req: Request, res: Response) => {
   } catch (e) {
     res.status(503).json({ error: (e as Error).message })
   } finally {
-    try { unlinkSync(out) } catch { /* already gone */ }
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* already gone */ }
   }
 })
 
