@@ -27,16 +27,22 @@ env_args=()
 if [ -f "$ENV_FILE" ]; then env_args=(--env-file "$ENV_FILE"); else echo "no $ENV_FILE: demos only"; fi
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" --restart unless-stopped -p "$PUBLISH" "${env_args[@]}" \
+# PORT after the env file: server/.env.example has PORT=8080 (the local vite proxy's), and copied into the env file it
+# made the server listen where nothing is published (review of 2026-11-03)
+docker run -d --name "$NAME" --restart unless-stopped -p "$PUBLISH" "${env_args[@]}" -e PORT=8002 \
   --memory "$MEMORY" --memory-swap "$MEMORY" --pids-limit 512 \
   --cap-drop ALL --security-opt no-new-privileges \
   --log-opt max-size=10m --log-opt max-file=3 \
   "$IMAGE" >/dev/null
 
+# up means KiCad answers too: /health says ok before its kicad-cli probe is back, and with "kicad":null when the probe
+# failed, when boards and gerbers cannot be made. Asked where PUBLISH puts it: ip:port:8002 or port:8002
+host_addr=$(echo "$PUBLISH" | awk -F: '{ print (NF == 3 ? $1 : "localhost") ":" (NF >= 2 ? $(NF-1) : $1) }')
 for _ in $(seq 1 60); do
-  if health=$(curl -fsS http://localhost:8002/health 2>/dev/null); then echo "up: $health"; exit 0; fi
+  health=$(curl -fsS "http://$host_addr/health" 2>/dev/null || true)
+  if echo "$health" | grep -q '"kicad":"10\.'; then echo "up: $health"; exit 0; fi
   sleep 2
 done
-echo "not healthy after 120 s"
+echo "not up with KiCad after 120 s: ${health:-no answer}"
 docker logs --tail 30 "$NAME"
 exit 1
