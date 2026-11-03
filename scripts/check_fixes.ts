@@ -224,8 +224,10 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const next = f2[0].ref === 'D1' && f2[1].ref === 'R1' && JSON.stringify(f2[2].nodes) === JSON.stringify([{ ref: '', pin: '1' }])
   const f3 = withRefs(g, [{ type: 'add_component', name: 'C', value: '1uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: '', pin: '1' }] }])
   const onePin = f3[0].ref === 'C3' && f3[1].nodes?.[0].ref === 'C3'
+  // and a connection with no name: the parts on it, not "+?" (2026-11-03 tour S23, take 2: "+C4 +? +?")
   const chip = actionLabel({ type: 'add_component', name: 'C', value: '100nF' }) === '+C' && actionLabel(f1[0]) === '+C3'
-  check('G7 a part added without a reference is named by the code (the net\'s C3, else the next number), chips never "+undefined"',
+    && actionLabel({ type: 'add_net', nodes: [{ ref: 'C4', pin: '1' }] }) === '+연결 C4' && actionLabel({ type: 'add_net', nodes: [] }) === '+연결'
+  check('G7 a part added without a reference is named by the code (the net\'s C3, else the next number), chips never "+undefined" or "+?"',
     named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
 }
 

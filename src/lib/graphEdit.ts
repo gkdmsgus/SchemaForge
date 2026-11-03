@@ -105,12 +105,16 @@ export function withRefs(graph: NetGraph, actions: ChatAction[]): ChatAction[] {
     ? { ...a, nodes: (a.nodes || []).map(nd => ((nd.ref || '').trim() ? nd : { ...nd, ref: given[0] })) } : a))
 }
 
-/** the chip under an AI editor reply: +C3, −LED1, ~R1, +VOUT (a saved reply may have a part with no ref: its type) */
+/**
+ * the chip under an AI editor reply: +C3, −LED1, ~R1, +VOUT (a saved reply may have a part with no ref: its type).
+ * A connection the model gave no name reads "+연결 C4", the parts on it: not "+?" (2026-11-03 tour S23, take 2:
+ * "+C4 +? +?", a question mark the reply never had), and not the NET_8 the code names it (beginners: no net names up front)
+ */
 export function actionLabel(a: ChatAction): string {
   if (a.type === 'add_component') return `+${a.ref || a.name || '?'}`
   if (a.type === 'remove_component') return `−${a.ref || '?'}`
   if (a.type === 'modify_component') return `~${a.ref || '?'}`
-  if (a.type === 'add_net') return `+${a.name || '?'}`
+  if (a.type === 'add_net') return a.name ? `+${a.name}` : `+연결 ${[...new Set((a.nodes || []).map(nd => (nd.ref || '').trim()).filter(Boolean))].join('·')}`.trim()
   if (a.type === 'remove_net') return `−${a.name || '?'}`
   return a.type
 }
