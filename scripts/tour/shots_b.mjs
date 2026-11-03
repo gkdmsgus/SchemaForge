@@ -1209,6 +1209,10 @@ export async function run(rec) {
     await rec.caption('↩ 되돌리기로 마지막 AI 수정을 취소합니다')
     await rec.press(T('view-tab-schematic'))
     await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+    // the restored circuit under this caption, as in S25: the pause ran while the old one still showed, and the undo
+    // landed with S24's caption (2026-11-03 take 4, 300-302 s)
+    await page.waitForFunction(n => document.querySelectorAll('g[data-comp]').length === n, parts, { timeout: 10000 }).catch(() => {})
+    await repaint()
     await rec.pause(1800)
     if (!added) throw new Error(`the AI edit did not add ${cNew} as one new part`)
   })
