@@ -110,7 +110,7 @@ export async function run(rec) {
   const checksBroken = async () => (await T('circuit-diagnostics').count()) > 0
     || ((await T('erc-notice').count()) > 0 && await T('erc-notice').getAttribute('role') === 'alert')
   // the AI editor's replies, newest last (an assistant bubble lines up on the left): the text only, not the action
-  // chips under it (an add_net with no name reads "+?", a question mark the reply never had; review of 2026-11-03)
+  // chips under it (an add_net with no name read "+?", a question mark the reply never had; review of 2026-11-03)
   const assistantSaid = () => T('left-panel').evaluate(p => [...p.querySelectorAll('div')]
     .filter(d => d.style.flexDirection === 'column' && d.style.alignItems === 'flex-start')
     .map(d => d.firstElementChild?.innerText || ''))

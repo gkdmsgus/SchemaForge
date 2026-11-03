@@ -223,7 +223,7 @@ const example = /^(\w+) = (Part\(tool=SKIDL, name='C', ref_prefix='C', )ref='(C\
 const capPins = /- Capacitor: Part\(tool=SKIDL, name='C', ref_prefix='C', pins=(\[[^\r\n]*\])\)/.exec(section1)?.[1]
 const refsOf = (lines: string[]) => {
   const code = ['from skidl import *', ...lines, "print(','.join(p.ref for p in default_circuit.parts))"].join('\n')
-  try { return execFileSync('python', ['-c', code], { cwd: work, env: childEnv() }).toString().trim().split('\n').pop() } catch (e) { return errText(e).split('\n')[0] }
+  try { return execFileSync('python', ['-c', code], { cwd: work, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim().split('\n').pop() } catch (e) { return errText(e).split('\n')[0] }
 }
 const given = example && capPins ? refsOf([`${example[1]} = ${example[2]}ref='${example[3]}', pins=${capPins})`, `c1 = ${example[2]}ref='C1', pins=${capPins})`]) : 'no example'
 const unnamed = example && capPins ? refsOf([`${example[2]}pins=${capPins})`, `c1 = ${example[2]}ref='C1', pins=${capPins})`]) : 'no example'

@@ -114,7 +114,7 @@ export function actionLabel(a: ChatAction): string {
   if (a.type === 'add_component') return `+${a.ref || a.name || '?'}`
   if (a.type === 'remove_component') return `−${a.ref || '?'}`
   if (a.type === 'modify_component') return `~${a.ref || '?'}`
-  if (a.type === 'add_net') return a.name ? `+${a.name}` : `+연결 ${[...new Set((a.nodes || []).map(nd => (nd.ref || '').trim()).filter(Boolean))].join('·')}`.trim()
+  if (a.type === 'add_net') return (a.name || '').trim() ? `+${(a.name || '').trim()}` : `+연결 ${[...new Set((a.nodes || []).map(nd => (nd.ref || '').trim()).filter(Boolean))].join('·')}`.trim()
   if (a.type === 'remove_net') return `−${a.name || '?'}`
   return a.type
 }

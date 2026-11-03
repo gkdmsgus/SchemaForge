@@ -227,6 +227,8 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   // and a connection with no name: the parts on it, not "+?" (2026-11-03 tour S23, take 2: "+C4 +? +?")
   const chip = actionLabel({ type: 'add_component', name: 'C', value: '100nF' }) === '+C' && actionLabel(f1[0]) === '+C3'
     && actionLabel({ type: 'add_net', nodes: [{ ref: 'C4', pin: '1' }] }) === '+연결 C4' && actionLabel({ type: 'add_net', nodes: [] }) === '+연결'
+    // a name of spaces is no name: applyActions makes it a NET_x of its own (review of 2026-11-03: it read "+  ")
+    && actionLabel({ type: 'add_net', name: '  ', nodes: [{ ref: 'C4', pin: '1' }] }) === '+연결 C4'
   check('G7 a part added without a reference is named by the code (the net\'s C3, else the next number), chips never "+undefined" or "+?"',
     named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
 }
