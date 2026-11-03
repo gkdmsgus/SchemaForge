@@ -378,6 +378,9 @@ export default function App() {
     loadSeq.current++
     lastPrompt.current = p
     setLoading(true)
+    // the steps start at the top: a plan approved further down the page left the steps' header "회로 만드는 중" out of
+    // view, the spec lines under the caption (2026-11-03 tour takes 1 and 3, S28)
+    window.scrollTo(0, 0)
     setError(null)
     setResult(null)
     setProgress({ msg: '준비 중...', step: 0 })
