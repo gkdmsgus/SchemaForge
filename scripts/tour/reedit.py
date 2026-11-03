@@ -10,10 +10,16 @@ back can leave one badge run; it is cut in the ratio of their logged lengths, ea
 
 RUNNER.mp4 is the runner's own edit, used to find where it cut the white start. Every wait in OUT.mp4 is measured
 again and printed next to the length it should have.
+
+A badge run that is not sped up (all its waits MIN_FAST or less) is painted out with the badge corner of a frame just
+before it: the badge said "fast" over waits played at 1x (S06a 0.85 s, S24 1.34 s), and waits that ended at once
+flashed it for one or two frames (S14, S15), 2026-11-03 takes 2 and 3.
 """
 import argparse
 import json
+import os
 import subprocess
+import tempfile
 
 import numpy as np
 
@@ -103,17 +109,20 @@ def speeds_from_calls(runs, calls):
 
 
 def segments(run, parts):
-    """a badge run cut into its waits, each (start, end, speed); a part of MIN_FAST or less stays at 1x"""
+    """a badge run cut into its waits, each (start, end, speed): all at their logged speeds when one of them is longer
+    than MIN_FAST, else all at 1x (that run's badge is painted out), so no badge shows over a part played at 1x"""
     s, e = run
     out, t = [], s
+    fast = any(share * (e - s) > MIN_FAST for share, _ in parts)
     for share, sp in parts:
         end = t + share * (e - s)
-        out.append((t, end, sp if end - t > MIN_FAST else 1))
+        out.append((t, end, sp if fast else 1))
         t = end
     return out
 
 
-def edit(raw, out, trim, fast):
+def edit(raw, out, trim, fast, hide=()):
+    """fast: (start, end, speed) spans of the raw video; hide: (png, start, end), the badge corner covered with png"""
     segs, t = [], trim
     for a, b, s in sorted(fast):
         if b <= t:
@@ -124,10 +133,25 @@ def edit(raw, out, trim, fast):
         segs.append((a2, b, s))
         t = b
     segs.append((t, None, 1))
-    parts = [f"[0:v]trim=start={a:.2f}{'' if b is None else f':end={b:.2f}'},setpts=(PTS-STARTPTS)/{s}[v{i}]" for i, (a, b, s) in enumerate(segs)]
-    filt = ';'.join(parts) + ';' + ''.join(f'[v{i}]' for i in range(len(segs))) + f'concat=n={len(segs)}:v=1:a=0[out]'
-    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', raw, '-filter_complex', filt, '-map', '[out]', '-r', str(FPS),
+    pre, src = [], '[0:v]'
+    for k, (_, a, b) in enumerate(hide):
+        pre.append(f"{src}[{k + 1}:v]overlay={X}:{Y}:enable='between(t,{a - 0.02:.3f},{b + 0.02:.3f})'[h{k}]")
+        src = f'[h{k}]'
+    if hide:
+        # an output label is used once: one copy of the covered video for each trim
+        pre.append(f"{src}split={len(segs)}" + ''.join(f'[s{i}]' for i in range(len(segs))))
+    ins = [f'[s{i}]' if hide else '[0:v]' for i in range(len(segs))]
+    parts = [f"{ins[i]}trim=start={a:.2f}{'' if b is None else f':end={b:.2f}'},setpts=(PTS-STARTPTS)/{s}[v{i}]" for i, (a, b, s) in enumerate(segs)]
+    filt = ';'.join(pre + parts) + ';' + ''.join(f'[v{i}]' for i in range(len(segs))) + f'concat=n={len(segs)}:v=1:a=0[out]'
+    inputs = ['-i', raw] + [x for png, _, _ in hide for x in ('-i', png)]
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', *inputs, '-filter_complex', filt, '-map', '[out]', '-r', str(FPS),
                     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out], check=True)
+
+
+def corner(raw, t, png):
+    """the badge corner of the raw video at t, as a png to cover a badge with"""
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-ss', f'{max(0.0, t):.3f}', '-i', raw, '-frames:v', '1',
+                    '-vf', f'crop={W}:{H}:{X}:{Y}', png], check=True)
 
 
 def main():
@@ -157,19 +181,37 @@ def main():
     trim = a.trim if a.trim is not None else find_trim(a.raw, a.runner_mp4, runs[0][0] if runs else 20)
     print(f'start cut at {trim:.2f} s')
     cuts = [segments(r, p or [(1.0, 1)]) for r, p in zip(runs, plans)]
-    edit(a.raw, a.out, trim, [seg for c in cuts for seg in c if seg[2] > 1])
+    # a run left at 1x gets its badge covered with the corner of a frame just before it (two frames: the badge is off
+    # for three frames at least between runs, badge_runs joins shorter gaps), or just after it when the run before ends
+    # that close; runs before the start cut are cut anyway
+    tmp = tempfile.mkdtemp(prefix='reedit_')
+    hide, kept = [], []
+    for k, ((s, e), c) in enumerate(zip(runs, cuts)):
+        if any(sp > 1 for _, _, sp in c):
+            kept.append(c)
+            continue
+        if e <= trim:
+            continue
+        t = s - 2 / FPS
+        if t < trim or (k and runs[k - 1][1] > t):
+            t = e + 2 / FPS
+        png = os.path.join(tmp, f'corner{k}.png')
+        corner(a.raw, t, png)
+        hide.append((png, s, e))
+    print(f'painted out: {len(hide)} runs at 1x ' + ' '.join(f'{s:.2f}-{e:.2f}' for _, s, e in hide))
+    edit(a.raw, a.out, trim, [seg for c in cuts for seg in c if seg[2] > 1], hide)
 
-    # each wait measured again in the result
+    # each sped-up wait measured again in the result; the painted-out ones must be gone
     again = badge_runs(a.out)
     bad = 0
-    print(f'{len(runs)} badge runs in the recording, {len(again)} in {a.out}')
-    for k, (c, (s2, e2)) in enumerate(zip(cuts, again)):
+    print(f'{len(kept)} sped-up badge runs in the recording, {len(again)} badge runs in {a.out}')
+    for k, (c, (s2, e2)) in enumerate(zip(kept, again)):
         want = sum((e - s) / sp for s, e, sp in c)
         ok = abs((e2 - s2) - want) < 0.25
         bad += not ok
         print(f'#{k:2d} should last {want:5.2f} s, lasts {e2 - s2:5.2f} s  {"ok" if ok else "CHECK"}')
-    if len(again) != len(runs) or bad:
-        raise SystemExit(f'{bad} waits off, {len(again)} of {len(runs)} badge runs found again')
+    if len(again) != len(kept) or bad:
+        raise SystemExit(f'{bad} waits off, {len(again)} badge runs found again for {len(kept)} sped up')
 
 
 if __name__ == '__main__':

@@ -60,6 +60,19 @@ export async function run(rec) {
       writeFileSync(join(rec.out, 'tour_fast_B.json'), JSON.stringify({ trimStart: rec.trimStart, calls: fastCalls }))
     }
   }
+  // the video takes a frame only when the page paints: right after a change a still screen kept its last picture
+  // unpainted (2026-11-03 take 2: S27's circuit unfitted until the S28 caption, S31's next row left lit; a test page
+  // kept the 9th of 10 mouse steps for 1.5 s, and an opacity tick on the pointer dot painted the end at once). The
+  // tick changes nothing visible and sends no mouse event
+  const repaint = async (ms = 250) => {
+    await rec.pause(ms)
+    await page.evaluate(() => {
+      for (const id of ['sf-rec-dot', 'sf-rec-caption']) {
+        const e = document.getElementById(id)
+        if (e) e.style.opacity = e.style.opacity === '0.99' ? '' : '0.99'
+      }
+    }).catch(() => {})
+  }
   const T = id => page.getByTestId(id)
   const btn = (name, exact = false) => page.getByRole('button', { name, exact })
   const drawerTab = name => page.locator('button.sf-drawer-tab', { hasText: name }).first()
@@ -176,7 +189,9 @@ export async function run(rec) {
   })
 
   await rec.shot('S06', '회로 생성 (OpenAI)', async () => {
-    await rec.caption('GPT-4o가 회로 코드를 쓰고, 서버가 연결을 점검(ERC)해 오류가 있으면 고칩니다')
+    // what always happens: the server's repair is not always kept ("받아들이지 않아 원래 회로를 그대로 둡니다",
+    // 2026-11-03 takes 1 and 3), and S06b says what is left
+    await rec.caption('GPT-4o가 회로 코드를 쓰고, 서버가 연결(ERC)을 점검합니다')
     await rec.press(btn('이 계획으로 회로 만들기'))
     await rec.pause(4000)
     await rec.fast(() => page.getByRole('button', { name: /PCB (다시 )?생성|회로 오류/ }).first().waitFor({ timeout: 300000 }), 8)
@@ -186,7 +201,8 @@ export async function run(rec) {
   // right after the circuit is made, before any AI edit: run after them, the code's own circuit came back and undid
   // S06b's fix and S24's resistor, and its error notice stayed to the end of the video (review of 2026-11-01)
   await rec.shot('S06a', 'Code 탭 고치고 실행', async () => {
-    await rec.caption('Code 탭에서 코드를 고쳐 실행하면, 서버가 다시 돌려 회로를 바꿉니다', 'top')
+    // what the open drawer shows, not the circuit above it, which it squeezed to a 25 px strip (2026-11-03 take 1)
+    await rec.caption('Code 탭에서 이 회로를 만든 코드를 고쳐 실행할 수 있습니다', 'top')
     await rec.press(T('view-tab-schematic'))
     // a run drops the generation's check notice (the run's own checks stay in the Code tab), so on a circuit with
     // errors left S06b found nothing to fix (preflight of 2026-11-01): there it shows the bad line and is cancelled
@@ -241,6 +257,16 @@ export async function run(rec) {
         await btn('취소', true).click({ timeout: 3000 }).catch(() => {})
       }
       await closeDrawer().catch(() => {})
+    }
+    // the change on screen, said only once the circuit has it: over the open drawer the circuit was a 25 px strip
+    // (2026-11-03 take 1)
+    const nowV = await page.evaluate(ref => {
+      const s = JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]
+      return ((s?.graph ?? s?.result?.graph)?.components ?? []).find(c => c.ref === ref)?.value ?? ''
+    }, rref)
+    if (nowV.replace(/\s|Ω/g, '').toLowerCase() === target.toLowerCase()) {
+      await rec.caption(`회로도와 BOM의 ${rref} 값이 ${target}로 바뀌었습니다`, 'top')
+      await rec.hover(page.locator(`g[data-comp='${rref}']`), 1500).catch(() => {})
     }
     await rec.hover(page.locator('[data-testid=right-panel]').getByText(rref, { exact: true }).first(), 2000).catch(() => {})
   })
@@ -342,6 +368,9 @@ export async function run(rec) {
       await page.waitForFunction(() => /점검하는 중/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 3000 }).catch(() => {})
       await rec.fast(() => page.waitForFunction(() => !/점검하는 중/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 120000 }).catch(() => {}), 4)
     }
+    // the re-check is what the pointer goes to next: the retry caption stayed over "AI 편집 뒤 연결 점검 통과" for 2 s
+    // (2026-11-03 take 3, 52 s)
+    if (!(await broken()) && /AI 편집 뒤 연결 점검 통과/.test(await noticeText())) await rec.caption('AI가 고친 회로를 서버가 다시 점검해 통과했습니다')
     if (await notice.count()) await rec.hover(notice, 2000)
     if (/돌리지 못했습니다/.test(await noticeText())) throw new Error('the check of the fixed circuit did not run')
     if (await broken()) throw new Error('the circuit still has errors after three fixes')
@@ -480,19 +509,57 @@ export async function run(rec) {
     await rec.pause(700)
     const checked = await checks()
     await rec.press(del)
-    await rec.pause(1600)
-    await rec.press(netUndo)
+    // the app's toast names the deleted net and has its own undo: the pointer goes there, so the caption moves off it
+    // (2026-11-03 take 3, 69.6 s: under the bottom caption for the whole 1.6 s)
+    const toastUndo = page.getByText(/^'.+' 삭제됨$/).locator('xpath=..').getByRole('button', { name: '↩ 되돌리기', exact: true })
+    if (await toastUndo.waitFor({ timeout: 1500 }).then(() => true, () => false)) { await rec.hover(toastUndo, 1000); await rec.press(toastUndo) }
+    else { await rec.pause(1600); await rec.press(netUndo) }
     await rec.pause(1000)
     if (await checks() !== checked) throw new Error('the undo changed the circuit checks: it was not the schematic undo')
-    await page.mouse.move(pt.x, pt.y, { steps: 10 })
-    await page.mouse.down()
-    // across the wire whichever way it runs: dragged along a vertical segment it did not bend (take 8, 2026-10-30)
-    await page.mouse.move(pt.x + 35, pt.y + 35, { steps: 14 })
-    await page.mouse.up()
-    await rec.pause(900)
-    const resetWires = btn('↺ 선 초기화')
-    if (await resetWires.isVisible().catch(() => false)) await rec.press(resetWires)
-    else console.log('  S08: the wire did not bend, no 선 초기화 to show')
+    // a bend whose new runs keep off every part and power symbol: a fixed (+35, +35) put the vertical run through D1
+    // and R3 (2026-11-03 take 3, 72.8 s). A dragged link is drawn A -> (mx, A.y) -> (mx, my) -> (B.x, my) -> B with mx
+    // its first corner's x and my B's y, both moved by the drag (CircuitCanvas routeWire), so the bent path is known
+    // before the drag. Power symbols are drawn inside g[data-net]: taken by their own group
+    const bendAt = q => page.evaluate(([px, py, x0, y0, x1, y1]) => {
+      const p = document.elementsFromPoint(px, py).find(e => e.matches("g[data-net] path[stroke='transparent']"))
+      const pts = [...(p?.getAttribute('d') || '').matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map(m => ({ x: +m[1], y: +m[2] }))
+      if (pts.length < 2) return null
+      const c = p.getScreenCTM(), scr = q => ({ x: q.x * c.a + q.y * c.c + c.e, y: q.x * c.b + q.y * c.d + c.f })
+      const a = pts[0], b = pts[pts.length - 1], mx0 = pts.length > 2 ? pts[1].x : (a.x + b.x) / 2
+      const A = scr(a), B = scr(b)
+      const walls = [...document.querySelectorAll('g[data-comp], g[data-power-symbol]')].map(g => g.getBoundingClientRect())
+      for (const [dx, dy] of [[-35, 35], [35, 35], [-35, -35], [35, -35], [-60, 30], [60, 30], [-60, -30], [60, -30], [0, 45], [0, -45], [45, 0], [-45, 0], [0, 25], [0, -25], [25, 0], [-25, 0]]) {
+        const mx = mx0 + dx / c.a, my = b.y + dy / c.d
+        const route = [a, { x: mx, y: a.y }, { x: mx, y: my }, { x: b.x, y: my }, b].map(scr)
+        let ok = true
+        for (let i = 0; ok && i < 4; i++) {
+          const u = route[i], w = route[i + 1], n = Math.max(1, Math.ceil(Math.hypot(w.x - u.x, w.y - u.y) / 4))
+          for (let k = 0; ok && k <= n; k++) {
+            const x = u.x + (w.x - u.x) * k / n, y = u.y + (w.y - u.y) * k / n
+            if (x < x0 + 10 || x > x1 - 10 || y < y0 + 10 || y > y1) ok = false
+            else if (Math.hypot(x - A.x, y - A.y) > 10 && Math.hypot(x - B.x, y - B.y) > 10
+              && walls.some(r => x > r.x + 2 && x < r.right - 2 && y > r.y + 2 && y < r.bottom - 2)) ok = false
+          }
+        }
+        if (ok) return [dx, dy]
+      }
+      return null
+    }, [q.x, q.y, sb.x, sb.y, sb.x + sb.width, lowY])
+    // the wire just deleted and restored first, then the other signal wires in view (a wire into the top or bottom pin
+    // of an upright part has no clear bend at all)
+    let bend = null, from = null
+    for (const q of [pt, ...(await wirePoints())].slice(0, 8)) if ((bend = await bendAt(q))) { from = q; break }
+    if (bend) {
+      await rec.caption('선을 끌면 경로를 바꿀 수 있고, ↺ 선 초기화로 되돌립니다')
+      await page.mouse.move(from.x, from.y, { steps: 10 })
+      await page.mouse.down()
+      await page.mouse.move(from.x + bend[0], from.y + bend[1], { steps: 14 })
+      await page.mouse.up()
+      await rec.pause(900)
+      const resetWires = btn('↺ 선 초기화')
+      if (await resetWires.isVisible().catch(() => false)) await rec.press(resetWires)
+      else console.log('  S08: the wire did not bend, no 선 초기화 to show')
+    } else console.log('  S08: no bend keeps clear of the parts, the bend is left out')
 
     // pins in view and the net each one is wired to: pins carry no ref or net in the page, so a pin belongs
     // to the net with a wire ending on it (power pins, drawn as symbols, have none). Only the wires' ends: a wire
@@ -525,7 +592,8 @@ export async function run(rec) {
     }, [sb.x, sb.y, sb.x + sb.width, lowY])
     const hint = page.getByText('연결할 핀을 클릭하세요')
 
-    await rec.caption('핀을 누르고 다른 부품의 핀을 누르면 그 사이에 새 선이 이어집니다')
+    // one line: two lines covered the app's hint '연결할 핀을 클릭하세요 · ESC로 취소' (2026-11-03 takes 1 and 2)
+    await rec.caption('핀을 차례로 누르면 두 핀 사이에 새 선이 이어집니다')
     const before = await pinMap()
     let pair = null
     for (const a of before.pins) for (const b of before.pins) {
@@ -647,25 +715,44 @@ export async function run(rec) {
     await rec.press(T('view-tab-pcb'))
     const note = page.getByText('간이 보기예요').first()
     await note.waitFor({ timeout: 10000 })
-    await rec.caption('PCB를 만들기 전에는 간이 그림이 보이고, 부품 방식(SMD/THT)을 고를 수 있습니다', 'top')
-    await rec.hover(note, 1600)
+    // the note sits at the bottom left and the SMD/THT buttons at the top: no one caption place clears both, and the top
+    // caption went down over the note as the pointer went up to the buttons (2026-11-03 takes 1 and 2). One caption each
+    await rec.caption('PCB를 만들기 전에는 간이 그림이 보입니다', 'top')
+    // the pointer stopped about 120 px above the note in takes 1 and 2 (cause not found): to it without a scroll (the
+    // note is on screen), again after a moment in case it moved, and its box logged before and after
+    console.log(`  S10: note at ${JSON.stringify(await note.boundingBox())}`)
+    await rec.glide(note)
+    await rec.pause(600)
+    await rec.glide(note, 6)
+    await rec.pause(1400)
+    console.log(`  S10: note after ${JSON.stringify(await note.boundingBox())}`)
+    await rec.caption('부품 방식(SMD/THT)을 여기서 고를 수 있습니다')
     await rec.hover(btn('SMD', true), 900)
     await rec.hover(btn('THT', true), 900)
     await rec.hover(btn('AI 다듬기 OFF'), 1100)
   })
 
   await rec.shot('S11', 'PCB 생성', async () => {
-    await rec.caption('PCB 생성: 연결된 부품끼리 모이도록 배치하고, 두 층에 선을 긋습니다')
+    // at the top, put up before the press and again after it (a press moves a caption off the button it covers): at the
+    // bottom it covered the row it talks about ('부품 모으는 중 · 반복 · 선 길이 추정') and the 3D note (2026-11-03 take 2)
+    const say = 'PCB 생성: 부품을 모아 배치하고, 두 층에 선을 긋습니다'
+    await rec.caption(say, 'top')
     await rec.press(pcbButton())
-    await rec.pause(4000)
-    await rec.fast(() => pcbDone().waitFor({ timeout: 300000 }), 3)
-    await rec.recaption()
-    // the numbers once the placement and routing replay has settled: shown during it, the row counted up and had no
-    // DRC count yet (review of 2026-11-01)
-    await T('board-drc').first().waitFor({ timeout: 180000 })
-    // the side-by-side 3D half said "불러오는 중" for 9 s at 1x under the next caption (review of 2026-11-02)
-    if (await page.locator("[data-testid='kicad-3d']").count())
-      await rec.fast(() => page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 120000 }).catch(() => {}), 4)
+    await rec.caption(say, 'top')
+    // the first seconds at 1x, the pointer on that row
+    const status = T('board-status')
+    if (await status.waitFor({ timeout: 5000 }).then(() => true, () => false)) await rec.hover(status, 4000)
+    else await rec.pause(4000)
+    // the board, the routing replay, the DRC count that waits for the replay (review of 2026-11-01) and the side-by-side
+    // 3D in one wait under one badge: the DRC wait at 1x left "불러오는 중" for 2.5~4.8 s with no badge (2026-11-03 takes
+    // 1~3), and three waits back to back leave one badge run, which reedit.py splits in two at most (speeds_from_calls)
+    await rec.fast(async () => {
+      await pcbDone().waitFor({ timeout: 300000 })
+      await rec.recaption()
+      await T('board-drc').first().waitFor({ timeout: 180000 })
+      if (await page.locator("[data-testid='kicad-3d']").count())
+        await page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 120000 }).catch(() => {})
+    }, 3)
     await rec.caption('아래 줄에 배선 수·비아·트랙 길이·기판 크기·DRC 오류가 숫자로 나옵니다')
     await rec.hover(T('board-status'), 3500)
   })
@@ -728,7 +815,7 @@ export async function run(rec) {
   })
 
   await rec.shot('S14', 'KiCad 3D 한 바퀴', async () => {
-    await rec.caption('KiCad가 만든 실제 3D 모델을 천천히 한 바퀴 돌려 봅니다')
+    await rec.caption('')
     await rec.press(T('toggle-left-panel'))
     await rec.press(T('toggle-right-panel'))
     // the check list covers the right of the 3D view: fold it for the turn
@@ -739,14 +826,25 @@ export async function run(rec) {
     await rec.fast(() => page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 200000 }), 6)
     if (await v.getAttribute('data-state') !== 'ready') throw new Error('3D model did not load')
     await rec.pause(800)
+    // the caption once the model is on screen: put up first, it stood about 2.8 s over the 2D board while the panels
+    // folded (2026-11-03 take 2)
+    await rec.caption('KiCad가 만든 실제 3D 모델을 천천히 한 바퀴 돌려 봅니다')
     const canvas = v.locator('canvas')
     const b = await canvas.boundingBox()
-    // closer first, so the board fills the view while it turns
-    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 })
+    // closer first, so the board fills the view while it turns. The wheel and the tilt from the canvas's top-left
+    // corner, off the parts: from its middle the part there lit up with its name during the zoom and after the tilt,
+    // before the caption that explains the hover (2026-11-03 take 3). OrbitControls zooms to the view's centre wherever
+    // the pointer is (zoomToCursor is off) and turns by the drag's length wherever it starts
+    const cx = b.x + 24, cy = b.y + 64
+    await page.mouse.move(cx, cy, { steps: 8 })
     // OrbitControls: each 240 wheel step brings the camera to 0.95^2.4 ≈ 0.88 of its distance, five ≈ 0.54
     for (let i = 0; i < 5; i++) { await page.mouse.wheel(0, -240); await rec.pause(300) }
     await rec.pause(500)
-    await turn3D(rec, canvas, { turns: 1, seconds: 11, tilt: -30 })
+    await page.mouse.down()
+    await page.mouse.move(cx, cy - 30, { steps: 14 })
+    await page.mouse.up()
+    await rec.pause(700)
+    await turn3D(rec, canvas, { turns: 1, seconds: 11 })
     await rec.caption('부품에 마우스를 올리면 이름과 값이 나옵니다')
     // fixed spots mostly hit bare board (review of 2026-10-30): walk out from the middle and stay on the parts that
     // answer with their name, two of them
@@ -835,16 +933,26 @@ export async function run(rec) {
     await rec.press(T('view-tab-pcb'))
     await rec.press(btn(/^거버$/))
     await rec.fast(() => T('gerber-zip').waitFor({ timeout: 120000 }), 4)
-    await rec.caption('이 zip 하나를 JLCPCB 같은 PCB 업체 주문 화면에 그대로 올리면 됩니다')
+    // the board goes to a maker only with the operating verdict said (2026-11-03 takes 1 and 3: the red chip stood
+    // beside this caption). Counted first: innerText on a missing chip waits 30 s
+    const opChip = T('op-chip').first()
+    const opFail = (await opChip.count()) > 0 && /동작 안 됨/.test(await opChip.innerText().catch(() => ''))
+    await rec.caption(opFail ? '동작 검사가 실패한 회로는 주문 전에 먼저 고쳐야 합니다'
+      : '이 zip 하나를 JLCPCB 같은 PCB 업체 주문 화면에 그대로 올리면 됩니다')
+    if (opFail) await rec.hover(opChip, 1800)
     let dl = page.waitForEvent('download', { timeout: 30000 })
     await rec.press(T('gerber-zip'))
     await dl
     await rec.pause(1200)
-    // each caption goes up before the view it talks about (it ran ~2.5 s behind the drawer: review of 2026-10-30)
-    await rec.caption('zip 안에는 7개 층(동박·솔더마스크·실크·외곽선)과 도금·비도금 드릴이 들어 있습니다', 'top')
     await rec.press(drawerTab('Netlist'))
-    await rec.pause(800)
     const panel = T('gerber-zip-panel')
+    await panel.waitFor({ timeout: 10000 })
+    // the netlist text above the list is fetched when the tab opens: loaded after the scroll it pushed the list out of
+    // the drawer (the 800 ms pause this replaces covered the fetch)
+    await page.locator('pre', { hasText: /^불러오는 중…$/ }).first().waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {})
+    // the caption once the list is open: put up before the press, it stood 3 s over the PCB view while the pointer went
+    // to the tab (2026-11-03 take 1; put up after the glide it ran 2.5 s late, review of 2026-10-30)
+    await rec.caption('zip 안에는 7개 층(동박·솔더마스크·실크·외곽선)과 도금·비도금 드릴이 들어 있습니다', 'top')
     await panel.scrollIntoViewIfNeeded()
     await rec.glide(panel)
     await rec.pause(2500)
@@ -872,17 +980,34 @@ export async function run(rec) {
     await dl
     await rec.press(btn('표 복사'))
     await rec.pause(900)
-    await rec.press(btn('Mouser 가격 조회'))
-    await rec.fast(() => page.getByText(/Mouser(에서| 키)/).first().waitFor({ timeout: 60000 }), 4)
-    await rec.pause(1800)
+    // the search link the caption names: without a Mouser key on the server the price button only says so, and take 2
+    // of 2026-11-03 pressed it to that note. The server is asked first with one line of value '-', which it answers
+    // without calling Mouser (server/index.ts /mouser_search); with a key the price lookup is shown
+    const link = T('bom-table').locator("a[aria-label*='Mouser에서']").first()
+    if (await link.count()) await rec.hover(link, 1500)
+    const keyed = await page.evaluate(() => fetch('/mouser_search', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ components: [{ ref: 'R1', value: '-' }] }) })
+      .then(r => r.json()).then(d => d?.available === true, () => false)).catch(() => false)
+    if (keyed) {
+      await rec.caption('Mouser 가격 조회를 누르면 줄마다 Mouser 부품 번호·단가·재고를 찾아 채웁니다')
+      await rec.press(btn('Mouser 가격 조회'))
+      await rec.fast(() => page.getByText(/Mouser(에서 \d| 조회에 실패| 키가)/).first().waitFor({ timeout: 60000 }), 4)
+      await rec.pause(1800)
+    }
   })
 
   await rec.shot('S19', 'Guide·Code 탭', async () => {
     // straight to Code (Guide was shown in S09): through Guide, this caption stood 5 s over the BOM and the guide text
     // (review of 2026-11-01)
-    await rec.caption('Code 탭에는 이 회로를 만든 skidl 파이썬 코드가 있습니다')
     await rec.press(drawerTab('Code'))
-    await rec.pause(1500)
+    await rec.pause(400)
+    // the caption says what the tab's own note says: "the code that made this circuit" stood over "AI 편집으로 바꾼
+    // 회로는 이 코드에 없습니다" (2026-11-03 take 3)
+    const aiNote = page.locator('.sf-code-note', { hasText: 'AI 편집으로 바꾼 회로는' }).first()
+    const edited = await aiNote.isVisible().catch(() => false)
+    await rec.caption(edited ? 'Code 탭에는 AI 편집 전의 회로를 만든 skidl 파이썬 코드가 있습니다. AI로 바꾼 곳은 이 코드에 없습니다'
+      : 'Code 탭에는 이 회로를 만든 skidl 파이썬 코드가 있습니다', 'top')
+    if (edited) await rec.hover(aiNote, 1800); else await rec.pause(1100)
     await rec.press(btn('복사', true))
     await rec.pause(700)
     const dl = page.waitForEvent('download', { timeout: 30000 })
@@ -899,6 +1024,16 @@ export async function run(rec) {
     await rec.press(T('pcb-stale').getByRole('button', { name: 'PCB 다시 생성' }))
     await T('pcb-loading').waitFor({ timeout: 15000 }).catch(() => {})
     await rec.fast(() => T('pcb-loading').waitFor({ state: 'hidden', timeout: 300000 }), 3)
+    // the 3D half beside the board loads once the board is placed: waited for here, under its own badge, before the
+    // pointer goes to the pinout banner (2.4 to 5 s of "불러오는 중" at 1x after it, 2026-11-03 takes 1 and 2; 7 s at the
+    // end before that, frame review of 2026-10-30). Until it is placed that half shows the shapes view (board-3d); the
+    // real-3D toggle shows once it is placed, and only then is it known whether the real model (kicad-3d) comes at all
+    if (await pcbDone().count() && await page.locator("[data-testid='kicad-3d'], [data-testid='board-3d']").count())
+      await rec.fast(async () => {
+        await T('board-real3d-toggle').waitFor({ timeout: 60000 })
+        if (await page.locator("[data-testid='kicad-3d']").count())
+          await page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 180000 })
+      }, 4).catch(() => {})
     await rec.recaption()
     if (await T('pcb-pinout-banner').count()) {
       await rec.hover(T('pcb-pinout-banner'), 3000)
@@ -908,9 +1043,6 @@ export async function run(rec) {
       await rec.caption('이 회로에는 다리 순서를 따로 확인할 부품이 없어, THT 기판이 바로 만들어집니다')
       await rec.hover(T('board-status'), 2000)
     }
-    // the side-by-side 3D half stayed on "불러오는 중" for the last 7 s (frame review of 2026-10-30)
-    if (await page.locator("[data-testid='kicad-3d']").count())
-      await rec.fast(() => page.waitForSelector("[data-testid='kicad-3d']:is([data-state='ready'],[data-state='error'])", { timeout: 120000 }), 4)
     await rec.pause(800)
   })
 
@@ -944,6 +1076,15 @@ export async function run(rec) {
     const used = await page.locator("g[data-comp^='C']").evaluateAll(es => es.map(e => +(e.getAttribute('data-comp') || '').slice(1)).filter(n => n > 0))
     const cNew = `C${Math.max(0, ...used) + 1}`
     const parts = await page.locator('g[data-comp]').count()
+    // the errors and warnings there before the edit, so they are not said to be the AI's: the diagnostics box shows
+    // for warnings alone, and the notice can already be red with an error S06b left
+    const counts = async () => {
+      const d = T('circuit-diagnostics'), n = T('erc-notice')
+      const cir = (await d.count()) ? Number(/오류 (\d+)/.exec(await d.innerText({ timeout: 2000 }).catch(() => ''))?.[1] ?? 0) : 0
+      const erc = (await n.count()) && (await n.getAttribute('role')) === 'alert' ? Number(/오류 (\d+)개/.exec(await n.innerText({ timeout: 2000 }).catch(() => ''))?.[1] ?? 1) : 0
+      return { cir, erc }
+    }
+    const was = await counts()
     await rec.press(chat)
     await chat.pressSequentially(`VCC와 GND 사이에 100nF 커패시터 ${cNew}를 하나 추가해줘`, { delay: 55 })
     await page.keyboard.press('Enter')
@@ -957,11 +1098,11 @@ export async function run(rec) {
     const added = await page.locator('g[data-comp]').count() === parts + 1 && await page.locator(`g[data-comp='${cNew}']`).count() === 1
     // the AI can still wire the new part wrong (2026-11-03 take 2: C4 on two new nets of its own, "VCC와 GND 사이에
     // 추가되었습니다" in the reply, and two broken connections under a caption that said nothing of them)
-    if (await checksBroken()) {
+    const now = await counts()
+    if (now.cir > was.cir || now.erc > was.erc) {
       console.log(`  S23: ${cNew} came with connection errors`)
       await rec.caption('AI가 연결을 잘못 만들면 연결 점검이 바로 알려 주고, 되돌리기로 취소할 수 있습니다', 'top')
-      const diag = T('circuit-diagnostics')
-      await rec.hover((await diag.count()) ? diag : T('erc-notice'), 3000)
+      await rec.hover(now.cir > was.cir ? T('circuit-diagnostics') : T('erc-notice'), 3000)
     }
     await rec.caption('회로가 바뀌면 예전 기판은 쓰지 않도록 PCB 탭에서 알려 줍니다')
     await rec.press(T('view-tab-pcb'))
@@ -1068,7 +1209,10 @@ export async function run(rec) {
     await chat.pressSequentially(led ? `LED ${led} 빼줘` : 'LED 빼줘', { delay: 80 })
     await page.keyboard.press('Enter')
     const diag = T('circuit-diagnostics')
-    const shown = await rec.fast(async () => { await replied(); return diag.waitFor({ timeout: 10000 }).then(() => true, () => false) }, 4)
+    // the removed part flashes for 550 ms before it goes (ResultPanel.tsx), right as the reply ends: inside the 4x wait it
+    // showed for 3 frames (2026-11-03 takes 1 and 3), so only the reply is sped up
+    await rec.fast(replied, 4)
+    const shown = await diag.waitFor({ timeout: 10000 }).then(() => true, () => false)
     if (shown) {
       await rec.hover(diag, 3000)
       const errBtn = page.getByRole('button', { name: /회로 오류/ }).first()
@@ -1090,19 +1234,27 @@ export async function run(rec) {
 
   await rec.shot('S26', '재생성과 버전 (OpenAI)', async () => {
     await rec.caption('↺로 같은 설명을 다시 만들면 버전이 생기고, v1·v2를 오가며 비교할 수 있습니다')
+    // seen before ↺: the result view mounts again after it and the sync-error chip goes with it
+    const saved = !(await T('sync-error').count())
     await rec.press(page.locator("button[title='재생성 (저장된 결과 대신 새로 생성)']"))
     await rec.pause(2500)
     await rec.fast(() => btn('v2', true).waitFor({ timeout: 300000 }), 8)
     await rec.recaption()
     await rec.press(btn('v1', true))
-    await rec.pause(1500)
-    await rec.hover(btn('Apply', true), 1000)
+    // a version shows as it was generated: v1 without this tour's AI edits and code run, with the notice it had then.
+    // Applying v1 at the end made that circuit the saved result S27 opens (2026-11-03 takes 1-3); the changed circuit
+    // stays in the history record, which S30 opens
+    await rec.caption(saved ? '버전은 만들어진 그대로 보입니다. AI 편집과 코드 실행으로 바꾼 회로는 히스토리 기록에 남아 있습니다'
+      : '버전은 만들어진 그대로 보입니다. 그 뒤에 고친 내용은 이 버전에 없습니다')
+    const notice = T('erc-notice')
+    if (await notice.count() && (await notice.getAttribute('role')) === 'alert' && await rec.onScreen(notice)) await rec.hover(notice, 2200)
+    else await rec.pause(2200)
+    await rec.caption('Apply를 누르면 이 버전을 저장된 결과로 쓰고, 뒤의 버전은 목록에서 뺍니다')
+    await rec.hover(btn('Apply', true), 1800)
+    // ends on v2 without Apply, so S27 opens v2 (the newest generation is the saved result of its description)
     await rec.press(btn('v2', true))
-    await rec.pause(1500)
-    await rec.press(btn('v1', true))
-    await rec.pause(800)
-    await rec.press(btn('Apply', true))
-    await rec.pause(1500)
+    await repaint()
+    await rec.pause(1300)
   })
 
   await rec.shot('S27', '저장된 결과 불러오기', async () => {
@@ -1118,7 +1270,8 @@ export async function run(rec) {
     await rec.pause(1800)
     await rec.press(btn('불러오기', true))
     await opened().waitFor({ timeout: 30000 })
-    await rec.pause(1200)
+    await repaint()
+    await rec.pause(1000)
   })
 
   await rec.shot('S28', '회로 종류로 만들기 (OpenAI)', async () => {
@@ -1138,12 +1291,35 @@ export async function run(rec) {
     await rec.press(btn('이 계획으로 회로 만들기'))
     await rec.pause(2500)
     await rec.fast(() => opened().waitFor({ timeout: 300000 }), 8)
-    await rec.recaption()
-    await rec.pause(2500)
+    // caption() again, not recaption(): this puts it back at the bottom, where recaption kept the top clear() had set
+    await rec.caption('회로 종류와 사양 칩으로 시작하면 질문 없이 바로 계획으로 넘어갑니다')
+    await rec.pause(1500)
+    // the circuit is the model's and differs each take: the scene ends on that circuit's operating verdict, the caption
+    // at the bottom, off the chip (2026-11-03 take 3: R1 10 Ω from the 3.3 V output to GND, the chip under the raised
+    // caption; take 1: R1 0.1 Ω in the same place)
+    const chip = T('op-chip'), toggle = T('op-toggle')
+    if (await chip.count() && await rec.onScreen(chip)) {
+      const verdict = await chip.innerText()
+      if (/동작 안 됨/.test(verdict)) {
+        await rec.caption('AI가 만든 회로도 동작 검사를 거칩니다. 빨간 줄은 제작 전에 고쳐야 할 문제입니다')
+        await rec.hover(chip, 1200)
+        if (await toggle.getAttribute('aria-expanded') !== 'true') await rec.press(toggle)
+        const row = T('operating-panel').locator("[data-op-state='error']").first()
+        if (await row.waitFor({ timeout: 5000 }).then(() => true, () => false)) { await row.scrollIntoViewIfNeeded(); await rec.hover(row, 3000) }
+        if (await toggle.getAttribute('aria-expanded') === 'true') await rec.press(toggle)
+      } else {
+        await rec.caption(/판단 불가/.test(verdict) ? '동작 검사가 판단하지 못한 부분은 제작 전에 직접 확인해야 합니다' : '만든 회로는 동작 검사를 거치고, 결과가 이 칩에 나옵니다')
+        await rec.hover(chip, 2000)
+      }
+    } else await rec.pause(1000)
   })
 
   await rec.shot('S29', '히스토리', async () => {
     await rec.caption('만든 회로는 날짜별 기록에 남고, 이름을 바꾸거나 다시 열 수 있습니다', 'top')
+    // from the home screen: opened from the result screen, the newest record is the circuit already on it, so nothing
+    // changed (2026-11-03 take 1) and opened() matched the old circuit at once
+    await rec.press(page.getByText(/^v0\.4 · /).first())
+    await page.locator('.sf-home-input textarea').waitFor({ timeout: 10000 })
     await rec.press(page.locator("button[aria-label='메뉴']"))
     await rec.press(btn('히스토리', true))
     const pen = btn('이름 바꾸기', true).first()
@@ -1159,19 +1335,23 @@ export async function run(rec) {
     await page.getByText('내 데모 회로').first().waitFor({ timeout: 5000 })
     await rec.pause(1200)
     await rec.press(page.getByText('내 데모 회로').first())
-    await opened().waitFor({ timeout: 30000 })
-    await rec.pause(1200)
+    await rec.fast(() => opened().waitFor({ timeout: 30000 }), 4)
+    await repaint()
+    await rec.pause(1000)
   })
 
   await rec.shot('S30', '즐겨찾기', async () => {
-    await rec.caption('북마크한 회로는 즐겨찾기 탭에서 바로 열립니다', 'top')
+    await rec.caption('북마크한 회로는 즐겨찾기 탭에서 다시 열 수 있습니다', 'top')
     // a closed drawer keeps its tabs in the page, slid out to the left, so isVisible() says yes
     if (!(await onScreen(btn('⭐ 즐겨찾기', true)))) await rec.press(page.locator("button[aria-label='메뉴']"))
     await rec.press(btn('⭐ 즐겨찾기', true))
     await rec.pause(1200)
     const fav = page.locator('div[style*="cursor: pointer"]', { hasText: /깜빡이|회로/ }).first()
     await rec.press(fav)
-    await opened().waitFor({ timeout: 30000 })
+    // the old circuit stays while the record and its bookmark come from the server (2026-11-03 take 1: 2 s of the old
+    // circuit), and opened() matched that old circuit at once. The circuit S29 opened has no bookmark, so the unbookmark
+    // button shows only on the favourite
+    await rec.fast(() => page.locator("button[title='즐겨찾기 해제']").waitFor({ timeout: 30000 }), 4)
     await rec.hover(page.locator("button[title='즐겨찾기 해제']"), 1800)
     await rec.caption('북마크를 다시 누르면 즐겨찾기에서 빠집니다')
     await rec.press(page.locator("button[title='즐겨찾기 해제']"))
@@ -1183,7 +1363,7 @@ export async function run(rec) {
     await rec.caption('필요 없는 기록은 ✕로 지웁니다 (서버에 저장된 기록에서도 지워집니다)', 'top')
     if (!(await onScreen(btn('히스토리', true)))) await rec.press(page.locator("button[aria-label='메뉴']"))
     await rec.press(btn('히스토리', true))
-    // the newest '내 데모 회로' is this take's LED circuit, renamed in B14 (not the favourite opened in B15)
+    // the newest '내 데모 회로' is the record S29 renamed (S28's circuit), not the favourite S30 opened
     const rows = page.locator('div[style*="cursor: pointer"]', { hasText: '내 데모 회로' })
     await rows.first().waitFor({ timeout: 15000 })
     const n = await rows.count()
@@ -1191,9 +1371,11 @@ export async function run(rec) {
     await rec.pause(700)
     await rec.press(rows.first().getByRole('button', { name: '✕', exact: true }))
     for (let i = 0; i < 40 && await rows.count() !== n - 1; i++) await rec.pause(250)
-    // the next row slid up under the pointer and looked picked for deletion too (review of 2026-10-30)
+    // the next row slid up under the pointer and looked picked for deletion too (review of 2026-10-30), and the video
+    // then kept the end of its hover fade, not painted again until the next move (2026-11-03 take 2)
     await page.mouse.move(700, 360, { steps: 10 })
-    await rec.pause(1500)
+    await repaint()
+    await rec.pause(1250)
     if (await T('drawer-notice').count()) throw new Error('the server did not delete the record: ' + await T('drawer-notice').innerText())
     if (await rows.count() !== n - 1) throw new Error(`the record list did not lose one item (${n} → ${await rows.count()})`)
     // the side drawer's own × (closeDrawer() is for the bottom tab drawer of the result screen)
