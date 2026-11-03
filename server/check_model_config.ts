@@ -1,4 +1,5 @@
-// Checks L1-L7: the model provider settings (model.ts), and a failed model call told in words (L6b, L7). A mock OpenAI-compatible API runs on a local port and
+// Checks L1-L7: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
+// prompt's part and spec rules as sent (L2b). A mock OpenAI-compatible API runs on a local port and
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
 // reasoning effort: circuit code (/generate, which called api.openai.com by name before), questions, plan, AI
@@ -155,6 +156,18 @@ async function main() {
     check('L2 questions and plan: SF_MODEL_MINI at the base URL, JSON mode, the key, reasoning effort',
       clarify.status === 200 && plan.status === 200 && at(n).length === 2 && asked(at(n), 'grok-mini-test', s => s.json),
       JSON.stringify(at(n).map(s => [s.path, s.model, s.effort, s.json])))
+
+    // L2b. the plan's system prompt, as the model got it, asks for no part count and no spec the circuit lacks
+    //      (2026-11-03 takes 1 and 3, S28: "4-6 entries" and "frequency, efficiency" for every circuit gave an
+    //      LM1117-3.3 an R1 "출력 전압 조정" and specs of 50 kHz and 80 %); its designator and value rules stay whole
+    const brief = (at(n).find(s => s.system.includes('one-page design brief'))?.system ?? '').replace(/\s+/g, ' ')
+    const briefRules = { noFloor: !/\d+-\d+ entries — the parts/.test(brief) && brief.includes('Never add a part to reach a count'),
+      fixedReg: /fixed-output regulator \([^)]*\) takes no voltage-setting resistor/.test(brief),
+      specs: brief.includes('a frequency only for a circuit that oscillates or switches') && brief.includes('efficiency is at most Vout/Vin')
+        && !brief.includes('frequency, efficiency)'),
+      refs: brief.includes('Use standard reference designators (R, C, L, D, Q, U, SW, K, LS, BT, J, Y) numbered from 1.')
+        && brief.includes('"value" is a real part number or E-series value.') }
+    check('L2b plan prompt: no part floor, specs that apply', Object.values(briefRules).every(Boolean), JSON.stringify(briefRules))
 
     n = seen.length
     const gen = await post(grok.base, '/generate', { description: 'LED 하나를 켜는 회로', autoFix: true })

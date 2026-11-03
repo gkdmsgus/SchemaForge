@@ -726,9 +726,14 @@ Output JSON ONLY, in exactly this shape:
 
 Content rules:
 - specs: 3-5 entries. Every value carries a unit. Include the numbers the user asked for
-  and the ones they will ask about next (input, output, current, frequency, efficiency).
-- parts: 4-6 entries — the parts that define the design, not every passive. Use standard
-  reference designators (R, C, L, D, Q, U, SW, K, LS, BT, J, Y) numbered from 1.
+  and the next ones that apply to THIS circuit: a frequency only for a circuit that
+  oscillates or switches; a linear regulator's efficiency is at most Vout/Vin.
+- parts: up to 6 entries — the parts that define the design, not every passive. List only
+  parts the design needs: a linear regulator with its input and output capacitors is three
+  parts. A fixed-output regulator (LM1117-3.3, 7805) takes no voltage-setting resistor; only
+  an adjustable one (LM317, LM1117-ADJ) does. Never add a part to reach a count, and give
+  each part only a role it really has. Use standard reference designators (R, C, L, D, Q, U,
+  SW, K, LS, BT, J, Y) numbered from 1.
   "value" is a real part number or E-series value.
 - risks: 2-4 entries. Real failure modes of THIS circuit with the number attached —
   power dissipation, thermal headroom, current limits, polarity, stability, tolerance
