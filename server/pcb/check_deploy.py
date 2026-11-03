@@ -4,17 +4,20 @@ Stage-6 checks: the deploy image really can make and check boards.
 Builds the Dockerfile, runs the container, and drives it over HTTP the way the
 app does. Needs a running Docker engine.
 
-Usage: python check_deploy.py [--port 8097] [--keep] [--no-build]
+Usage: python check_deploy.py [--port 8097] [--keep] [--no-build] [--dockerfile Dockerfile.jetson]
 Exit code 0 only if every check passes.
 
   31 health reports KiCad 10 inside the container
   32 no secrets baked into the image (.env absent)
-  33 board stream finishes with KiCad DRC available, 0 errors, 0 unrouted
+  33 board stream finishes with KiCad DRC available, 0 errors, 0 unrouted, and no footprint-library findings
+     (kicad-cli without its library table warned on every footprint: 15 on the 555 demo, 2026-11-03)
   34 /generate_gerber gives the seven fabrication layers, plated and non-plated drill files and their zip
   35 image runs as the Dockerfile says (tsx from node_modules, python from venv)
   36 the 3D model has the part bodies (vendored models; the KiCad image has none)
   37 deployed-server guard: the demo is open, generation and the password-free sign-in are refused
   38 the demo netlists are built into the image (demo_cache/), so a demo opens without running skidl
+  39 what skidl code starts is killed with it and reaped (tini as PID 1, no zombies)
+  40 eight 3D model exports at once, twice, all succeed with the same size (each in a folder of its own)
 """
 import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
 
@@ -90,13 +93,14 @@ def main():
     ap.add_argument('--port', type=int, default=8097)
     ap.add_argument('--keep', action='store_true', help='leave the container running')
     ap.add_argument('--no-build', action='store_true')
+    ap.add_argument('--dockerfile', default='Dockerfile', help='Dockerfile.jetson for the Jetson image (on an arm64 host)')
     args = ap.parse_args()
     results = []
     check = lambda name, ok, info='': results.append((name, bool(ok), info))
 
     if not args.no_build:
         t = time.time()
-        sh('docker', 'build', '-t', IMAGE, ROOT, capture=False)
+        sh('docker', 'build', '-f', os.path.join(ROOT, args.dockerfile), '-t', IMAGE, ROOT, capture=False)
         print(f'build {time.time() - t:.0f} s')
     size = sh('docker', 'image', 'inspect', IMAGE, '--format', '{{.Size}}').stdout.strip()
 
@@ -125,11 +129,15 @@ def main():
         done = [d for k, d in events if k == 'done']
         drc = (done[-1].get('drc') if done else None) or {}
         summary = (done[-1].get('summary') if done else None) or {}
+        # warnings too, for the footprint libraries: errors 0 passed while every footprint was "not in the current
+        # configuration" (no fp-lib-table in the image), on the deployed site as well (2026-11-03)
+        lib = [v.get('type') for v in drc.get('violations') or [] if str(v.get('type', '')).startswith('lib_footprint')]
         check('33 board + DRC in container',
               done and drc.get('available') and drc.get('errors') == 0 and drc.get('unconnected') == 0
-              and not summary.get('unrouted'),
+              and not summary.get('unrouted') and not lib,
               f'{time.time() - t:.1f} s, drc={{available:{drc.get("available")}, errors:{drc.get("errors")}, '
-              f'unconnected:{drc.get("unconnected")}}}, unrouted={len(summary.get("unrouted") or [])}')
+              f'warnings:{drc.get("warnings")}, unconnected:{drc.get("unconnected")}}}, footprint library findings={len(lib)}, '
+              f'unrouted={len(summary.get("unrouted") or [])}')
 
         g = http_json(f'{base}/generate_gerber', {'pcbFilename': done[-1]['pcbFilename']} if done else {})
         files = g.get('files') or []
@@ -165,6 +173,34 @@ def main():
         took = time.time() - t
         check('38 demo netlists in the image', cached == '14' and bool(motor.get('filename')) and took < 3,
               f'{cached} files in demo_cache (7 circuits x .net/.json), /demo_result/motor {took:.2f} s')
+
+        # what skidl code starts goes with it, and nothing it leaves becomes a zombie (tini as PID 1); the children of a
+        # timed-out run held the process slots of a --pids-limit container for good (review of 2026-11-03)
+        tree = sh('docker', 'exec', NAME, './node_modules/.bin/tsx', 'check_skidl_tree.ts', check=False)
+        init = sh('docker', 'exec', NAME, 'sh', '-c', 'cat /proc/1/comm', check=False).stdout.strip()
+        check('39 skidl children killed and reaped', tree.returncode == 0 and init == 'tini',
+              f'pid 1 {init}; {(tree.stdout or tree.stderr).strip()[-160:]}')
+
+        # eight 3D exports at once, twice: kicad-cli writes fixed temp names beside its output, and in one shared folder
+        # concurrent exports failed or came back cut short (8 at once: 2 failed, 1 cut short, review of 2026-11-03)
+        if done:
+            from concurrent.futures import ThreadPoolExecutor
+            url = f'{base}/board_model?pcb={done[-1]["pcbFilename"]}'
+
+            def get(_):
+                try:
+                    with urllib.request.urlopen(url, timeout=300) as r:
+                        return r.status, len(r.read())
+                except urllib.error.HTTPError as e:
+                    return e.code, 0
+            got = []
+            for _ in range(2):
+                with ThreadPoolExecutor(8) as pool:
+                    got += list(pool.map(get, range(8)))
+            check('40 concurrent 3D exports', all(s == 200 for s, _ in got) and len({n for _, n in got}) == 1,
+                  f'{got}')
+        else:
+            check('40 concurrent 3D exports', False, 'no board')
     finally:
         if not args.keep:
             sh('docker', 'rm', '-f', NAME, check=False)

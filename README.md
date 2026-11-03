@@ -205,9 +205,14 @@ cd server && npx tsx check_demo_cache.ts
 데모 넷리스트 미리 만들기 6항목. 배포 이미지는 빌드할 때 데모 회로를 한 번 실행해 `server/demo_cache/`에 넷리스트를 넣어 두고, 데모를 열면 skidl을 다시 돌리지 않고 그 복사본을 쓴다 (무료 인스턴스에서 7~9초 걸리던 단계). 모든 데모가 만들어지는지, 저장된 넷리스트가 지금 skidl 결과와 같은지(실행마다 바뀌는 날짜·태그 제외), 방문마다 따로 복사되는지, 회로 파일이 바뀌면 다시 실행하는지 확인한다.
 
 ```bash
+cd server && npx tsx check_outputs_sweep.ts
+```
+배포 서버의 outputs 정리 3항목. 배포 서버(NODE_ENV=production)는 시작할 때와 15분마다 `server/outputs/`에서 하루 지난 항목을 지우고, 1 GB를 넘으면 오래된 것부터 지운다(`SF_OUTPUTS_KEEP_HOURS`, `SF_OUTPUTS_MAX_MB`). 젯슨은 재시작해도 이 폴더가 SD 카드에 남고, 로그인 없이 파일을 쓰는 경로도 있어서다. 하루 지난 파일과 거버 폴더가 지워지는지, 상한을 넘으면 오래된 것부터 지워지는지, 개발 서버는 지우지 않는지 확인한다.
+
+```bash
 python server/pcb/check_deploy.py
 ```
-배포 이미지 8항목 (Docker 필요, `npm test`에는 넣지 않음). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지를 확인한다.
+배포 이미지 10항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), skidl 코드가 띄운 자식 프로세스가 함께 정리되고 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
 
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
