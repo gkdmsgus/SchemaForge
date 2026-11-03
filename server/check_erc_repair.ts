@@ -1,7 +1,8 @@
-// Checks E1-E20: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E21: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
 // behind (E12-E13, E18), the /generate and /test_code wiring read as text (E15-E16), the pin names
-// erc.py shares with the front end (E19), and where findings point on the board (E20).
+// erc.py shares with the front end (E19), where findings point on the board (E20), and the prompt's
+// ref= rule run in skidl (E21).
 // No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
@@ -126,7 +127,8 @@ const val = await attempt(async () => r1Changed)
 check('E9 value change rejected', r1Changed !== blink && kept0(val) && val.note.includes('R1') && val.after === 0,
   `note=${val.note}`)
 
-// E10. the feedback names the pin and carries the Korean message; warnings are never fed back
+// E10. the feedback names the pin and carries the Korean message; warnings are never fed back. It keeps ref= too:
+//      a repair that drops it is renumbered by creation order and judgeRepair rejects the parts as changed
 const fb = ercFeedback(fix1)
 const synthetic: ErcFinding[] = [
   { rule: 'unpowered_rail', severity: 'warning', message: 'w', refs: [{ ref: 'U1', pin: '8' }], net: 'VCC' },
@@ -134,13 +136,18 @@ const synthetic: ErcFinding[] = [
   { rule: 'no_ground', severity: 'error', message: 'GND 넷이 없습니다', refs: [], net: null },
 ]
 check('E10 feedback and rules', fb.includes('U1 pin 4 (RESET)') && fb.includes('U1의 RESET 핀(4번)이 어느 넷에도 연결되지 않았습니다')
-  && fixableErrors(synthetic).map(f => f.rule).join() === 'no_ground', fb.split('\n')[1])
+  && fb.includes('the same ref=, ref prefix') && fixableErrors(synthetic).map(f => f.rule).join() === 'no_ground', fb.split('\n')[1])
 
-// E11. SYSTEM_PROMPT SECTION 1 (read as text, like run_checks check_templates) carries the wiring and LED rules
+// E11. SYSTEM_PROMPT SECTION 1 (read as text, like run_checks check_templates) carries the wiring and LED rules,
+//      CTRL on a net of its own (2026-11-03 takes 1 and 3: the blinker made CTRL's 10nF and still wired
+//      u1['CTRL'] += gnd) and every ref set with ref= (take 2: the Guide's C2 was the code's c2, which skidl had
+//      numbered C3 by creation order)
 const src = readFileSync('index.ts', 'utf8')
 const section1 = src.slice(src.indexOf('const SYSTEM_PROMPT'), src.indexOf('═══ SECTION 2'))
 const rules = { reset: section1.includes("u1['RESET'] += vcc") && /RESET → VCC/.test(section1),
                 ctrl: /CTRL → a 10nF capacitor to GND/.test(section1),
+                ctrlNet: section1.includes("u1['CTRL'] += ctrl"),
+                refs: /Give every Part its reference with ref=/.test(section1) && /never create a Part inline/.test(section1),
                 decoupling: /VCC → VCC, with a 100nF capacitor/.test(section1),
                 astable: /TRIG and pin 6 THRES on one net/.test(section1),
                 led: ['RED', 'GREEN', 'YELLOW', 'BLUE', 'WHITE'].every(c => section1.includes(`'${c}'`)) && /Use 'RED' when/.test(section1) }
@@ -209,6 +216,19 @@ const anode = typo.ok ? typo.findings.flatMap(f => f.refs).find(r => r.ref === '
 check('E20 refs on the pad, keys by symbol pin', !!anode && anode.pin === '2' && anode.sym === '1' && anode.name === 'A'
   && typo.ok && errorKeys(typo.findings).includes('single_pin_net D1.1'),
   `D1 ref=${JSON.stringify(anode)} keys=[${typo.ok ? errorKeys(typo.findings).join(', ') : typo.reason}]`)
+
+// E21. the prompt's ref= example holds in skidl: made before any C1, it keeps its ref; an unnamed part made first
+//      takes C1 and pushes an explicit ref='C1' to C1_1 (why the prompt forbids a Part inside a += line)
+const example = /^(\w+) = (Part\(tool=SKIDL, name='C', ref_prefix='C', )ref='(C\d+)', pins=\[\.\.\.\]\)/m.exec(section1)
+const capPins = /- Capacitor: Part\(tool=SKIDL, name='C', ref_prefix='C', pins=(\[[^\r\n]*\])\)/.exec(section1)?.[1]
+const refsOf = (lines: string[]) => {
+  const code = ['from skidl import *', ...lines, "print(','.join(p.ref for p in default_circuit.parts))"].join('\n')
+  try { return execFileSync('python', ['-c', code], { cwd: work, env: childEnv() }).toString().trim().split('\n').pop() } catch (e) { return errText(e).split('\n')[0] }
+}
+const given = example && capPins ? refsOf([`${example[1]} = ${example[2]}ref='${example[3]}', pins=${capPins})`, `c1 = ${example[2]}ref='C1', pins=${capPins})`]) : 'no example'
+const unnamed = example && capPins ? refsOf([`${example[2]}pins=${capPins})`, `c1 = ${example[2]}ref='C1', pins=${capPins})`]) : 'no example'
+check('E21 ref= in skidl', !!example && given === `${example[3]},C1` && unnamed === 'C1,C1_1',
+  `example ${example?.[3]} then C1 -> ${given}; unnamed then C1 -> ${unnamed}`)
 
 // E12. secrets never reach the child: API keys, Supabase settings, *SECRET*, *TOKEN*; everything else does
 const planted = { OPENAI_API_KEY: 'sk-check', SUPABASE_URL: 'https://check.invalid', MOUSER_API_KEY: 'm',

@@ -449,12 +449,18 @@ wrong PCB footprint downstream:
   BT battery / cell    J  connector, header, USB, power jack, screw terminal
   Y  crystal / oscillator
 
+Give every Part its reference with ref= and name its variable after it:
+c3 = Part(tool=SKIDL, name='C', ref_prefix='C', ref='C3', pins=[...]). Number each prefix from 1,
+each ref once, and never create a Part inline inside a += line (an unnamed part takes a number of
+its own). The guide below uses exactly these refs.
+
 Nets:
 - Name every net. Net names are shown to the user and written into the netlist, so
   make them meaningful: GND, VCC, +5V, +3V3, VIN, VOUT, TRIG, LED_A.
 - Exactly one ground net, named 'GND'.
 - Every pin of every part must land on a net. A floating pin is a defect — tie unused
-  IC inputs explicitly to VCC or GND rather than leaving them unconnected.
+  IC inputs explicitly to VCC or GND rather than leaving them unconnected. A 555's CTRL
+  is not an unused input: it gets its own capacitor (below).
 - Every pin in a Part's pins=[...] list needs its own += line. Before generate_netlist(),
   walk each IC pin by pin; a pin with no += line is floating.
 - The power source is a real part (BT for a battery, J for a jack/USB inlet), never a
@@ -476,13 +482,15 @@ IC wiring — the pins most often left floating:
 - NE555: pin 1 GND → GND. Pin 8 VCC → VCC, with a 100nF capacitor from VCC to GND.
   Pin 4 RESET → VCC (u1['RESET'] += vcc) unless the user asked for a reset input; never
   leave it open, never tie it to GND or OUT.
-  Pin 5 CTRL → a 10nF capacitor to GND; never tie CTRL straight to VCC or GND.
+  Pin 5 CTRL → a 10nF capacitor to GND, on a net of its own: ctrl = Net('CTRL');
+  u1['CTRL'] += ctrl; that capacitor's p1 += ctrl and its p2 += gnd. Never tie CTRL
+  straight to VCC or GND (never u1['CTRL'] += gnd).
   Astable (blinker, oscillator, tone): pin 2 TRIG and pin 6 THRES on one net, the timing
   capacitor from that net to GND, RA from VCC to pin 7 DISCH, RB from DISCH to
   TRIG/THRES. f = 1.44 / ((RA + 2·RB) · C).
   Pin 3 OUT drives the load through its own series resistor.
 
-Part templates — copy verbatim, changing only name, value and the pin list:
+Part templates — copy verbatim, changing only name, ref, value and the pin list:
 - Resistor: Part(tool=SKIDL, name='R', ref_prefix='R', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Capacitor: Part(tool=SKIDL, name='C', ref_prefix='C', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Electrolytic capacitor (polarized, use for 1uF and above): Part(tool=SKIDL, name='CP', ref_prefix='C', pins=[Pin(num=1,name='+',func=Pin.types.PASSIVE), Pin(num=2,name='-',func=Pin.types.PASSIVE)])
@@ -517,8 +525,8 @@ One or two sentences: which topology this is and what it does.
 
 ## 배선 순서
 Numbered steps in the order someone would actually build it — power rails first, then
-the core stage, then the output stage. Every step names the real refs and pin
-names/numbers from the code above (e.g. "U1의 8번(VCC)").
+the core stage, then the output stage. Every step names the refs set with ref= in the
+code above and pin names/numbers (e.g. "U1의 8번(VCC)").
 
 ## 계산 근거
 The formulas that set the key values, with the numbers substituted in and the result in

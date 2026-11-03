@@ -159,7 +159,7 @@ export function ercFeedback(errors: ErcFinding[]): string {
   })
   return 'The code above runs, but the netlist check (ERC) found these errors:\n' + lines.join('\n') + '\n' +
     'Fix exactly these connections, following the wiring rules in SECTION 1. Keep every existing Part() ' +
-    'with the same ref prefix, name, value and pins=[...] list, in the same order; do not delete parts or ' +
+    'with the same ref=, ref prefix, name, value and pins=[...] list, in the same order; do not delete parts or ' +
     'pins to make an error go away. If a fix needs a new part, add it after the existing ones. ' +
     'Output corrected code + ---GUIDE--- + Korean guide.'
 }
