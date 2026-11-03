@@ -910,7 +910,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           </button>
           {aiOpen && <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             {ai.map((r, i) => {
-              const d = r.after ? r.after.hpwl - r.before.hpwl : 0
+              // the difference of the printed values: a raw one of a few hundredths reads "136.8 → 136.8 mm (-0.0)"
+              const one = (v: number) => Number(v.toFixed(1))
+              const d = r.after ? one(r.after.hpwl) - one(r.before.hpwl) : 0
               return (
                 <div key={`${r.round}-${r.part ?? i}`} data-ai-kept={r.kept ? '1' : '0'}
                   style={{ padding: '6px 10px', borderTop: `1px solid ${UI_LINE}`, color: UI_FG }}>
@@ -924,7 +926,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
                   {r.after && (
                     <div style={{ color: UI_DIM }}>
                       선 길이 {r.before.hpwl.toFixed(1)} → {r.after.hpwl.toFixed(1)} mm ({d > 0 ? '+' : ''}{d.toFixed(1)}) ·
-                      비아 {r.before.vias}→{r.after.vias} · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
+                      비아 {r.before.vias}→{r.after.vias} · 트랙 {r.before.trackLength.toFixed(1)}→{r.after.trackLength.toFixed(1)} mm · 미배선 {r.after.unrouted} · DRC 오류 {r.after.drcErrors}
                       {r.before.decap != null && r.after.decap != null && r.before.decap > 0 &&
                         <> · 디커플링 {r.before.decap.toFixed(1)}→{r.after.decap.toFixed(1)} mm</>}
                       {r.before.powerWidth != null && r.after.powerWidth != null && (r.before.powerWidth > 0 || r.after.powerWidth > 0) &&

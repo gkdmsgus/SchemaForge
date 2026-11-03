@@ -130,6 +130,22 @@ function withStorage<T>(init: Record<string, string>, run: () => T): T {
   check('A8 skipped AI loop is shown open', html.includes('AI 다듬기 건너뜀') && html.includes('aria-expanded="true"') && html.includes('key missing'))
 }
 
+// A8b. a round's line is worked out from the values it prints, and it carries the track length: HPWL 136.84 -> 136.81 mm
+//      reads (0.0), not (-0.0) (2026-11-03 tour S21: rounds kept on hundredths of track length showed nothing that got
+//      better). A model failing in round 2 ends the list with a round 0, which opens it like a skipped loop.
+{
+  const m = { drcErrors: 0, unrouted: 0, hpwl: 136.84, vias: 0, trackLength: 151.26, overlaps: 0, outside: 0, decap: 5.0, powerWidth: 0 }
+  const rounds: AiRound[] = [
+    { round: 1, part: 'place', reason: 'C3을 U1 가까이 옮깁니다', actions: { moves: [{ ref: 'C3', dx: -1, dy: 0 }] }, before: m,
+      after: { ...m, hpwl: 136.81, trackLength: 149.9 }, kept: true },
+    { round: 0, reason: 'AI 다듬기를 건너뜁니다: timeout', actions: {}, before: m, kept: false },
+  ]
+  const text = renderToStaticMarkup(createElement(BoardView, { parts, frames, routes: [], target: null, final, drc: null, ai: rounds, status: 'done' }))
+    .replace(/<[^>]+>/g, '')
+  const line = /선 길이[^·]*·[^·]*·[^·]*/.exec(text)?.[0] ?? ''
+  check('A8b AI round line from the printed values', line.includes('136.8 → 136.8 mm (0.0)') && text.includes('트랙 151.3→149.9 mm'), line)
+}
+
 // A9. a part with a polarity/pinout review has its own button that shows it without ticking the part
 {
   const html = render('assembly')
