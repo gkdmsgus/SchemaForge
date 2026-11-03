@@ -16,6 +16,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
+import { boardNetlist, netlistNote } from '../src/lib/drawerNotes.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -466,6 +467,29 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const [q, u] = ercFixes(f, g)
   check('F9 AI-editor instructions with pins, nets and where such pins go', !!q?.chat && /Q1의 S 핀\(3번\), D 핀\(2번\)/.test(q.chat) && /GND나 감지 저항/.test(q.chat) && /부하/.test(q.chat)
     && u?.chat === 'U1의 RESET 핀(4번)을 VCC 넷에 연결해줘. 다른 연결은 그대로 둬.', `${q?.chat} | ${u?.chat}`)
+}
+
+// D1. after an AI edit, the board built from it gives its own .net in the Netlist tab and the top bar's .net button:
+// the generated .net went with the edited .kicad_pcb, two files of two circuits downloaded together (2026-11-03 tour
+// takes 1 and 3, S17). No edit, no finished board, or a board of another circuit: the generated one, notes as before.
+// The name is the server's: the edited circuit's .net and its board share one stem (/generate_pcb_stream)
+{
+  const pcb = 'blinky_1a2b3c4d.kicad_pcb'
+  const own = boardNetlist(true, 'done', null, pcb), style = boardNetlist(true, 'done', 'style', pcb)
+  const generated = [boardNetlist(false, 'done', null, pcb), boardNetlist(true, 'loading', null, pcb), boardNetlist(true, 'done', 'circuit', pcb),
+    boardNetlist(true, 'done', null, null)]
+  const notes = /\.kicad_pcb와 같은 회로입니다/.test(netlistNote(true, own) ?? '') && /이 넷리스트 파일에 없습니다/.test(netlistNote(true, null) ?? '')
+    && netlistNote(false, null) === null
+  const src = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8')
+  const wired = /const boardNet = boardNetlist\(aiEdited, pcbStatus, pcbStale, pcbFilename\)/.test(src) && /const netFile = boardNet \?\? result\?\.filename/.test(src)
+    && /download\/\$\{netFile\}`/.test(src) && !/download\/\$\{result\.filename\}/.test(src)
+    && /\(boardNet \? null : result\.netlist\) \|\| \(netText && netText\.file === netFile/.test(src)
+    && /netText\.file === netFile && \(boardNet \|\| !result\.netlist\)/.test(src)
+  const server = fs.readFileSync(path.join('server', 'index.ts'), 'utf8')
+  const sameStem = /if \(graph\) \{\s*const netFilename = `\$\{fileStem\(baseName\)\}_[^`]*\.net`[\s\S]{0,200}?pcbFilename = netFilename\.replace\('\.net', '\.kicad_pcb'\)/.test(server)
+  check('D1 after an AI edit the board\'s own .net is shown and downloaded; otherwise the generated one',
+    own === 'blinky_1a2b3c4d.net' && style === own && generated.every(x => x === null) && notes && wired && sameStem,
+    JSON.stringify({ own, style, generated, notes, wired, sameStem }))
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)

@@ -32,6 +32,7 @@ import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
+import { boardNetlist, netlistNote } from '../lib/drawerNotes'
 
 const API = ''
 
@@ -169,8 +170,11 @@ export default function ResultPanel({
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
     : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
 
-  // Netlist tab: the .net file itself, fetched when the tab opens and again after a rerun
-  const netFile = result?.filename
+  // Netlist tab: the .net file itself, fetched when the tab opens and again after a rerun. After an AI edit, the board
+  // built from it has its own (the one the .kicad_pcb was made from), and that is the file shown and given
+  const boardNet = boardNetlist(aiEdited, pcbStatus, pcbStale, pcbFilename)
+  const netFile = boardNet ?? result?.filename
+  const netNote = netlistNote(aiEdited, boardNet)
   useEffect(() => {
     if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
     let off = false
@@ -694,7 +698,7 @@ export default function ResultPanel({
         <button onClick={() => onRegenerate(lastPrompt)} title="재생성 (저장된 결과 대신 새로 생성)" style={{...iconBtn, fontSize:16}}>↺</button>
         <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding:'5px 10px'}}>PDF</button>
         <button
-          onClick={() => window.location.href = `${API}/download/${result.filename}`}
+          onClick={() => window.location.href = `${API}/download/${netFile}`}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
@@ -1161,13 +1165,13 @@ export default function ResultPanel({
             {activeTab === 'Netlist' && (
               <>
                 <KicadGuide />
-                {aiEdited && <div style={drawerNote}>AI 편집 내용은 이 넷리스트 파일에 없습니다. PCB를 생성하면 편집한 회로로 넷리스트를 새로 만듭니다.</div>}
+                {netNote && <div style={drawerNote}>{netNote}</div>}
                 <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-muted)', overflowX:'auto' }}>
-                  {result.netlist || (netText && netText.file === result.filename
+                  {(boardNet ? null : result.netlist) || (netText && netText.file === netFile
                     ? netText.text ?? (netText.failed ? '넷리스트를 불러오지 못했습니다.' : '넷리스트 파일을 서버에서 찾지 못했습니다.')
-                    : result.filename ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.')}
+                    : netFile ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.')}
                 </pre>
-                {netText?.failed && netText.file === result.filename && !result.netlist && (
+                {netText?.failed && netText.file === netFile && (boardNet || !result.netlist) && (
                   <button onClick={() => setNetText(null)} style={{ ...ghostBtn, margin: '0 20px 14px' }}>다시 불러오기</button>
                 )}
               </>
