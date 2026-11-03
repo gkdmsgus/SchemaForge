@@ -33,7 +33,15 @@ export function runSkidl(code: string, outDir: string, timeout = 90000): Promise
     const codePath = join(tmpDir, 'circuit.py')
     writeFileSync(codePath, code, 'utf8')
 
-    const proc = spawn('python', [codePath], { cwd: tmpDir, env: childEnv() })
+    // its own process group on POSIX, so what the code starts can be killed with it: python alone was, and the children
+    // it left held the container's process slots (--pids-limit) for good (review of 2026-11-03)
+    const posix = process.platform !== 'win32'
+    const proc = spawn('python', [codePath], { cwd: tmpDir, env: childEnv(), detached: posix })
+    const killTree = () => {
+      if (proc.pid === undefined) return
+      if (posix) { try { process.kill(-proc.pid, 'SIGKILL') } catch { /* nothing left */ } }
+      else spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => { /* best effort */ })
+    }
     let stderr = ''
     let settled = false
     const settle = (fn: () => void) => {
@@ -45,9 +53,11 @@ export function runSkidl(code: string, outDir: string, timeout = 90000): Promise
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
 
     // A killed process still fires 'close'; the folder is removed there, once Python has let go of it.
-    const timer = setTimeout(() => { proc.kill(); settle(() => reject(new Error('skidl execution timed out'))) }, timeout)
+    const timer = setTimeout(() => { killTree(); settle(() => reject(new Error('skidl execution timed out'))) }, timeout)
     proc.on('error', (e: Error) => { settle(() => reject(e)); cleanup() })
     proc.on('close', (exit: number | null) => {
+      // whatever the code started and left running goes too (POSIX: the group outlives python; Windows has no group)
+      if (posix) killTree()
       settle(() => {
         if (exit !== 0) return reject(new Error(stderr))
         try {

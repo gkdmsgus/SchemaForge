@@ -28,7 +28,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends software-properties-common gpg-agent ca-certificates \
  && add-apt-repository -y ppa:kicad/kicad-10.0-releases \
  && apt-get update \
- && apt-get install -y --no-install-recommends kicad kicad-symbols kicad-footprints python3-venv python3-pip \
+ && apt-get install -y --no-install-recommends kicad kicad-symbols kicad-footprints python3-venv python3-pip tini \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=api /usr/local/bin/node /usr/local/bin/node
@@ -67,4 +67,7 @@ ENV NODE_ENV=production \
     HOME=/tmp
 EXPOSE 8002
 
+# tini as the first process: node does not reap the children the skidl code leaves, and their zombies piled up under
+# the container's process limit (ten from one run that did not wait for its children, 2026-11-03)
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./node_modules/.bin/tsx", "index.ts"]
