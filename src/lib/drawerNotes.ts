@@ -14,6 +14,16 @@ export function boardNetlist(aiEdited: boolean, pcbStatus: string | null, pcbSta
     ? pcbFilename.replace(/\.kicad_pcb$/, '.net') : null
 }
 
+/**
+ * The Guide tab's one line over the guide, which the model wrote for the circuit as generated. An AI edit said nothing
+ * there while the Code and Netlist tabs said it was not in them, so the wiring order could guide a circuit other than
+ * the one on screen (2026-11-03 tour, S09 after the S06b and S06c edits)
+ */
+export function guideNote(codeEdited: boolean, aiEdited: boolean): string | null {
+  return aiEdited ? '이 안내는 처음 생성한 회로 기준입니다. AI 편집으로 바꾼 곳은 안내에 없습니다.'
+    : codeEdited ? '이 안내는 처음 생성한 회로 기준입니다. 코드를 고친 뒤에는 부품 설명이 맞지 않을 수 있습니다.' : null
+}
+
 /** the Netlist tab's one line over the file: whose circuit it is, when that is not the one generated */
 export function netlistNote(aiEdited: boolean, boardNet: string | null): string | null {
   return boardNet ? 'PCB를 만든 AI 편집 회로의 넷리스트입니다. .kicad_pcb와 같은 회로입니다.'

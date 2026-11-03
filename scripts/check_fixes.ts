@@ -16,7 +16,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
-import { boardNetlist, netlistNote } from '../src/lib/drawerNotes.ts'
+import { boardNetlist, guideNote, netlistNote } from '../src/lib/drawerNotes.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -490,6 +490,18 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   check('D1 after an AI edit the board\'s own .net is shown and downloaded; otherwise the generated one',
     own === 'blinky_1a2b3c4d.net' && style === own && generated.every(x => x === null) && notes && wired && sameStem,
     JSON.stringify({ own, style, generated, notes, wired, sameStem }))
+}
+
+// D2. after an AI edit the Guide tab says it is the generated circuit's guide, as the Code and Netlist tabs say they are
+// not the edit: it said nothing, and its wiring order could guide a circuit other than the one on screen (2026-11-03
+// tour, S09 after the S06b and S06c edits). A code run keeps its own line; no change, no line
+{
+  const ai = guideNote(false, true), both = guideNote(true, true), code = guideNote(true, false)
+  const src = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8')
+  const wired = /const guideLine = guideNote\(!!result\?\.codeEdited, aiEdited\)/.test(src) && /\{guideLine && <div style=\{drawerNote\}>\{guideLine\}<\/div>\}/.test(src)
+  check('D2 the Guide tab says an AI edit is not in it; a code run keeps its line',
+    /AI 편집으로 바꾼 곳은 안내에 없습니다/.test(ai ?? '') && both === ai && /코드를 고친 뒤에는/.test(code ?? '') && guideNote(false, false) === null && wired,
+    JSON.stringify({ ai, both, code, wired }))
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)

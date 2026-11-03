@@ -32,7 +32,7 @@ import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
-import { boardNetlist, netlistNote } from '../lib/drawerNotes'
+import { boardNetlist, guideNote, netlistNote } from '../lib/drawerNotes'
 
 const API = ''
 
@@ -175,6 +175,7 @@ export default function ResultPanel({
   const boardNet = boardNetlist(aiEdited, pcbStatus, pcbStale, pcbFilename)
   const netFile = boardNet ?? result?.filename
   const netNote = netlistNote(aiEdited, boardNet)
+  const guideLine = guideNote(!!result?.codeEdited, aiEdited)
   useEffect(() => {
     if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
     let off = false
@@ -1178,7 +1179,7 @@ export default function ResultPanel({
             )}
             {activeTab === 'Guide' && result.guide && (
               <>
-                {result.codeEdited && <div style={drawerNote}>이 안내는 처음 생성한 회로 기준입니다. 코드를 고친 뒤에는 부품 설명이 맞지 않을 수 있습니다.</div>}
+                {guideLine && <div style={drawerNote}>{guideLine}</div>}
                 <div style={{ padding:'14px 20px', color:'var(--sf-fg-dim)', fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{result.guide}</div>
               </>
             )}
