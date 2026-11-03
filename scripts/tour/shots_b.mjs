@@ -376,6 +376,105 @@ export async function run(rec) {
     if (await broken()) throw new Error('the circuit still has errors after three fixes')
   })
 
+  // the generated blinker failed the operating check from the start in takes 1 and 3 of 2026-11-03: its code put the
+  // 10nF capacitor and GND both on U1's CTRL, so CTRL sat on GND, and the red chip stood unexplained from S06 to S24
+  // while the tour made the PCB and the gerbers. Said here, where the circuit for the rest of the tour is settled
+  // (after S06b), and asked of the AI editor; the edit stays only when that row no longer fails and nothing new fails,
+  // else it is undone and said
+  await rec.shot('S06c', '동작 검사 실패 고치기 (OpenAI)', async () => {
+    const chip = T('op-chip'), panel = T('operating-panel'), toggle = T('op-toggle')
+    if (!(await chip.count()) || !/동작 안 됨/.test(await chip.innerText()) || await checksBroken()) return
+    const panelOpen = async () => {
+      if (await toggle.getAttribute('aria-expanded') !== 'true') await rec.press(toggle)
+      await panel.waitFor({ timeout: 5000 })
+    }
+    const panelClose = async () => { if (await toggle.getAttribute('aria-expanded') === 'true') await rec.press(toggle) }
+    const rowKey = row => row.evaluate(e => `${e.getAttribute('data-op-rule')}|${e.getAttribute('data-op')}|${(e.innerText || '').split('\n').slice(0, 3).join(' ')}`)
+    const errorKeys = async () => { const ks = []; for (const row of await panel.locator("[data-op-state='error']").all()) ks.push(await rowKey(row)); return ks }
+    const chipText = async () => (await chip.innerText()).replace(/[▾▴]/g, '').trim()
+    const savedGraph = () => page.evaluate(() => { const s = JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]; return JSON.stringify(s?.graph ?? s?.result?.graph ?? null) })
+    const checked = () => page.waitForFunction(() => !/점검하는 중/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 120000 }).catch(() => {})
+
+    await rec.caption('동작 검사가 이 회로는 동작하지 않는다고 알려 줍니다')
+    await rec.hover(chip, 1800)
+    await panelOpen()
+    const row = panel.locator("[data-op-state='error']").first()
+    const key = await rowKey(row), ref = await row.getAttribute('data-op'), rule = await row.getAttribute('data-op-rule')
+    // the summary line itself (OperatingPanel.tsx: button > [state word, [rule label, summary]])
+    const summary = ((await row.locator(':scope > button > span:last-child > span:last-child').innerText({ timeout: 2000 }).catch(() => '')) || '').trim()
+    const keysBefore = await errorKeys()
+    await rec.caption('빨간 줄이 그 이유입니다')
+    await rec.hover(row.locator(':scope > button').first(), 2500)
+
+    const chat = T('chat-input'), fixBtn = row.locator('[data-op-chat]').first()
+    const graphBefore = await savedGraph(), chipBefore = await chipText()
+    const repliesBefore = (await assistantSaid()).length
+    if (await fixBtn.count()) {
+      // a row with a computed fix sends its own sentence, as S24 does
+      await rec.caption('해결 버튼을 누르면 고칠 문장이 AI 편집 칸에 들어갑니다')
+      await rec.press(fixBtn)
+      await rec.pause(1200)
+      await panelClose()
+      await rec.press(chat)
+    } else {
+      await panelClose()
+      // typed as a person who read the row would: the CTRL capacitor every 555 datasheet shows, else the row's own words
+      const ctrl = summary.match(/5번 핀\(CTRL\)이 (GND|VCC 이상)에 묶여/)
+      const used = await page.locator("g[data-comp^='C']").evaluateAll(es => es.map(e => +(e.getAttribute('data-comp') || '').slice(1)).filter(n => n > 0))
+      const ask = ctrl
+        ? `${ref}의 5번 핀(CTRL)을 ${ctrl[1] === 'GND' ? 'GND' : 'VCC'}에서 떼고, 새 10nF 커패시터 C${Math.max(0, ...used) + 1}를 거쳐 GND에 연결해줘`
+        : `동작 검사에서 "${summary}"라고 나와. ${ref}의 문제를 고쳐서 동작하게 해줘`
+      await rec.caption('이유를 보고 고칠 점을 AI 편집 칸에 적어 보냅니다')
+      if (await T('left-rail').count()) await rec.press(T('left-rail'))
+      await rec.press(chat)
+      await chat.fill('')
+      await chat.pressSequentially(ask, { delay: 40 })
+    }
+    await page.keyboard.press('Enter')
+    // the reply, then the connection check an applied edit sets off (every reply writes the circuit on screen to the
+    // saved result, so the saved circuit changes only with an applied edit)
+    const settle = async () => {
+      await replied()
+      const moved = await page.waitForFunction(g => { const s = JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]; return JSON.stringify(s?.graph ?? s?.result?.graph ?? null) !== g }, graphBefore, { timeout: 6000 }).then(() => true, () => false)
+      if (moved) await checked()
+      return moved
+    }
+    let changed = await rec.fast(settle, 4)
+    if (!changed) {
+      const suggested = ((await assistantSaid()).slice(repliesBefore).pop() ?? '').match(/"(응, [^"]*?그렇게 바꿔줘)"/)?.[1]
+      if (suggested) {
+        await rec.caption('AI가 먼저 물으면, 바꿀 부품을 넣어 답해 주면 됩니다')
+        await rec.press(chat)
+        await page.keyboard.type(suggested, { delay: 30 })
+        await page.keyboard.press('Enter')
+        changed = await rec.fast(settle, 4)
+      }
+    }
+    await panelOpen()
+    const keysNow = await errorKeys()
+    if (changed && !keysNow.includes(key) && keysNow.every(k => keysBefore.includes(k)) && !(await checksBroken())) {
+      const head = await chipText()
+      await rec.caption(/동작 검사 통과/.test(head) ? '고친 회로는 동작 검사를 통과합니다'
+        : /동작 안 됨/.test(head) ? '이 줄은 고쳤고, 남은 빨간 줄은 다른 문제입니다' : '다시 계산한 동작 검사에서 빨간 줄이 사라졌습니다')
+      const now = panel.locator(`[data-op='${ref}'][data-op-rule='${rule}']`).first()
+      if (await now.count()) { await now.scrollIntoViewIfNeeded(); await rec.hover(now.locator(':scope > button').first(), 1500) }
+      await panelClose()
+      await rec.hover(chip, 1500)
+      return
+    }
+    await panelClose()
+    if (changed) {
+      // undone only when this edit changed the circuit: an undo with nothing applied takes back S06b's fix. Not under a
+      // badge: the undo and its re-check take about a second, and a badge on a wait that short plays at 1x (S06a)
+      await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+      await page.waitForFunction(t => (document.querySelector("[data-testid='op-chip']")?.innerText || '').replace(/[▾▴]/g, '').trim() === t, chipBefore, { timeout: 10000 }).catch(() => {})
+      await checked()
+      await rec.caption('AI가 고치지 못해 되돌렸습니다. 이 회로로 계속 진행합니다')
+    } else await rec.caption('AI가 회로를 바꾸지 않아, 이 회로로 계속 진행합니다')
+    await rec.hover(chip, 2000)
+    if (await checksBroken()) throw new Error('circuit errors left after the operating fix was undone')
+  })
+
   await rec.shot('S07', '회로도 보기', async () => {
     await rec.caption('회로도에서 넷 이름에 마우스를 올리면 그 연결만 밝게 보입니다')
     // the circuit's own nets: the first two names in the legend under the schematic
