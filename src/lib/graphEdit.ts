@@ -270,6 +270,18 @@ export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: strin
   // what did move is a named part's pin: the model may still have guessed, so the person sees it
   const moved = movedPins(graph, after).filter(m => !renamedWhole(graph, after, m, r => taken.has(r)))
   if (moved.length) note += `\n\n연결을 바꾼 부품: ${parts(moved.map(m => m.pin))}. 의도와 다르면 위의 되돌리기를 누르세요.`
+  // a new part on no net, or alone on one, is joined to nothing (2026-11-03 tour S23, take 2: "C4가 VCC와 GND 사이에
+  // 추가되었습니다" with each of its pins on a net of its own, and no word of it under the reply). Its name is in after:
+  // parts() reads the parts before the edit
+  const fresh = (after.components || []).map(c => c.ref).filter(r => !taken.has(r))
+  const lone = fresh.filter(r => {
+    const on = after.nets.filter(n => n.nodes.some(nd => nd.ref === r))
+    return !on.length || on.some(n => n.nodes.every(nd => nd.ref === r))
+  })
+  if (lone.length) {
+    note += `\n\n새로 넣은 ${lone.map(r => `${r}(${typeLabel(after.components.find(c => c.ref === r)?.name || '', r)})`).join(', ')}에 다른 부품과 `
+      + '이어지지 않은 핀이 있습니다. 의도와 다르면 위의 되돌리기를 누르세요.'
+  }
   if (skipped.length) {
     // a reference the circuit has: the free one of its kind to ask with (C4 after C1-C3)
     const reused = filled.map(a => (a.type === 'add_component' ? (a.ref || '').trim() : '')).find(r => taken.has(r))

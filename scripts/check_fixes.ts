@@ -268,6 +268,22 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     `${JSON.stringify(e.graph.nets.filter(n => n.name === 'N$4' || n.name === 'N$1'))} | ${e.note}`)
 }
 
+// G9b. the same request with each of C4's pins on a connection of its own, no name given (2026-11-03 tour S23, take 2:
+// the reply said C4 went in between VCC and GND, the chips read "+C4 +? +?", and nothing said C4 was joined to no
+// other part). The chat says so and the chips name the part; wired to VCC and GND, no such note
+{
+  const ask = 'VCC와 GND 사이에 100nF 커패시터 C4를 하나 추가해줘'
+  const c4: ChatAction = { type: 'add_component', ref: 'C4', name: 'C', value: '100nF' }
+  const e = chatEdit(blinker, [c4, { type: 'add_net', nodes: [{ ref: 'C4', pin: '1' }] }, { type: 'add_net', nodes: [{ ref: 'C4', pin: '2' }] }], ask)
+  const chips = e.actions.filter(a => a.type === 'add_net').map(actionLabel)
+  const lone = e.changed && e.note.includes('C4(커패시터)') && e.note.includes('이어지지 않은 핀') && plain(e.note)
+    && chips.length === 2 && chips.every(c => c === '+연결 C4')
+  const ok = chatEdit(blinker, [c4, { type: 'add_net', name: 'VCC', nodes: [{ ref: 'C4', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C4', pin: '2' }] }], ask)
+  const wired = ok.changed && !ok.note.includes('이어지지 않은')
+  check('G9b a new part joined to no other part: the chat says so, the unnamed connections\' chips name the part; wired right, no note',
+    lone && wired, JSON.stringify({ lone, wired, chips, note: e.note, ok: ok.note }))
+}
+
 // G10. what the request names, or what moves no connection, still goes in: a named part's pin (any case, "c3을"),
 // a net renamed whole, a pin that was on no net. A net merged into another by a guess is held (and the net it would
 // have removed stays), and U10 does not name U1
