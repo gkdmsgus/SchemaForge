@@ -18,6 +18,9 @@ dist
 server/outputs
 outputs
 *.log
+# recordings and benchmark results stay on the machine that made them (GBs of video in a PC build's context)
+videos
+scripts/bench-results
 
 # Test circuit run artifacts
 server/test_circuits/*.net

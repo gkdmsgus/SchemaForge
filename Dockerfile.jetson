@@ -3,7 +3,8 @@
 # The kicad/kicad image is published for amd64 only, so this image installs
 # kicad-cli from the official KiCad 10 PPA, which has jammy/arm64 builds
 # (10.0.8 as of 2026-11-03; the amd64 image is pinned to 10.0.5).
-# Build on the Jetson itself:  docker build -f Dockerfile.jetson -t schemaforge:jetson .
+# Build and run on the Jetson itself: scripts/jetson_run.sh (docker build -f Dockerfile.jetson, then the container
+# with its memory, process and privilege limits).
 
 # ── 1) frontend build ─────────────────────────────────────────────────
 FROM node:22-slim AS web
@@ -46,6 +47,10 @@ WORKDIR /app/server
 RUN mkdir -p outputs
 # the demo circuits run once here, so opening a demo copies a stored netlist (demo_cache.ts)
 RUN ./node_modules/.bin/tsx build_demo_cache.ts
+# not root: the server runs skidl code the model and the Code tab write, and on a home server an exploit would land
+# beside the SSH keys and the LAN. It writes only outputs/ and the temp folder (HOME=/tmp for kicad-cli's config)
+RUN useradd --system --uid 10001 --home-dir /tmp --shell /usr/sbin/nologin sf && chown -R sf /app/server/outputs
+USER sf
 # no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
