@@ -19,7 +19,7 @@ npm run lint
 데모(키 없이): `http://localhost:3000/?demo=motor` (`led`, `ne555`, `relay`). AI 루프 검사는 `SF_AI_STUB=1`로 모델 없이 (`README.md` 검사 절).
 
 ## 지킬 것
-- **AI는 제안만, 적용·판정·되돌리기는 코드가 한다.** 점수 순서(`server/ai_layout.ts`의 `better()`: DRC 오류 → 미배선 → 겹침 → 기판 밖 → 디커플링 거리(1 mm 이상 변할 때만) → 좁은 전원선 → 선 길이(HPWL) → 비아 → 트랙 길이)를 바꾸면 `server/check_ai_layout.ts`에 검사 항목을 같이 추가한다
+- **AI는 제안만, 적용·판정·되돌리기는 코드가 한다.** 점수 순서(`server/ai_layout.ts`의 `better()`: DRC 오류 → 미배선 → 겹침 → 기판 밖 → 디커플링 거리(1 mm 이상 변하면 그것으로 판정, 소수 1자리로 보이게 늘면 거절) → 좁은 전원선 → 선 길이(HPWL, 0.1 mm) → 비아 → 트랙 길이(0.1 mm) → 보이게 준 디커플링)를 바꾸면 `server/check_ai_layout.ts`에 검사 항목을 같이 추가한다
 - 검사가 실패하거나 시간 초과면 "통과"로 세지 않는다 (DRC 시간 초과를 오류 0으로 읽던 버그 이력)
 - 핀 매핑은 (부품, 핀 번호) → 패드 표로만. 표에 없으면 조용히 대체하지 말고 unmapped로 보고
 - 코드를 바꾸면 같은 작업 안에서 `npm test`(최소 `npm run test:types`)를 돌리고 결과를 보고한다. 화면을 바꾸면 데모 URL로 직접 확인한다

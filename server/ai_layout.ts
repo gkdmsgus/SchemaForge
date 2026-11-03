@@ -97,24 +97,33 @@ interface BoardJson {
 /** A decoupling change smaller than this is treated as no change, so it cannot buy a longer route. */
 export const DECAP_STEP_MM = 1.0
 
+/** what the AI rounds list prints (BoardView.tsx): one decimal */
+export const listed = (v: number | undefined) => Number((v ?? 0).toFixed(1))
+
 /**
  * Lower is better, compared in order: DRC errors, unrouted, overlaps, outside, then decoupling
- * distance (only when it moves by DECAP_STEP_MM or more), then narrow heavy power nets, then HPWL,
- * vias, track length.
+ * distance (when it moves by DECAP_STEP_MM or more), then narrow heavy power nets, then HPWL,
+ * vias, track length, then a decoupling gain the list shows.
  * Decoupling goes ahead of wire length because the rule it measures (cap right at the IC supply
  * pin) is worth a slightly longer route — but not for a fraction of a millimetre.
+ * Below the step, lengths are judged as the AI rounds list prints them (0.1 mm): on 2026-11-03
+ * (tour S21) rounds were kept for hundredths of track length the list does not show while the
+ * decoupling it does show went 5.0 -> 5.4 -> 5.9 mm.
  */
 export function better(a: Metrics, b: Metrics): boolean {
   const hard = (m: Metrics) => [m.drcErrors, m.unrouted, m.overlaps, m.outside]
-  const soft = (m: Metrics) => [Math.round(m.hpwl * 100), m.vias, Math.round(m.trackLength * 100)]
+  const soft = (m: Metrics) => [listed(m.hpwl), m.vias, listed(m.trackLength)]
   const cmp = (x: number[], y: number[]) => { for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? 1 : -1; return 0 }
   const h = cmp(hard(a), hard(b))
   if (h) return h > 0
   const d = (a.decap ?? 0) - (b.decap ?? 0)
   if (Math.abs(d) >= DECAP_STEP_MM - 1e-9) return d < 0
+  if (listed(a.decap) > listed(b.decap)) return false   // a loss the list shows is a loss, whatever wire it saves
   const w = (a.powerWidth ?? 0) - (b.powerWidth ?? 0)
   if (w) return w < 0
-  return cmp(soft(a), soft(b)) > 0
+  const s = cmp(soft(a), soft(b))
+  if (s) return s > 0
+  return listed(a.decap) < listed(b.decap)              // a gain the list shows wins a tie (else 5.4 -> 5.0 reads as rolled back)
 }
 
 export function metricsOf(summary: Record<string, unknown>, drcErrors: number, board?: BoardJson): Metrics {
@@ -443,6 +452,8 @@ Rules you follow:
 - The decoupling distance is scored: bringing a decoupling capacitor at least 1 mm closer to its IC supply pin
   counts as an improvement even if the route gets a little longer, as long as nothing overlaps and routing still
   completes. A smaller gain is judged on wire length and vias instead, so do not trade those for a few tenths.
+- A move that makes the total decoupling distance longer, as rounded to 0.1 mm, is rolled back unless it clears a
+  DRC error, an unrouted connection, an overlap or a part off the board.
 - Change at most 3 things per round; a smaller, well-argued change is better than a big guess.
 - If the board already follows these rules, set stop: true instead of inventing work.
 - You are told what happened to your earlier proposals. Never repeat a change that was rolled back;

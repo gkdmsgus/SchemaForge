@@ -87,6 +87,25 @@ const tinyShorter = { ...m, decap: m.decap - 0.03, hpwl: m.hpwl - 0.12 }
 check('29b small decap gain cannot buy wire length', !better(tiny, m) && better(tinyShorter, m),
   'decap -0.68/HPWL +6.1 rejected, decap -0.03/HPWL -0.12 kept on HPWL')
 
+// 29c. the rounds kept on 2026-11-03 (tour S21: decoupling 5.0 -> 5.4 -> 5.9 mm, each for a little track length the
+//      list does not show) are rolled back; a loss the list does not show (5.04 reads 5.0) still falls through to
+//      wire length, one it shows (5.08 reads 5.1) does not; a gain of 1 mm or more still buys HPWL; a gain the list
+//      shows wins when everything else reads the same, a gain it does not show does not
+const at5 = { ...m, decap: 5.0 }
+const r1 = { ...at5, decap: 5.4, trackLength: at5.trackLength - 1.2 }, r2 = { ...r1, decap: 5.9, trackLength: r1.trackLength - 0.8 }
+const unseen = { ...at5, decap: 5.04, trackLength: at5.trackLength - 1.2 }, seen = { ...unseen, decap: 5.08, trackLength: unseen.trackLength - 1 }
+check('29c a decoupling loss the list shows is not kept', !better(r1, at5) && !better(r2, r1) && better(unseen, at5) && !better(seen, unseen)
+  && better({ ...at5, decap: 3.9, hpwl: at5.hpwl + 2 }, at5)
+  && better({ ...at5, decap: 4.6 }, at5) && !better({ ...at5, decap: 4.97 }, at5) && !better(at5, at5),
+  'decap 5.0->5.4 and 5.4->5.9 for shorter track rejected, 5.0->5.04 kept on track, 5.04->5.08 rejected, 5.0->3.9 kept, 5.0->4.6 wins a tie')
+
+// 29d. wire lengths are compared as the list prints them (0.1 mm): 0.03 mm of HPWL does not buy a via or 5 mm of
+//      track, 0.1 mm does; 1 mm of track is a gain, 0.03 mm is not
+const hp = { ...m, hpwl: 80.0, vias: 5, trackLength: 90 }
+check('29d wire length judged at 0.1 mm', !better({ ...hp, hpwl: 79.97, vias: 6 }, hp) && !better({ ...hp, hpwl: 79.97, trackLength: 95 }, hp)
+  && better({ ...hp, hpwl: 79.9, vias: 6 }, hp) && better({ ...hp, trackLength: 89.0 }, hp) && !better({ ...hp, trackLength: 89.97 }, hp),
+  'HPWL -0.03 with a via or +5 mm track rejected, HPWL -0.1 with a via kept, track -1 kept, track -0.03 rejected')
+
 // 30. precheck agrees with the generator's own overlap check (pcb/board.py, fixed placement, no routing)
 //     on a grid of C3 moves, including the two the model proposed that precheck used to let through.
 // fractions of the way to the nearest neighbour (collisions) plus small steps away from it (no collision),
