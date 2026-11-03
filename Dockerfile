@@ -43,6 +43,14 @@ WORKDIR /app/server
 RUN mkdir -p outputs
 # the demo circuits run once here, so opening a demo copies a stored netlist (demo_cache.ts)
 RUN ./node_modules/.bin/tsx build_demo_cache.ts
+# kicad-cli's footprint library table, pointing at the vendored libraries the boards are made from: with none, DRC
+# warned on every board that each footprint's library "is not in the current configuration" (15 warnings in the
+# board checks of the 555 demo, 2026-11-03). HOME is /tmp below, so this is where kicad-cli looks
+RUN mkdir -p /tmp/.config/kicad/10.0 \
+ && { echo '(fp_lib_table'; echo '  (version 7)'; \
+      for d in /app/server/pcb/footprints/*.pretty; do \
+        echo "  (lib (name \"$(basename "$d" .pretty)\")(type \"KiCad\")(uri \"$d\")(options \"\")(descr \"\"))"; done; \
+      echo ')'; } > /tmp/.config/kicad/10.0/fp-lib-table
 # the KiCad image has no 3D model library: the 3D view and assembly need the part bodies,
 # so kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
