@@ -50,6 +50,15 @@ RUN ./node_modules/.bin/tsx build_demo_cache.ts
 # not root: the server runs skidl code the model and the Code tab write, and on a home server an exploit would land
 # beside the SSH keys and the LAN. It writes only outputs/ and the temp folder (HOME=/tmp for kicad-cli's config)
 RUN useradd --system --uid 10001 --home-dir /tmp --shell /usr/sbin/nologin sf && chown -R sf /app/server/outputs
+# kicad-cli's footprint library table, pointing at the vendored libraries the boards are made from: with none, DRC
+# reported every footprint as lib_footprint_issues (its library not found), and run_checks failed item 5 on all ten
+# boards in this image (2026-11-03)
+RUN mkdir -p /tmp/.config/kicad/10.0 \
+ && { echo '(fp_lib_table'; echo '  (version 7)'; \
+      for d in /app/server/pcb/footprints/*.pretty; do \
+        echo "  (lib (name \"$(basename "$d" .pretty)\")(type \"KiCad\")(uri \"$d\")(options \"\")(descr \"\"))"; done; \
+      echo ')'; } > /tmp/.config/kicad/10.0/fp-lib-table \
+ && chown -R sf /tmp/.config
 USER sf
 # no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
