@@ -150,8 +150,11 @@ def main():
               f'{len(files)} files, fab layers+drills {len(have)}/{len(FAB_SUFFIXES)}, zip {g.get("zip")} {zip_head!r}'
               + (f', error={g.get("error")}' if g.get('error') else ''))
 
+        # skidl from /tmp, where runSkidl runs it: importing it writes skidl_REPL.log/.erc to the working folder, and the
+        # image's non-root user cannot write in /app/server (Jetson image, 2026-11-03)
         which = sh('docker', 'exec', NAME, 'sh', '-c',
-                   'command -v python; python -c "import skidl, numpy; print(\'ok\')"; ls node_modules/.bin/tsx').stdout.split()
+                   'command -v python; (cd /tmp && python -c "import skidl, numpy; print(\'ok\')"); ls node_modules/.bin/tsx'
+                   ).stdout.split()
         check('35 runtime wiring', which[:1] == ['/venv/bin/python'] and 'ok' in which and 'node_modules/.bin/tsx' in which,
               ' '.join(which))
 
