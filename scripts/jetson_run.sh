@@ -8,16 +8,18 @@
 #   scripts/jetson_run.sh --no-build   run the image there is
 #
 # Keys go in ~/schemaforge.env (mode 600): OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ALLOWED_EMAILS,
-# FRONTEND_URL, and the optional ones in server/.env.example. Without the file the app shows the demos only.
-# PUBLISH sets the port binding: the LAN by default; 127.0.0.1:8002:8002 once a reverse proxy serves it.
+# and the optional ones in server/.env.example. Without the file the app shows the demos only.
+# PUBLISH sets the port binding: this host only by default, where Caddy serves it over HTTPS (8002:8002 opens plain
+# HTTP to the LAN, for a test). CPUS caps the cores: the Jetson has 6, and its other services need some.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IMAGE=schemaforge:jetson
 NAME=schemaforge
 ENV_FILE="$HOME/schemaforge.env"
-PUBLISH="${PUBLISH:-8002:8002}"
+PUBLISH="${PUBLISH:-127.0.0.1:8002:8002}"
 MEMORY="${MEMORY:-2g}"
+CPUS="${CPUS:-4}"
 
 if [ "${1:-}" != "--no-build" ]; then
   docker build -f Dockerfile.jetson -t "$IMAGE" .
@@ -28,9 +30,10 @@ if [ -f "$ENV_FILE" ]; then env_args=(--env-file "$ENV_FILE"); else echo "no $EN
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 # PORT after the env file: server/.env.example has PORT=8080 (the local vite proxy's), and copied into the env file it
-# made the server listen where nothing is published (review of 2026-11-03)
-docker run -d --name "$NAME" --restart unless-stopped -p "$PUBLISH" "${env_args[@]}" -e PORT=8002 \
-  --memory "$MEMORY" --memory-swap "$MEMORY" --pids-limit 512 \
+# made the server listen where nothing is published (review of 2026-11-03). NODE_ENV too: it alone turns on the
+# deployed-server guard (deploy_guard.ts), so a NODE_ENV=development in the env file opened generation to anyone
+docker run -d --name "$NAME" --restart unless-stopped -p "$PUBLISH" "${env_args[@]}" -e PORT=8002 -e NODE_ENV=production \
+  --memory "$MEMORY" --memory-swap "$MEMORY" --pids-limit 512 --cpus "$CPUS" \
   --cap-drop ALL --security-opt no-new-privileges \
   --log-opt max-size=10m --log-opt max-file=3 \
   "$IMAGE" >/dev/null
