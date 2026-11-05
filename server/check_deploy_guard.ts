@@ -91,7 +91,9 @@ async function live() {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
   const proc = spawn(process.execPath, [join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'index.ts'], {
-    env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '' },
+    // SF_OUTPUTS_SWEEP off: this server runs in the checkout, whose outputs/ holds the checks' fixtures
+    env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '',
+           SF_OUTPUTS_SWEEP: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let stderr = ''

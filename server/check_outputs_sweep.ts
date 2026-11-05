@@ -1,4 +1,4 @@
-// Checks O1-O3: what a deployed server keeps in outputs/ (outputs_sweep.ts). On the Jetson the folder outlives restarts
+// Checks O1-O4: what a deployed server keeps in outputs/ (outputs_sweep.ts). On the Jetson the folder outlives restarts
 // on the SD card, and nothing removed from it (review of 2026-11-03).
 // Usage (from server/): npx tsx check_outputs_sweep.ts   → exit 0 only if all pass
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
@@ -37,10 +37,16 @@ try {
     s2.removed.join(',') === 'a.kicad_pcb,b.kicad_pcb' && s2.bytes === 500 && existsSync(join(dir, 'c.kicad_pcb')) && existsSync(join(dir, 'new.net')),
     JSON.stringify(s2))
 
-  // O3. only a deployed server sweeps: a dev server keeps the checks' fixtures in outputs/
+  // O3. only a server the deploy images turn it on for sweeps: a dev server, and one the checks start in production
+  // mode, keep the checks' fixtures in outputs/ (keyed to NODE_ENV, the deploy-guard check removed one, 2026-11-05)
   const src = readFileSync('index.ts', 'utf8')
-  const wired = /if \(process\.env\.NODE_ENV === 'production'\) \{[^}]*sweepOutputs\(OUTPUTS_DIR/.test(src) && /setInterval\(sweep, [^)]*\)\.unref\(\)/.test(src)
-  check('O3 the server sweeps outputs/ only when deployed, at start and every quarter hour', wired)
+  const wired = /if \(process\.env\.SF_OUTPUTS_SWEEP === '1'\) \{[^}]*sweepOutputs\(OUTPUTS_DIR/.test(src) && /setInterval\(sweep, [^)]*\)\.unref\(\)/.test(src)
+  check('O3 the server sweeps outputs/ only when SF_OUTPUTS_SWEEP=1, at start and every quarter hour', wired)
+
+  // O4. both deploy images turn it on, and the deploy-guard check's production server turns it off
+  const images = ['../Dockerfile', '../Dockerfile.jetson'].map(f => /\bSF_OUTPUTS_SWEEP=1\b/.test(readFileSync(f, 'utf8')))
+  const guard = /SF_OUTPUTS_SWEEP: ''/.test(readFileSync('check_deploy_guard.ts', 'utf8'))
+  check('O4 deploy images sweep, the guard check does not', images.every(Boolean) && guard, `Dockerfile ${images[0]}, Dockerfile.jetson ${images[1]}, check_deploy_guard ${guard}`)
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }

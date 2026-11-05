@@ -111,8 +111,9 @@ if (existsSync(distPath)) {
 const OUTPUTS_DIR = join(process.cwd(), 'outputs')
 if (!existsSync(OUTPUTS_DIR)) mkdirSync(OUTPUTS_DIR)
 // a deployed server keeps a day of outputs/, at most 1 GB (outputs_sweep.ts); a dev server keeps everything, the
-// checks' fixtures included
-if (process.env.NODE_ENV === 'production') {
+// checks' fixtures included. The deploy images turn it on: keyed to NODE_ENV, the deploy-guard check's production
+// server swept a checkout's outputs/ and removed a fixture of check_deploy.py (2026-11-05)
+if (process.env.SF_OUTPUTS_SWEEP === '1') {
   const keepHours = Number(process.env.SF_OUTPUTS_KEEP_HOURS) || 24
   const maxBytes = (Number(process.env.SF_OUTPUTS_MAX_MB) || 1024) * 1024 * 1024
   const sweep = () => {
