@@ -207,7 +207,7 @@ cd server && npx tsx check_demo_cache.ts
 ```bash
 cd server && npx tsx check_outputs_sweep.ts
 ```
-배포 서버의 outputs 정리 3항목. 배포 서버(NODE_ENV=production)는 시작할 때와 15분마다 `server/outputs/`에서 하루 지난 항목을 지우고, 1 GB를 넘으면 오래된 것부터 지운다(`SF_OUTPUTS_KEEP_HOURS`, `SF_OUTPUTS_MAX_MB`). 젯슨은 재시작해도 이 폴더가 SD 카드에 남고, 로그인 없이 파일을 쓰는 경로도 있어서다. 하루 지난 파일과 거버 폴더가 지워지는지, 상한을 넘으면 오래된 것부터 지워지는지, 개발 서버는 지우지 않는지 확인한다.
+배포 서버의 outputs 정리 4항목. 배포 이미지(`SF_OUTPUTS_SWEEP=1`, 두 Dockerfile이 켠다)는 시작할 때와 15분마다 `server/outputs/`에서 하루 지난 항목을 지우고, 1 GB를 넘으면 오래된 것부터 지운다(`SF_OUTPUTS_KEEP_HOURS`, `SF_OUTPUTS_MAX_MB`). 젯슨은 재시작해도 이 폴더가 SD 카드에 남고, 로그인 없이 파일을 쓰는 경로도 있어서다. 하루 지난 파일과 거버 폴더가 지워지는지, 상한을 넘으면 오래된 것부터 지워지는지, 그 값이 없는 서버는 지우지 않는지(배포 모드로 띄우는 차단 검사 D9 포함: NODE_ENV로 켜던 때 개발 폴더의 검사용 파일을 지웠다) 확인한다.
 
 ```bash
 python server/pcb/check_deploy.py
