@@ -43,7 +43,6 @@ function getSettings(): AppSettings {
 
 function detectStep(msg: string): number {
   if (/netlist|fixing/i.test(msg)) return 2
-  if (msg.includes('Searching')) return 0
   if (msg.includes('GPT') || msg.includes('analysing') || msg.includes('analyzing')) return 1
   if (msg.includes('netlist') || msg.includes('Generating')) return 2
   return 0

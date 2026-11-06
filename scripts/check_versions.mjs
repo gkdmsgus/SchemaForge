@@ -9,7 +9,8 @@
 // and a real stream cut in the middle says nothing (it ran on unseen: python, DRC and the paid AI rounds, and a new PCB
 // overlapped it on a 4 CPU server: review of 2026-11-06), V9 an AI editor stream that ends with no result says the
 // connection was lost, and its half answer does not go to the model with the next request (the cursor blinked on: 2026-11-06),
-// V10 the BOM's Mouser lookup goes with the login, and a refusal says it needs one, not that the server has no key.
+// V10 the BOM's Mouser lookup goes with the login, and a refusal says it needs one, not that the server has no key,
+// V11 the drawer has no Sources tab (web search is gone since 2026-06-12, so it was always grey).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -250,6 +251,10 @@ try {
   const noKey = await v10.p.getByText('Mouser 키가 서버에 없어').waitFor({ timeout: 5000 }).then(() => true, () => false)
   check('V10 a refused Mouser lookup says it needs a login, the search links stay, and no key still says no key',
     lookups[0] === 'Bearer fake-token' && needsLogin && !noKeyLine && links > 0 && noKey, `sent ${lookups[0]}, login line ${needsLogin}, ${links} links, no-key line after ${noKey}`)
+
+  // V11
+  const tabNames = (await v10.p.locator('button.sf-drawer-tab').allTextContents()).map(t => t.trim()).join()
+  check('V11 the drawer has no Sources tab', tabNames === 'Netlist,Guide,BOM,Code', tabNames)
 } finally {
   await browser.close()
 }

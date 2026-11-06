@@ -1173,9 +1173,9 @@ export default function ResultPanel({
       }}>
         {/* tab handle bar */}
         <div style={{ height: BOTTOMBAR_H, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 2 }}>
-          {['Netlist', 'Guide', 'Sources', 'BOM', 'Code'].map(t => {
+          {['Netlist', 'Guide', 'BOM', 'Code'].map(t => {
             const isActive = drawerOpen && activeTab === t
-            const disabled = (t === 'Guide' && !result.guide) || (t === 'Sources' && !(result.sources?.length))
+            const disabled = t === 'Guide' && !result.guide
             return (
               <button key={t} disabled={disabled} className="sf-drawer-tab" aria-pressed={isActive}
                 title={t === 'Code' && codeDirty ? '실행하지 않은 수정이 있습니다' : undefined} onClick={() => {
@@ -1218,13 +1218,6 @@ export default function ResultPanel({
                 {guideLine && <div style={drawerNote}>{guideLine}</div>}
                 <div style={{ padding:'14px 20px', color:'var(--sf-fg-dim)', fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{result.guide}</div>
               </>
-            )}
-            {activeTab === 'Sources' && (result.sources?.length ?? 0) > 0 && (
-              <div style={{ padding:'14px 20px' }}>
-                {(result.sources ?? []).map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noopener" style={{ display:'block', padding:'5px 0', color:'var(--sf-cyan)', fontSize:12, fontFamily:'var(--sf-font-mono)', wordBreak:'break-all' }}>{url}</a>
-                ))}
-              </div>
             )}
             {activeTab === 'BOM' && (
               <BomTable components={effectiveGraph?.components ?? []} board={bomBoard} style={bomStyle} fileBase={result.filename?.replace(/\.net$/, '')} />
