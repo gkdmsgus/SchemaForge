@@ -60,8 +60,10 @@ const near = (a: number | null, b: number | null) => (a == null || b == null ? a
 
 // O1. reading values ────────────────────────────────────────────────────────────
 {
-  const ohms: [string, number | null][] = [['680', 680], ['10k', 1e4], ['4k7', 4700], ['4.7k', 4700], ['1M', 1e6], ['100R', 100], ['0R1', 0.1], ['10 Ω', 10], ['0.1', 0.1], ['abc', null], ['100m', 0.1], ['100mΩ', 0.1]]
-  const farads: [string, number | null][] = [['100nF', 1e-7], ['10uF', 1e-5], ['0.1uF', 1e-7], ['22p', 2.2e-11], ['1u', 1e-6], ['104', null], ['22μF', 2.2e-5], ['10', null]]
+  const ohms: [string, number | null][] = [['680', 680], ['10k', 1e4], ['4k7', 4700], ['4.7k', 4700], ['1M', 1e6], ['100R', 100], ['0R1', 0.1], ['10 Ω', 10], ['0.1', 0.1], ['abc', null], ['100m', 0.1], ['100mΩ', 0.1],
+    ['R10', 0.1], ['R47', 0.47], ['r10', 0.1], ['100mR', 0.1], ['10mR', 0.01], ['1R0', 1], ['2M2', 2.2e6], ['R', null], ['m', null], ['k10', null]]
+  const farads: [string, number | null][] = [['100nF', 1e-7], ['10uF', 1e-5], ['0.1uF', 1e-7], ['22p', 2.2e-11], ['1u', 1e-6], ['104', null], ['22μF', 2.2e-5], ['10', null],
+    ['4u7', 4.7e-6], ['4n7', 4.7e-9], ['2n2', 2.2e-9], ['1u0', 1e-6], ['2p2', 2.2e-12], ['4μ7', 4.7e-6], ['4u7F', 4.7e-6], ['100MF', null], ['100M', null], ['4M7', null], ['100mF', 0.1], ['47uF', 4.7e-5], ['10NF', 1e-8], ['1UF', 1e-6]]
   const volts: [string, number | null][] = [['9V', 9], ['3.7 V', 3.7], ['3V3', 3.3], ['SRD-05VDC-SL-C', 5], ['12VDC', 12], ['RED', null], ['2x1.5V', 3], ['12V2A', 12]]
   const names: [string, number | null][] = [['GND', 0], ['+5V', 5], ['12V', 12], ['3V3', 3.3], ['+3.3V', 3.3], ['VCC', null], ['PWM', null]]
   const bad = [
@@ -71,6 +73,20 @@ const near = (a: number | null, b: number | null) => (a == null || b == null ? a
     ...names.filter(([s, v]) => !near(voltsFromName(s), v)).map(([s]) => `net ${s}`),
   ]
   check('O1 value parsers', bad.length === 0, bad.join(', '))
+  // what those values decide (2026-11-06 sweep: R10 under an emitter read "이미터가 GND가 아닌 구성", a 555 with 4u7 "단위가
+  // 필요합니다"). The same circuit with the value written either way gives the same verdicts
+  const states = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}`).sort().join(' ')
+  const sensed = (value: string) => run(circuit(
+    [['J1', 'Conn_01x03', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['D1', 'D', '1N4148'], ['K1', 'Relay', '5V'], ['R2', 'R', value]],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['IN', 'J1.2', 'R1.1'], ['GND', 'J1.3', 'R2.2'], ['BASE', 'R1.2', 'Q1.1'], ['COIL_LOW', 'Q1.2', 'K1.2', 'D1.1'], ['SENSE', 'Q1.3', 'R2.1']]))
+  const timed = (value: string) => run(circuit(
+    [['BT1', 'Battery', '9V'], ['U1', 'NE555', 'NE555'], ['R1', 'R', '1k'], ['R2', 'R', '10k'], ['C1', 'C', value], ['C2', 'C', '100nF'], ['R3', 'R', '470'], ['D1', 'LED', 'RED']],
+    [['VCC', 'BT1.1', 'U1.8', 'U1.4', 'R1.1', 'C2.1'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'C2.2', 'D1.2'], ['DISCH', 'U1.7', 'R1.2', 'R2.1'], ['TH', 'U1.2', 'U1.6', 'R2.2', 'C1.1'], ['OUT', 'U1.3', 'R3.1'], ['A', 'R3.2', 'D1.1']]))
+  check('O1b R10 and 0.1, 4u7 and 4.7uF give the same verdicts; 100MF is not read as 0.1 F',
+    states(sensed('R10')) === states(sensed('0.1')) && !/GND가 아닌/.test(sensed('R10').map(r => r.summary).join())
+    && states(timed('4u7')) === states(timed('4.7uF')) && pick(timed('4u7'), 'op_555')?.summary === pick(timed('4.7uF'), 'op_555')?.summary
+    && is(timed('100MF'), 'op_555', 'unknown', 'U1', /단위가 필요합니다/),
+    `${show(sensed('R10'), 'op_drive')} / ${show(timed('4u7'), 'op_555')} / ${show(timed('100MF'), 'op_555')}`)
 }
 
 // O2. parts table: every limit has a number and a source, nothing left as a placeholder ──

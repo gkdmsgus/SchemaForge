@@ -92,24 +92,30 @@ export function fromBoard(b: BoardModel): OpCircuit {
 /** the value part of a part value with a rating after it: "22uF 16V" -> "22uF", "680 1/4W" -> "680", "1k 1%" -> "1k" */
 const valuePart = (v: string) => String(v ?? '').trim().replace(/(?:(?<=[A-Za-zµμΩ])\s*[,/]\s*|\s+)(?=\d+(?:\.\d+)?\s*(?:V|W|%)|\d+\s*\/\s*\d+\s*W).*$/i, '')
 
-/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "10 Ω", "100m" (milliohm), "680 1/4W" -> ohms */
+/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "R10", "10 Ω", "100m" (milliohm), "100mR", "680 1/4W" -> ohms */
 export function parseOhms(v: string): number | null {
   const s = valuePart(v).replace(/Ω|ohms?/gi, '').replace(/\s+/g, '')
-  // M is mega and m is milli (a 100 mΩ sense resistor), k/K kilo, r/R the decimal point
+  // M is mega and m is milli (a 100 mΩ sense resistor), k/K kilo, r/R the decimal point, with nothing before it too
+  // (R10, as server/ai_layout.ts reads it: 2026-11-06 sweep, a sense resistor R10 left its transistor unjudged)
   const mul = (u: string) => (u === 'M' ? 1e6 : u === 'm' ? 1e-3 : u === 'k' || u === 'K' ? 1e3 : 1)
-  let m = /^(\d+)([rRkKmM])(\d+)$/.exec(s)
+  let m = /^(\d*)[rR](\d+)$/.exec(s)
+  if (m) return Number(`${m[1] || '0'}.${m[2]}`)
+  m = /^(\d+)([kKmM])(\d+)$/.exec(s)
   if (m) return Number(`${m[1]}.${m[3]}`) * mul(m[2])
-  m = /^(\d+(?:\.\d+)?)([rRkKmM]?)$/.exec(s)
+  m = /^(\d+(?:\.\d+)?)([kKmM]?)[rR]?$/.exec(s)
   if (m) return Number(m[1]) * mul(m[2])
   return null
 }
 
-/** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u" -> farads */
+/** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u", "4u7", "2n2" -> farads */
 export function parseFarads(v: string): number | null {
-  const m = /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(valuePart(v))
-  if (!m || (!m[2] && !m[3])) return null      // "104" is a code, not 104 F
+  const s = valuePart(v)
+  const point = /^(\d+)([pnuµμm])(\d+)f?$/i.exec(s)      // 4u7 is 4.7 uF (2026-11-06 sweep: read as no value, "단위가 필요합니다")
+  const m = point ?? /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(s)
+  if (!m || (!m[2] && !point && !m[3])) return null      // "104" is a code, not 104 F
+  if (m[2] === 'M') return null                          // "100MF" is an old way to write µF, not 0.1 F: not read at all
   const mul: Record<string, number> = { '': 1, p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3 }
-  const f = Number(m[1]) * mul[(m[2] || '').toLowerCase()]
+  const f = Number(point ? `${m[1]}.${m[3]}` : m[1]) * mul[(m[2] || '').toLowerCase()]
   return Number.isFinite(f) ? f : null
 }
 
