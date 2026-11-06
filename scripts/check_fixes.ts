@@ -391,6 +391,58 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     blocked && clean && fault && shown && wired, JSON.stringify({ errors, head, blocked, clean, fault, shown, wired }))
 }
 
+// F11. CIR101 asks the string the operating check walks, not the nets beside the LED (2026-11-06 sweep: 9 V - 220 Ω - three
+// LEDs and R - switch - LED read '회로 오류 2' and could not get a PCB, while an LED straight on a rail with a base resistor
+// on that rail was not called out). Whatever the colour, and the two checks do not contradict each other
+{
+  const g = (parts: [string, string, string][], ...nets: ReturnType<typeof net>[]): NetGraph => ({ components: parts.map(([ref, name, value]) => ({ ref, name, value })), nets })
+  const cir101 = (c: NetGraph) => validateCircuit(c).filter(i => i.code === 'CIR101').map(i => i.refs.join())
+  const led = (c: NetGraph, ref = 'D1') => operatingChecks(fromGraph(c)).find(r => r.rule === 'op_led' && r.ref === ref)
+  const series = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['D3', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1'), net('B', 'D1.2', 'D2.1'), net('C', 'D2.2', 'D3.1'), net('GND', 'D3.2', 'BT1.2'))
+  const rSwLed = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('N1', 'R1.2', 'SW1.1'), net('N2', 'SW1.2', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  const shared = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1', 'D2.1'), net('GND', 'D1.2', 'D2.2', 'BT1.2'))
+  const sharedLow = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'D1.1', 'D2.1'), net('K', 'D1.2', 'D2.2', 'R1.1'), net('GND', 'R1.2', 'BT1.2'))
+  const bare = (colour: string) => g([['BT1', 'Battery', '9V'], ['D1', 'LED', colour]], net('VCC', 'BT1.1', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  const onQ = g([['BT1', 'Battery', '5V'], ['R1', 'R', '10k'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'D1.1'), net('BASE', 'R1.2', 'Q1.1'), net('COLL', 'D1.2', 'Q1.2'), net('GND', 'Q1.3', 'BT1.2'))
+  const noneInSeries = g([['BT1', 'Battery', '9V'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'GREEN'], ['D3', 'LED', '']],
+    net('VCC', 'BT1.1', 'D1.1'), net('B', 'D1.2', 'D2.1'), net('C', 'D2.2', 'D3.1'), net('GND', 'D3.2', 'BT1.2'))
+  const green = g([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'GREEN']], net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  // the walk stops at three pins and at a relay's NC contact: a resistor there is still in the LED's path
+  const junction = g([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['C1', 'C', '10uF'], ['D1', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1', 'C1.1'), net('GND', 'D1.2', 'C1.2', 'BT1.2'))
+  const shunt = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['R2', 'R', '10k'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'R2.1'), net('COLL', 'R1.2', 'D1.1', 'Q1.2'), net('BASE', 'R2.2', 'Q1.1'), net('GND', 'D1.2', 'Q1.3', 'BT1.2'))
+  const relayNc = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['K1', 'Relay', '5V'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1', 'K1.1'), net('COM', 'R1.2', 'K1.3'), net('NO', 'K1.4', 'D1.1'), net('NC', 'K1.5', 'D2.1'), net('COIL', 'K1.2', 'SW1.1'), net('GND', 'SW1.2', 'D1.2', 'D2.2', 'BT1.2'))
+  const button = g([['BT1', 'Battery', '5V'], ['R1', 'R', '10k'], ['R2', 'R', '1k'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'Q1.2'), net('IN', 'R1.2', 'SW1.1', 'D1.1', 'R2.1'), net('BASE', 'R2.2', 'Q1.1'), net('GND', 'SW1.2', 'D1.2', 'Q1.3', 'BT1.2'))
+  // a resistor saved under a name of its own by an edit is one by its reference, as it was here
+  const named = { ...shared, components: shared.components.map(c => (c.ref === 'R1' ? { ...c, name: 'R1' } : c)) }
+  const refused = cir101(noneInSeries)
+  const chat = validateCircuit(noneInSeries).find(i => i.code === 'CIR101')?.chat ?? ''
+  const ok = {
+    series: !cir101(series).length && led(series)?.state === 'pass',
+    rSwLed: !cir101(rSwLed).length && led(rSwLed)?.state === 'pass',
+    shared: !cir101(shared).length && !cir101(sharedLow).length && led(shared)?.state === 'warn' && /나눠 씁니다/.test(led(shared)?.summary ?? ''),
+    bareRed: cir101(bare('RED')).join() === 'D1' && led(bare('RED'))?.state === 'error',
+    bareGreen: cir101(bare('GREEN')).join() === 'D1' && led(bare('GREEN'))?.state === 'unknown',
+    onQ: cir101(onQ).join() === 'D1' && led(onQ)?.state === 'error',
+    oneString: refused.join('|') === 'D1,D2,D3' && /전원과 D1의 A 핀 사이/.test(chat),
+    colourBlind: !cir101(green).length,
+    junction: !cir101(junction).length && !cir101(shunt).length,
+    relay: !cir101(relayNc).length,
+    button: !cir101(button).length,
+    named: !cir101(named).length,
+  }
+  check('F11 CIR101 follows the LED string: series, R-SW-LED and a shared resistor pass; no resistor stays an error in any colour, on one line for a string',
+    Object.values(ok).every(Boolean), JSON.stringify(ok))
+}
+
 // G13. a part an edit adds goes on a free spot and the parts there keep theirs (2026-11-02 tour, 325-329 s: C4 added to
 // the 555's nine parts laid them all out again, three columns became four). Nine parts in the auto layout's grid, C4 on
 // the nets of all of them: with room in view it goes there, in a row of the others; with none, the side that makes the

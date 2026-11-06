@@ -2208,6 +2208,23 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
   return out
 }
 
+/**
+ * The LEDs no resistor limits, one list per string (anode end first), whatever their colour: checkLeds stops at a colour
+ * it has no data for, and a green LED with no resistor burns as well. validateCircuit blocks the PCB on this (2026-11-06
+ * sweep: 9 V - 220 Ω - three LEDs and R - switch - LED were refused for "no resistor"), so it only says what the walk is
+ * sure of. The walk stops at a net of three pins or a relay's NC contact: on a net with no voltage of its own, a resistor
+ * or a contact there can still be in the LED's path. A chain cut by an LED facing the other way is op_led's error.
+ */
+export function ledsWithoutResistor(c: OpCircuit): string[][] {
+  let x: Ctx
+  try { x = context(c) } catch { return [] }   // not judged: the operating checks say 판단 불가 for the same reason
+  const perhaps = (n: string | null) => {
+    const v = x.voltOf(n)
+    return (!v || !!v.pulled) && !x.blockedWhy(n) && !x.timerOut(n) && x.on(n).some(o => ['R', 'Relay'].includes(x.part(o.ref)?.part ?? ''))
+  }
+  return ledStrings(x).filter(s => !s.rs.length && !s.opposed && !perhaps(s.top) && !perhaps(s.bot)).map(s => s.leds.map(l => l.ref))
+}
+
 const resultsSig = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.state}/${r.summary}`).join('\n')
 
 /** the result in `pool` that is the same check as `r` (same rule and part; by text when there are several) */
