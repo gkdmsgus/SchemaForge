@@ -25,6 +25,8 @@ const seen: Seen[] = []
 let failWith: { status: number; error: Record<string, string>; retry?: boolean } | null = null
 // set for L4d: the AI editor's streamed answer is this tool call's arguments, ending with this finish reason
 let editArgs: { args: string; finish: string } | null = null
+// set for L4e: the AI editor's stream sends one piece and stays open; closed once the server lets go of it
+let editHold: { closed: boolean } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
 
@@ -44,6 +46,13 @@ const mock = createServer((rq, rs) => {
       // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower (L8 asks for them)
       rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': failWith.retry ? 'true' : 'false' })
       return rs.end(JSON.stringify({ error: failWith.error }))
+    }
+    if (body.stream && editHold) {
+      const hold = editHold
+      rs.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 't', type: 'function', function: { name: 'edit_circuit', arguments: '{"reply":"잠' } }] }, finish_reason: null }] })}\n\n`)
+      rs.on('close', () => { hold.closed = true })
+      return
     }
     if (body.stream && editArgs) {   // the edit as a tool call, in two pieces
       const { args, finish } = editArgs, half = Math.ceil(args.length / 2)
@@ -107,8 +116,9 @@ async function stopServer(proc: ChildProcess) {
 
 type Health = { model?: string; provider?: string }
 
-const post = (base: string, path: string, body: unknown) =>
-  fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+const post2 = (base: string, path: string, body: unknown, signal?: AbortSignal) =>
+  fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+const post = (base: string, path: string, body: unknown) => post2(base, path, body)
 
 async function main() {
   // M6 first: the names the screen shows, without a server
@@ -255,6 +265,19 @@ async function main() {
       && /^R1 값을 2k로\t바꾸고 \n\n답이 길어 중간에 끊겼습니다/.test(esc.reply) && !esc.reply.includes('\\')
       && esc2.reply.startsWith(String.raw`see \u0041 and C:\temp` + '\t끝\n\n'),
       JSON.stringify({ empty, cut, whole, esc, esc2 }))
+
+    // L4e. the visitor leaves in the middle of an AI edit: the model's stream is dropped at once (it ran on for up to 45 s
+    // at the operator's cost, review of 2026-11-06)
+    const hold = { closed: false }
+    editHold = hold
+    const leave = new AbortController()
+    const leaving = await post2(grok.base, '/chat_edit', { graph: blinker, message: 'C1을 연결해줘' }, leave.signal)
+    await leaving.body!.getReader().read()
+    leave.abort()
+    const t0 = Date.now()
+    while (!hold.closed && Date.now() - t0 < 10000) await new Promise(r => setTimeout(r, 50))
+    editHold = null
+    check('L4e AI editor: the model stream ends when the visitor leaves', hold.closed, `${hold.closed ? `dropped ${Date.now() - t0} ms after the visitor left` : 'still open 10 s after the visitor left'}`)
 
     // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
     // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)

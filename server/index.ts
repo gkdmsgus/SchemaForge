@@ -910,6 +910,8 @@ changed.`
   const abort = new AbortController()
   // room for max_tokens 1200 at about 30 tokens/s, so a long edit ends cut short (asked for in parts), not timed out
   const timeout = setTimeout(() => abort.abort(), 45000)
+  // a visitor who leaves takes the model call along: it ran on for up to 45 s at the operator's cost (review of 2026-11-06)
+  res.on('close', () => abort.abort())
 
   try {
     const openai = modelClient()
