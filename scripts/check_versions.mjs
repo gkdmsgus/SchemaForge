@@ -8,7 +8,8 @@
 // PCB stream stops when its result screen goes: on ↺ and the logo, after an AI refusal rebuilt it without the AI rounds,
 // and a real stream cut in the middle says nothing (it ran on unseen: python, DRC and the paid AI rounds, and a new PCB
 // overlapped it on a 4 CPU server: review of 2026-11-06), V9 an AI editor stream that ends with no result says the
-// connection was lost, and its half answer does not go to the model with the next request (the cursor blinked on: 2026-11-06).
+// connection was lost, and its half answer does not go to the model with the next request (the cursor blinked on: 2026-11-06),
+// V10 the BOM's Mouser lookup goes with the login, and a refusal says it needs one, not that the server has no key.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -231,6 +232,24 @@ try {
   const half = JSON.stringify(edits[1]?.history ?? []).includes('바꾸는 중인 답')
   check('V9 an AI editor stream with no result says the connection was lost, and its half answer is not sent on', lostSaid && !cursor && edits.length === 2 && !half,
     `said ${lostSaid}, cursor ${cursor}, ${edits.length} requests, half answer sent on ${half}`)
+
+  // V10
+  const v10 = await onResult(never)
+  const lookups = []
+  await v10.p.route(/\/mouser_search$/, r => {
+    lookups.push(r.request().headers().authorization)
+    return json(r, lookups.length === 1 ? { available: false, refused: true, reason: 'check', results: [] } : { available: false, reason: 'MOUSER_API_KEY not set', results: [] })
+  })
+  await v10.p.locator('button.sf-drawer-tab', { hasText: 'BOM' }).first().click()
+  const lookup = v10.p.getByRole('button', { name: 'Mouser 가격 조회' })
+  await lookup.click()
+  const needsLogin = await v10.p.getByText('허용된 계정으로 로그인해야').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const noKeyLine = await v10.p.getByText('Mouser 키가 서버에 없어').isVisible()
+  const links = await v10.p.locator('[data-testid="bom-line"] a').count()
+  await lookup.click()
+  const noKey = await v10.p.getByText('Mouser 키가 서버에 없어').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('V10 a refused Mouser lookup says it needs a login, the search links stay, and no key still says no key',
+    lookups[0] === 'Bearer fake-token' && needsLogin && !noKeyLine && links > 0 && noKey, `sent ${lookups[0]}, login line ${needsLogin}, ${links} links, no-key line after ${noKey}`)
 } finally {
   await browser.close()
 }

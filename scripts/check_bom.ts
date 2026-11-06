@@ -312,6 +312,10 @@ function parseCsv(text: string): string[][] {
   check('B12b server search words = src/lib/bom.ts', JSON.stringify(words) === JSON.stringify(SEARCH_WORD), `${Object.keys(words).length} words`)
   const vite = fs.readFileSync('vite.config.ts', 'utf-8')
   check('B12c no dead /mouser_cart proxy', !vite.includes('/mouser_cart') && vite.includes('/mouser_search'))
+  // the lookup goes with the login, or a server that keeps its key for logins refuses it (the screen side: check_versions.mjs V10)
+  const table = fs.readFileSync(path.join('src', 'components', 'BomTable.tsx'), 'utf-8')
+  check('B12d the BOM asks with the login, and says when the server refused', /authFetch\('\/mouser_search'/.test(table) && !/[^h]fetch\('\/mouser_search'/.test(table)
+    && /refused: data\?\.refused === true/.test(table) && /current\.refused/.test(table))
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : `\nall BOM checks passed${skipped ? ` (${skipped} skipped: no saved boards in server/outputs)` : ''}`)

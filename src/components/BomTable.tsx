@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { authFetch } from '../api'
 import type { ComponentEntry } from '../types'
 import { Button, IconCheck, IconCopy, IconDownload } from './primitives'
 import { TONE_COLOR } from '../lib/boardChecks'
@@ -29,7 +30,8 @@ interface MouserResult {
 type Query =
   | { state: 'idle' }
   | { state: 'loading' }
-  | { state: 'unavailable'; sig: string }
+  /** refused: the server has a key but keeps it for logins (a visitor's lookups would spend its daily quota) */
+  | { state: 'unavailable'; sig: string; refused: boolean }
   | { state: 'error'; sig: string; message: string }
   | { state: 'done'; sig: string; asked: number; found: number; failed: number }
 
@@ -76,14 +78,14 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
     if (!todo.length) return
     setQuery({ state: 'loading' })
     try {
-      const res = await fetch('/mouser_search', {
+      const res = await authFetch('/mouser_search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ components: todo.map(l => ({ ref: l.refs[0], value: l.value, name: l.part, pkg: searchPkg(l) || null })) }),
       })
-      const data = await res.json().catch(() => null) as { available?: boolean; results?: MouserResult[]; error?: string } | null
+      const data = await res.json().catch(() => null) as { available?: boolean; refused?: boolean; results?: MouserResult[]; error?: string } | null
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
-      if (!data || data.available !== true) { setQuery({ state: 'unavailable', sig }); return }
+      if (!data || data.available !== true) { setQuery({ state: 'unavailable', sig, refused: data?.refused === true }); return }
       const byRef = new Map((data.results ?? []).map(r => [r.ref, r]))
       let found = 0, failed = 0
       for (const l of todo) {
@@ -221,7 +223,9 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
         <p className="sf-bom__note">구매 불필요 · 기판에 포함: {furnitureSummary(bom.furniture)}</p>
       )}
       <p className="sf-bom__note" role="status">
-        {current?.state === 'unavailable' && 'Mouser 키가 서버에 없어 가격·재고를 보여주지 않습니다. 각 줄의 검색 링크를 쓰세요.'}
+        {current?.state === 'unavailable' && (current.refused
+          ? 'Mouser 가격·재고 조회는 허용된 계정으로 로그인해야 쓸 수 있습니다. 각 줄의 검색 링크를 쓰세요.'
+          : 'Mouser 키가 서버에 없어 가격·재고를 보여주지 않습니다. 각 줄의 검색 링크를 쓰세요.')}
         {current?.state === 'done' && `Mouser에서 ${current.found}/${current.asked}종을 찾았습니다.${current.failed ? ` ${current.failed}종은 조회하지 못해 다시 조회할 수 있습니다.` : ''}`}
         {copied === 'done' && <span className="sr-only">표를 복사했습니다.</span>}
       </p>
