@@ -158,8 +158,8 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // the operating checks open from their chip in the tab bar, so they never sit over the schematic uninvited
   const [opOpen, setOpOpen] = useState(false)
-  // the netlist check on the circuit the AI editor changed, run again after every change (a fix made by chat shows at once)
-  const [aiErc, setAiErc] = useState<{ graph: NetGraph; findings: ErcFinding[] | null; error?: string } | null>(null)
+  // the netlist check run again after every change of the circuit (a fix made by chat shows at once) or of the style
+  const [aiErc, setAiErc] = useState<{ graph: NetGraph; style: 'smd' | 'tht'; findings: ErcFinding[] | null; error?: string } | null>(null)
   const [ercRetry, setErcRetry] = useState(0)       // 다시 점검: runs the check on the same circuit again
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
@@ -189,24 +189,29 @@ export default function ResultPanel({
       .then(got => { if (!off) setNetText({ file: netFile, ...got }) })
     return () => { off = true }
   }, [drawerOpen, activeTab, netFile, netText?.file])
+  // what the check runs on: an edited circuit, or the generated one on THT, since /generate's own check uses the SMD
+  // table and a pin's pad differs (a floating Q_NPN base is pad 1 on SMD, 2 on THT: the banner said 1 on a THT board,
+  // review of 2026-11-06). A code run's circuit says its findings in the Code tab, and a result with no check has no banner
+  const ercGraph = aiEdited ? localGraph : pcbStyle === 'tht' && result?.erc && !result.codeEdited ? result.graph ?? null : null
   useEffect(() => {
-    if (!aiEdited || !localGraph) return
+    if (!ercGraph) return
     let off = false
+    const style = pcbStyle
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: localGraph }) })
+        const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: ercGraph, style }) })
         const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string } | null
         if (off) return
         const why = res.status === 404 ? '서버에 이 점검 기능이 없습니다. 서버를 최신 코드로 다시 시작하면 됩니다.'
           : res.status === 400 ? '회로에 점검할 수 없는 이름(따옴표나 괄호)이 있습니다.'
             : !res.ok ? `서버가 점검하지 못했습니다 (HTTP ${res.status}).` : undefined
-        setAiErc({ graph: localGraph, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
+        setAiErc({ graph: ercGraph, style, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
       } catch {
-        if (!off) setAiErc({ graph: localGraph, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })
+        if (!off) setAiErc({ graph: ercGraph, style, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })
       }
     }, 300)
     return () => { off = true; clearTimeout(timer) }
-  }, [aiEdited, localGraph, ercRetry])
+  }, [ercGraph, pcbStyle, ercRetry])
   // a session opened again (history, favourites) may already be a favourite: the star starts filled
   useEffect(() => {
     if (!authUser || !sessionId) return
@@ -228,8 +233,9 @@ export default function ResultPanel({
   // a circuit error (a pin left on its own) makes a pass read as not judged
   const opHead = operatingHeadline(opResults, circuitErrors.length)
   const opFixMap = useMemo(() => (effectiveGraph ? opFixes(fromGraph(effectiveGraph, pcbStyle), opResults) : new Map<string, Fix>()), [effectiveGraph, pcbStyle, opResults])
-  const aiErcNow = aiEdited && aiErc?.graph === localGraph ? aiErc : null
-  const ercShown = aiEdited ? aiErcNow?.findings ?? [] : result?.erc?.findings ?? []
+  const aiErcNow = ercGraph && aiErc?.graph === ercGraph && aiErc.style === pcbStyle ? aiErc : null
+  // on THT with no edit, the generation's own check until the run with the THT table has answered (or if it could not run)
+  const ercShown = aiEdited ? aiErcNow?.findings ?? [] : aiErcNow?.findings ?? result?.erc?.findings ?? []
   const ercFixList = useMemo(() => ercFixes(ercShown, aiEdited ? localGraph : result?.graph), [ercShown, aiEdited, localGraph, result?.graph])
   // parts list: the board's footprints once a PCB exists (deps on parts/final, not every streamed frame)
   const boardParts = board?.parts
@@ -259,10 +265,11 @@ export default function ResultPanel({
     }
     const erc = result?.erc
     if (!erc || result?.codeEdited) return null
-    const errors = (erc.findings ?? []).filter(f => f.severity === 'error')
+    const findings = aiErcNow?.findings ?? erc.findings
+    const errors = (findings ?? []).filter(f => f.severity === 'error')
     const count = ercErrorCount(errors)
     const rep = erc.repair
-    if (!erc.findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
+    if (!findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
       lines: [erc.reason ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
     if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${count}개`,
       lines: [

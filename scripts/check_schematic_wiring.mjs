@@ -10,7 +10,10 @@
 // the press, so neither reached the part: frame review of 2026-10-30), S9 the view fits again when the drawer
 // below opens and closes (a circuit fitted with the Code drawer open stayed a tiny cluster after it closed), S10 the
 // circuit opens fitted when the schematic changes size before its parts are placed (it opened at zoom 1 from the
-// origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31).
+// origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31), S13 the check above the
+// schematic follows the SMD/THT choice: it runs again with that style on THT and after an AI edit, so its pad numbers
+// are the board's (the check always used the SMD table: a floating Q_NPN base read pad 1 on a THT board, where it is
+// pad 2: review of 2026-11-06). /erc_graph is faked, by the style it is sent.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -347,6 +350,56 @@ try {
   check('S12 the PCB tab and back moves no part (C4 added); a part taken out comes back to its spot on undo, the PCB tab in between',
     Object.keys(s3).length >= 10 && !!s3.C4 && !tabMoved.length && !undoMoved.length && !leftPlace(s2, s3b, false).length,
     `moved by the tabs [${tabMoved}]; moved after removing D1 and undoing [${undoMoved}]${s3b.D1 && s4.D1 ? `; D1 ${s3b.D1.at} -> ${s4.D1.at}` : ''}`)
+
+  // S13: a generation whose answer carries one error, as /generate checks it (with the SMD table)
+  const ctx13 = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await ctx13.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+  })
+  const p13 = await ctx13.newPage()
+  const floatingBase = pad => ({ rule: 'floating_pin', severity: 'error', message: `Q1의 B 핀(${pad === '1' ? '1번' : `1번, 기판 패드 ${pad}`})이 떠 있습니다`,
+    refs: [{ ref: 'Q1', pin: pad, sym: '1', name: 'B' }], net: null })
+  const demo13 = await fetch(`${BASE}/demo_result/motor`).then(r => r.json())
+  const checked = []
+  await p13.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await p13.route(/\/(favorites|sessions)(\/.*)?$/, r => json(r, { favorites: [], sessions: [], messages: [], id: 's1' }))
+  await p13.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream',
+    body: `event: done\ndata: ${JSON.stringify({ ...demo13, erc: { findings: [floatingBase('1')], repair: null } })}\n\n` }))
+  await p13.route(/\/erc_graph$/, r => {
+    const sent = r.request().postDataJSON()
+    checked.push(sent)
+    return json(r, { erc: [floatingBase(sent.style === 'tht' ? '2' : '1')] })
+  })
+  await p13.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: 'R1 값을 바꿨습니다.', actions: [{ type: 'modify_component', ref: 'R1', value: '2k2' }] })}\n\n` }))
+  await p13.goto(BASE, { waitUntil: 'networkidle' })
+  await p13.locator('.sf-home-input textarea').fill('베이스가 뜬 모터 회로')
+  await p13.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  const notice = p13.getByTestId('erc-notice')
+  await notice.waitFor({ timeout: 20000 })
+  const atSmd = await notice.innerText(), sentAtSmd = checked.length
+  await p13.getByRole('button', { name: 'THT', exact: true }).click()
+  const thtPad = await notice.getByText('기판 패드 2').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const onResult = checked.at(-1)
+  await p13.getByRole('button', { name: 'SMD', exact: true }).click()
+  await p13.waitForTimeout(600)
+  const backSmd = await notice.innerText()
+  await p13.getByRole('button', { name: 'THT', exact: true }).click()
+  await notice.getByText('기판 패드 2').waitFor({ timeout: 5000 }).catch(() => {})
+  await p13.getByTestId('chat-input').fill('R1 값을 2k2로 바꿔줘')
+  await p13.getByTestId('chat-input').press('Enter')
+  await p13.waitForFunction(() => /AI 편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 5000 }).catch(() => {})
+  const editedTht = await notice.innerText(), sentEdited = checked.at(-1)
+  await p13.getByRole('button', { name: 'SMD', exact: true }).click()
+  await p13.waitForFunction(() => /AI 편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || '')
+    && !/기판 패드/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 5000 }).catch(() => {})
+  const editedSmd = await notice.innerText(), sentSmd = checked.at(-1)
+  const r1 = g => g?.components?.find(c => c.ref === 'R1')?.value
+  check('S13 the check above the schematic has the pad numbers of the SMD/THT choice, before and after an AI edit',
+    /\(1번\)/.test(atSmd) && sentAtSmd === 0 && thtPad && onResult?.style === 'tht' && r1(onResult?.graph) === r1(demo13.graph) && /\(1번\)/.test(backSmd)
+    && /기판 패드 2/.test(editedTht) && sentEdited?.style === 'tht' && r1(sentEdited?.graph) === '2k2' && !/기판 패드/.test(editedSmd) && sentSmd?.style === 'smd',
+    `SMD ${sentAtSmd} calls; THT pad 2 ${thtPad} (${onResult?.style}); back on SMD ${/\(1번\)/.test(backSmd)}; edited ${sentEdited?.style} ${/기판 패드 2/.test(editedTht)}, then ${sentSmd?.style} ${!/기판 패드/.test(editedSmd)}`)
 } finally {
   await browser.close()
 }
