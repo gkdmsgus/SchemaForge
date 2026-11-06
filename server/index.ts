@@ -9,7 +9,6 @@ import {
 import { join, basename } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import OpenAI from 'openai'
 import {
   MAX_ROUNDS, applyEdit, askModel, backup, better, clashText, describeBoard, describeOutcome, metricsOf, precheck, precheckNote,
   splitEdit, readBoard, roundFeedback, runGenerator,
@@ -19,7 +18,7 @@ import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import { sweepOutputs } from './outputs_sweep'
-import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
+import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
@@ -702,7 +701,7 @@ app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Requ
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const response = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages: [
@@ -768,7 +767,7 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const response = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages: [
@@ -913,7 +912,7 @@ changed.`
   const timeout = setTimeout(() => abort.abort(), 45000)
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const stream = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages,

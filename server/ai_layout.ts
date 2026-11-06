@@ -10,8 +10,8 @@ import { copyFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } fro
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import OpenAI from 'openai'
-import { MODEL_BASE, MODEL_MINI, modelExtra } from './model'
+import type OpenAI from 'openai'
+import { MODEL_MINI, modelClient, modelExtra } from './model'
 
 // SF_AI_MODEL picks another model than the server's SF_MODEL_MINI (the provider is OPENAI_BASE_URL, model.ts).
 // SF_AI_JSON=1 is for gateways that drop `tools`: the model answers with the same object as plain JSON.
@@ -516,7 +516,7 @@ export function stubEdit(round: number): BoardEdit {
 
 export async function askModel(prompt: string, history: string[]): Promise<BoardEdit> {
   if (process.env.SF_AI_STUB === '1') return stubEdit(history.length + 1)
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+  const openai = modelClient()
   if (JSON_MODE) return askModelJson(openai, prompt, history)
   const res = await openai.chat.completions.create({
     model: AI_MODEL, ...modelExtra(),

@@ -1,4 +1,4 @@
-// Checks L1-L7: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
+// Checks L1-L8: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
 // prompt's part and spec rules as sent (L2b). A mock OpenAI-compatible API runs on a local port and
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
@@ -11,7 +11,7 @@ import { readFileSync } from 'fs'
 import { createServer } from 'http'
 import { createServer as createNetServer, type AddressInfo } from 'net'
 import { join } from 'path'
-import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, modelFailure, modelLabel, modelProvider } from './model'
+import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_TIMEOUT_MS, modelClient, modelFailure, modelLabel, modelProvider } from './model'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -22,7 +22,7 @@ const check = (name: string, pass: boolean, info = '') => {
 type Seen = { path: string; auth: string; model: string; effort: string; stream: boolean; json: boolean; system: string; user: string }
 const seen: Seen[] = []
 // set for L7: every model call is answered with this error, as OpenAI answers when the credit is gone or it is busy
-let failWith: { status: number; error: Record<string, string> } | null = null
+let failWith: { status: number; error: Record<string, string>; retry?: boolean } | null = null
 // set for L4d: the AI editor's streamed answer is this tool call's arguments, ending with this finish reason
 let editArgs: { args: string; finish: string } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
@@ -41,8 +41,8 @@ const mock = createServer((rq, rs) => {
     })
     if (rq.url !== '/v1/chat/completions') { rs.writeHead(404); return rs.end('{}') }
     if (failWith) {
-      // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower
-      rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': 'false' })
+      // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower (L8 asks for them)
+      rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': failWith.retry ? 'true' : 'false' })
       return rs.end(JSON.stringify({ error: failWith.error }))
     }
     if (body.stream && editArgs) {   // the edit as a tool call, in two pieces
@@ -132,6 +132,15 @@ async function main() {
     shapes.sdkQuota === MODEL_NO_CREDIT && shapes.axiosQuota === MODEL_NO_CREDIT && shapes.xaiCredit === MODEL_NO_CREDIT
     && shapes.busy === MODEL_BUSY && shapes.key === MODEL_KEY_REFUSED && shapes.other === null && shapes.plain === null,
     JSON.stringify(Object.fromEntries(Object.entries(shapes).map(([k, v]) => [k, v?.slice(0, 18) ?? null]))))
+
+  // L8. every OpenAI SDK call site takes its client from modelClient(): the SDK's own 10 minutes and 2 retries outlast
+  // the whole AI budget, so a stalled model cost a finished board (review of 2026-11-06). 60 s, one retry: about 2 minutes
+  const client = (() => { process.env.OPENAI_API_KEY ||= 'check-only'; return modelClient() })()
+  const callers = ['index.ts', 'ai_layout.ts'].map(f => [f, readFileSync(f, 'utf8')] as const)
+  const own = callers.filter(([, text]) => text.includes('new OpenAI(') || !text.includes('modelClient()')).map(([f]) => f)
+  check('L8 model client: 60 s, one retry, used by every call site', client.timeout === 60000 && client.maxRetries === 1
+    && MODEL_TIMEOUT_MS === 60000 && MODEL_RETRIES === 1 && own.length === 0,
+    `timeout ${client.timeout} ms, retries ${client.maxRetries}${own.length ? `; its own client: ${own.join(', ')}` : ''}`)
 
   await new Promise<void>(resolve => mock.listen(0, '127.0.0.1', () => resolve()))
   const mockBase = `http://127.0.0.1:${(mock.address() as AddressInfo).port}/v1`
@@ -266,6 +275,12 @@ async function main() {
     const busyError = String((await busy.json() as { error?: string }).error ?? '')
     check('L7b model busy: the plan answers 429 and asks to try again shortly', busy.status === 429 && busyError === MODEL_BUSY,
       `${busy.status} ${busyError}`)
+
+    // L8b. the same on the wire: an answer the SDK may retry (500) is asked twice from a route, not three times
+    failWith = { status: 500, error: { message: 'down', type: 'server_error', code: 'server_error' }, retry: true }
+    n = seen.length
+    const down = await post(grok.base, '/plan', { description: 'LED 하나를 켜는 회로' })
+    check('L8b a retryable failure is asked once more, no further', down.status === 500 && at(n).length === 2, `${down.status} after ${at(n).length} call(s)`)
     failWith = null
   } finally {
     await stopServer(grok.proc)

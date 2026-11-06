@@ -5,6 +5,8 @@
 //   SF_REASONING_EFFORT  sent as reasoning_effort when set: Grok models reason first and the reasoning counts
 //                        against the answer's tokens; grok-4.3 takes "none"
 
+import OpenAI from 'openai'
+
 export const MODEL_BASE = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
 export const MODEL = process.env.SF_MODEL || 'gpt-4o'
 export const MODEL_MINI = process.env.SF_MODEL_MINI || 'gpt-4o-mini'
@@ -12,6 +14,14 @@ export const MODEL_MINI = process.env.SF_MODEL_MINI || 'gpt-4o-mini'
 /** extra request fields for every model call ({} on OpenAI by default) */
 export const modelExtra = (): Record<string, string> =>
   process.env.SF_REASONING_EFFORT ? { reasoning_effort: process.env.SF_REASONING_EFFORT } : {}
+
+// The SDK's own limits are 10 minutes and 2 retries, longer than the AI rounds' whole budget, so a stalled model cost
+// a finished board (review of 2026-11-06). With these a stalled call gives up after about 2 minutes.
+export const MODEL_TIMEOUT_MS = 60_000
+export const MODEL_RETRIES = 1
+
+/** the client for every OpenAI SDK call (axios calls in index.ts set their own timeouts) */
+export const modelClient = () => new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE, timeout: MODEL_TIMEOUT_MS, maxRetries: MODEL_RETRIES })
 
 /** the name the screen shows: gpt-4o → GPT-4o, gpt-4o-mini → GPT-4o mini, grok-4.3 → Grok 4.3 */
 export function modelLabel(id: string): string {
