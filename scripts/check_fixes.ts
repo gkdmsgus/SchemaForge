@@ -233,6 +233,37 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
     named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
 }
 
+// G7b. an added part is saved under its template, by its value's unit with no name (2026-11-06 sweep: {value: '100nF'}
+// was a part named C2, 'capacitor' and 'relay' stayed as written: no footprint on the board, no part to the operating
+// check). A name that decides no one template stays as written, so the board reports it unmapped
+{
+  const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'U1', value: 'AMS1117-3.3', name: 'REG' }, { ref: 'C1', value: '100nF', name: 'C' }],
+    nets: [net('VIN', 'BT1.1', 'U1.3'), net('VOUT', 'U1.2', 'C1.1'), net('GND', 'BT1.2', 'U1.1', 'C1.2')] }
+  const added = (a: Omit<ChatAction, 'type'>) => applyActions(g, withRefs(g, [{ type: 'add_component', ...a }])).components.find(c => !g.components.some(x => x.ref === c.ref))
+  const table: [Omit<ChatAction, 'type'>, string, string][] = [
+    [{ value: '100nF' }, 'C', 'C2'], [{ value: '10uH' }, 'L', 'L1'], [{ value: '4.7k' }, 'R', 'R1'], [{ value: '4k7' }, 'R', 'R1'], [{ value: '470Ω' }, 'R', 'R1'], [{ value: '330R' }, 'R', 'R1'], [{ value: '4u7' }, 'C', 'C2'],
+    [{ name: 'capacitor', value: '10uF' }, 'C', 'C2'], [{ name: '커패시터' }, 'C', 'C2'], [{ name: 'CP', value: '22uF' }, 'CP', 'C2'], [{ name: 'cp' }, 'CP', 'C2'],
+    [{ name: '저항', value: '1k' }, 'R', 'R1'], [{ name: 'resistor' }, 'R', 'R1'], [{ name: 'inductor' }, 'L', 'L1'], [{ name: 'led', value: 'RED' }, 'LED', 'D1'], [{ name: 'diode' }, 'D', 'D1'],
+    [{ name: 'relay', value: '5V' }, 'Relay', 'K1'], [{ name: '릴레이' }, 'Relay', 'K1'], [{ name: 'buzzer' }, 'Buzzer', 'LS1'], [{ name: 'battery', value: '9V' }, 'Battery', 'BT2'], [{ name: 'crystal' }, 'Crystal', 'Y1'], [{ name: 'switch' }, 'SW', 'SW1'],
+    [{ name: 'q_npn' }, 'Q_NPN', 'Q1'], [{ name: 'Q_NMOS' }, 'Q_NMOS', 'Q1'], [{ name: 'reg', value: 'LM7805' }, 'REG', 'U2'], [{ name: 'ne555' }, 'NE555', 'U2'],
+    // a reference does not change it
+    [{ ref: 'C9', value: '1uF' }, 'C', 'C9'], [{ ref: 'R9', name: 'resistor', value: '1k' }, 'R', 'R9'],
+    // no one template: as written, reported unmapped
+    [{ ref: 'Q5', name: 'Q' }, 'Q', 'Q5'], [{ ref: 'U5', name: 'U' }, 'U', 'U5'], [{ ref: 'J5', name: 'conn' }, 'conn', 'J5'], [{ name: 'Conn_01x02' }, 'Conn_01x02', 'J1'], [{ ref: 'SW5', name: 'SW_SPDT' }, 'SW_SPDT', 'SW5'],
+    [{ ref: 'X1', name: 'Widget', value: '100nF' }, 'Widget', 'X1'], [{ ref: 'U7', value: 'LM358' }, 'U7', 'U7'], [{ ref: 'R5', name: '  ', value: 'x' }, 'R5', 'R5'],
+  ]
+  const wrong = table.filter(([a, name, ref]) => { const c = added(a); return c?.name !== name || c?.ref !== ref }).map(([a]) => `${JSON.stringify(a)} -> ${JSON.stringify(added(a))}`)
+  // every template it names is one the footprint table has, in both styles
+  const footprints = fs.readFileSync(path.join('server', 'pcb', 'footprints_table.py'), 'utf8')
+  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'R5', 'Conn_01x02'].includes(n))
+    .filter(n => !footprints.includes(`('${n}', 'smd')`) || !footprints.includes(`('${n}', 'tht')`))
+  // 22uF added with no name counts as the regulator's output capacitor
+  const edit = chatEdit(g, [{ type: 'add_component', value: '22uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: 'C2', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C2', pin: '2' }] }], '출력에 22uF를 추가해줘')
+  const reg = operatingChecks(fromGraph(edit.graph)).find(r => r.rule === 'op_reg' && r.ref === 'U1')
+  check('G7b an added part is saved under its template (by the unit with no name); a name that decides none stays; the operating check counts it',
+    !wrong.length && !missing.length && reg?.state === 'pass', [...wrong, ...missing, `${reg?.state}: ${reg?.summary}`].join(' | '))
+}
+
 // G8-G10. an AI edit does not move a pin of a part the request does not name (live, 2026-10-30 tour, the 555 LED
 // blinker): the move is held back and the chat says which parts kept their connections, in words with no pin
 // number or net name. The 555 circuit as it was then:
