@@ -1229,12 +1229,14 @@ function cleanGraph(g: NetGraph | undefined): NetGraph | null {
 }
 
 app.post('/erc_graph', async (req: Request, res: Response) => {
-  const clean = cleanGraph((req.body || {}).graph)
+  const { graph, style } = req.body || {}
+  const clean = cleanGraph(graph)
   if (!clean) return res.status(400).json({ error: 'graph with components and nets required' })
   const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
   try {
     writeFileSync(netPath, graphToNetlist(clean), 'utf8')
-    const erc = await runErc(netPath, process.cwd())
+    // the board's style: a finding names a pad, and a floating NPN base is pad 1 in SMD, pad 2 in THT (review of 2026-11-06)
+    const erc = await runErc(netPath, process.cwd(), undefined, pcbStyle(style))
     res.json(erc.ok ? { erc: erc.findings } : { erc: null, ercError: erc.reason })
   } finally {
     try { unlinkSync(netPath) } catch { /* already gone */ }

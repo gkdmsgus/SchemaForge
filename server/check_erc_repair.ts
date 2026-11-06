@@ -1,8 +1,8 @@
-// Checks E1-E23: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E24: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
 // behind (E12-E13, E18, E22-E23), the /generate and /test_code wiring read as text (E15-E16), the pin names
 // erc.py shares with the front end (E19), where findings point on the board (E20), and the prompt's
-// ref= rule run in skidl (E21).
+// ref= rule run in skidl (E21), and pad numbers by board style through /erc_graph (E24).
 // No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
@@ -279,6 +279,18 @@ try { await runSkidl("import sys\nwhile True: sys.stderr.write('x' * 65536)\n", 
 const grew = Math.round((process.memoryUsage().rss - rss0) / 1048576)
 check('E23 stderr capped, its end kept', /NameError: the last line/.test(tail) && tail.length <= STDERR_KEPT && /timed out/.test(flood) && grew < 300,
   `traceback end kept=${/NameError: the last line/.test(tail)} ${tail.length} chars; endless stderr: "${flood.slice(0, 60)}", RSS +${grew} MB`)
+
+// E24. the same floating NPN base is pad 1 on an SMD board and pad 2 on a through-hole one, and /erc_graph (read as text)
+//      checks with the style it is sent: it always ran SMD, so a THT board's finding named the wrong pad (review of 2026-11-06)
+const relay = readFileSync(join('test_circuits', 'npn_relay.py'), 'utf8')
+const noBase = relay.replace(/^q1\['B'\] \+= base\r?\n/m, '')
+const noBaseNet = await run(noBase)
+const baseOf = (r: ErcRun) => (r.ok ? r.findings.flatMap(f => f.refs).find(x => x.ref === 'Q1') : undefined)
+const smdBase = baseOf(await runErc(noBaseNet, cwd, 30000, 'smd')), thtBase = baseOf(await runErc(noBaseNet, cwd, 30000, 'tht'))
+const ercRoute = src.slice(src.indexOf("app.post('/erc_graph'"), src.indexOf('// ── GET /download/:filename'))
+check('E24 pad numbers by board style', noBase !== relay && smdBase?.pin === '1' && thtBase?.pin === '2' && smdBase?.sym === '1' && thtBase?.sym === '1'
+  && /runErc\(netPath, process\.cwd\(\), undefined, pcbStyle\(style\)\)/.test(ercRoute),
+  `smd ${JSON.stringify(smdBase)} tht ${JSON.stringify(thtBase)} route passes the style: ${/pcbStyle\(style\)/.test(ercRoute)}`)
 
 try { rmSync(work, { recursive: true, force: true }) } catch { /* leave it */ }
 console.log(ok ? '\nALL PASS' : '\nSOME CHECKS FAILED')
