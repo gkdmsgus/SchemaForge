@@ -112,8 +112,8 @@ export function parseFarads(v: string): number | null {
   const s = valuePart(v)
   const point = /^(\d+)([pnuµμm])(\d+)f?$/i.exec(s)      // 4u7 is 4.7 uF (2026-11-06 sweep: read as no value, "단위가 필요합니다")
   const m = point ?? /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(s)
-  if (!m || (!m[2] && !point && !m[3])) return null      // "104" is a code, not 104 F
-  if (m[2] === 'M') return null                          // "100MF" is an old way to write µF, not 0.1 F: not read at all
+  if (!m || (!m[2] && !m[3])) return null      // "104" is a code, not 104 F
+  if (m[2] === 'M') return null                // "100MF" is an old way to write µF, not 0.1 F: not read at all
   const mul: Record<string, number> = { '': 1, p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3 }
   const f = Number(point ? `${m[1]}.${m[3]}` : m[1]) * mul[(m[2] || '').toLowerCase()]
   return Number.isFinite(f) ? f : null

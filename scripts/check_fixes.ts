@@ -251,11 +251,13 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
     // no one template: as written, reported unmapped
     [{ ref: 'Q5', name: 'Q' }, 'Q', 'Q5'], [{ ref: 'U5', name: 'U' }, 'U', 'U5'], [{ ref: 'J5', name: 'conn' }, 'conn', 'J5'], [{ name: 'Conn_01x02' }, 'Conn_01x02', 'J1'], [{ ref: 'SW5', name: 'SW_SPDT' }, 'SW_SPDT', 'SW5'],
     [{ ref: 'X1', name: 'Widget', value: '100nF' }, 'Widget', 'X1'], [{ ref: 'U7', value: 'LM358' }, 'U7', 'U7'], [{ ref: 'R5', name: '  ', value: 'x' }, 'R5', 'R5'],
+    // a part number that ends like a unit tells no kind
+    [{ ref: 'U8', value: 'LM7805F' }, 'U8', 'U8'], [{ ref: 'Q8', value: '2N3904H' }, 'Q8', 'Q8'],
   ]
   const wrong = table.filter(([a, name, ref]) => { const c = added(a); return c?.name !== name || c?.ref !== ref }).map(([a]) => `${JSON.stringify(a)} -> ${JSON.stringify(added(a))}`)
   // every template it names is one the footprint table has, in both styles
   const footprints = fs.readFileSync(path.join('server', 'pcb', 'footprints_table.py'), 'utf8')
-  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'R5', 'Conn_01x02'].includes(n))
+  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'U8', 'Q8', 'R5', 'Conn_01x02'].includes(n))
     .filter(n => !footprints.includes(`('${n}', 'smd')`) || !footprints.includes(`('${n}', 'tht')`))
   // 22uF added with no name counts as the regulator's output capacitor
   const edit = chatEdit(g, [{ type: 'add_component', value: '22uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: 'C2', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C2', pin: '2' }] }], '출력에 22uF를 추가해줘')
