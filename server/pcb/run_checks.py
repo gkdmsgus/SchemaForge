@@ -10,7 +10,8 @@ import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from board import build_board, generate, netlist_check, parse_netlist, BOARD_MARGIN, MAX_PLACEHOLDER_PINS  # noqa: E402
+from board import build_board, generate, hpwl, netlist_check, parse_netlist, BOARD_MARGIN, MAX_PLACEHOLDER_PINS  # noqa: E402
+import placer  # noqa: E402
 from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
@@ -418,6 +419,42 @@ def check_pin_number_bomb(work):
     return bomb_ok and edge_ok, f"{'; '.join(info)}; pads={pads} warnings={done['board']['warnings']} edge={warnings}"
 
 
+def check_local_search(work):
+    """The local search's candidate costs (one numpy step per rotation, its own rotation math) move exactly as hpwl() does
+    for every part at poses in all four rotations, and a round does not go back to a python call per candidate, which was
+    most of the placement time (2026-11-06): pad_positions runs once per other part, not once per candidate."""
+    net = build_netlist('ne555_blink', work)
+    components, nets = parse_netlist(open(net, encoding='utf-8').read())
+    parts, _, _ = build_board(components, nets, 'tht')
+    placer.force_place(parts, nets)
+    worst = 0.0
+    for p in parts:
+        home = p['x'], p['y'], p['rot']
+        cands = [(home[0] + 3.0 * i, home[1] - 2.0 * i, (home[2] + 90 * i) % 360) for i in range(8)]
+        costs = placer._part_costs(p, cands, placer._net_boxes([q for q in parts if q is not p]))
+        totals = []
+        for cand in cands:
+            p['x'], p['y'], p['rot'] = cand
+            totals.append(hpwl(parts))
+        p['x'], p['y'], p['rot'] = home
+        worst = max(worst, *(abs((t - totals[0]) - (c - costs[0])) for t, c in zip(totals, costs)))
+    calls = 0
+    counted = placer.pad_positions
+
+    def counting(*args):
+        nonlocal calls
+        calls += 1
+        return counted(*args)
+
+    placer.pad_positions = counting
+    try:
+        placer._local_search_round(parts, {})
+    finally:
+        placer.pad_positions = counted
+    limit = len(parts) * (len(parts) - 1)
+    return worst < 1e-6 and 0 < calls <= limit, f'cost off hpwl by {worst:.2e} mm; pad_positions {calls} calls, limit {limit}'
+
+
 def check_templates():
     """7. every part template in SYSTEM_PROMPT has a table entry (or is a documented exception)."""
     src = open(os.path.join(SERVER, 'index.ts'), encoding='utf-8').read()
@@ -469,6 +506,11 @@ def main():
     n_ok, n_info = check_pin_number_bomb(n_dir)
     all_ok &= n_ok
     print(f'== huge pin number capped {"PASS" if n_ok else "FAIL"}  {n_info}')
+    l_dir = os.path.join(work_root, 'local_search')
+    os.makedirs(l_dir, exist_ok=True)
+    l_ok, l_info = check_local_search(l_dir)
+    all_ok &= l_ok
+    print(f'== local search costs = hpwl, per rotation {"PASS" if l_ok else "FAIL"}  {l_info}')
     t_ok, t_info = check_templates()
     all_ok &= t_ok
     print(f'== templates {"PASS" if t_ok else "FAIL"}  {t_info}')
