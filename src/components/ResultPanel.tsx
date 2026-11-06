@@ -238,6 +238,13 @@ export default function ResultPanel({
     ? { parts: boardFinal?.parts ?? boardParts ?? [], unmapped: boardFinal?.unmapped ?? [] }
     : null), [boardFinal, boardParts])
   const bomStyle = boardFinal?.style ?? pcbStyle
+  // what a maker would build wrong from this board: the gerber step warns instead of saying to upload it as it is
+  // (green, with an unrouted net or a stand-in footprint: review of 2026-11-06). Ordering is the person's call, so it still downloads
+  const fabIssues = [
+    boardFinal?.unrouted?.length ? `이어지지 않은 연결 ${boardFinal.unrouted.length}개` : '',
+    pcbSummary?.unmapped?.length ? `풋프린트 없는 부품 ${pcbSummary.unmapped.length}개` : '',
+    board?.drc?.unconnected ? `KiCad 점검에서 끊긴 곳 ${board.drc.unconnected}개` : '',
+  ].filter(Boolean)
   // the netlist check /generate ran: shown on the schematic while the circuit is still that netlist
   const ercNotice = useMemo(() => {
     // after an AI edit: the check run on the edited circuit (the generated one no longer applies)
@@ -948,11 +955,12 @@ export default function ResultPanel({
                 {/* done: the zip itself is the "done" sign, so the narrow tab bar does not push it out of view */}
                 {gerberStatus === 'done' && (gerberInfo?.zip
                   ? <a href={gerberFileUrl(gerberInfo.dir, gerberInfo.zip)} download data-testid="gerber-zip"
-                      title="거버 완료 · PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올립니다"
-                      style={{ ...ghostBtn, textDecoration: 'none', color: TONE_COLOR.ok, borderColor: TONE_COLOR.ok, fontWeight: 600 }}>
-                      ↓ 거버 zip
+                      title={fabIssues.length ? `거버 완료 · ${fabWarning(fabIssues)}` : '거버 완료 · PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올립니다'}
+                      style={{ ...ghostBtn, textDecoration: 'none', color: TONE_COLOR[fabIssues.length ? 'warn' : 'ok'],
+                        borderColor: TONE_COLOR[fabIssues.length ? 'warn' : 'ok'], fontWeight: 600 }}>
+                      ↓ 거버 zip{fabIssues.length ? ' · 확인 필요' : ''}
                     </a>
-                  : <StatusChip tone="ok">거버 완료</StatusChip>)}
+                  : <StatusChip tone={fabIssues.length ? 'warn' : 'ok'} title={fabIssues.length ? fabWarning(fabIssues) : undefined}>거버 완료</StatusChip>)}
                 {gerberStatus === 'error' && (
                   <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
                     style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>
@@ -1220,7 +1228,7 @@ export default function ResultPanel({
                 pcbStale={pcbStale === 'circuit'} onRegeneratePcb={() => generatePCB()} canRun={!!authUser} onAuthExpired={onAuthExpired} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
-              <GerberFilePanel info={gerberInfo} />
+              <GerberFilePanel info={gerberInfo} issues={fabIssues} />
             )}
           </div>
         )}
@@ -1399,7 +1407,9 @@ type GerberInfo = { dir: string; files?: string[]; zip?: string }
 
 const gerberFileUrl = (dir: string, file: string) => `/download_gerber_file/${dir}/${encodeURIComponent(file)}`
 
-function GerberFilePanel({ info }: { info: GerberInfo }) {
+const fabWarning = (issues: string[]) => `주문 전에 고칠 것이 있습니다: ${issues.join(', ')}. 이대로 만들면 기판이 동작하지 않을 수 있습니다.`
+
+function GerberFilePanel({ info, issues }: { info: GerberInfo; issues: string[] }) {
   const { dir, files = [], zip } = info
   const layerLabels = {
     '.gtl': '상단 동박 (Top Copper)',
@@ -1431,7 +1441,7 @@ function GerberFilePanel({ info }: { info: GerberInfo }) {
           color: 'var(--sf-amber)', letterSpacing: '0.14em',
         }}>GERBER</span>
         <span style={{ fontSize: 11, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)' }}>
-          {files.length}개 파일 · 제조사 업로드 가능
+          {files.length}개 파일 · {issues.length ? '제조 전 확인 필요' : '제조사 업로드 가능'}
         </span>
         <span style={{ flex: 1 }} />
         {zip && (
@@ -1442,7 +1452,11 @@ function GerberFilePanel({ info }: { info: GerberInfo }) {
           }}>↓ zip 한 번에 받기</a>
         )}
       </div>
-      {zip && (
+      {issues.length > 0 ? (
+        <p role="alert" data-testid="gerber-warning" style={{ margin: '0 0 10px', fontSize: 11.5, lineHeight: 1.5, color: TONE_COLOR.warn }}>
+          {fabWarning(issues)} 고친 뒤 PCB와 거버를 다시 만듭니다.{zip ? ' 아래는 zip 안의 파일입니다.' : ''}
+        </p>
+      ) : zip && (
         <p style={{ margin: '0 0 10px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--sf-fg-muted)' }}>
           PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올리면 됩니다. 아래는 zip 안의 파일입니다.
         </p>

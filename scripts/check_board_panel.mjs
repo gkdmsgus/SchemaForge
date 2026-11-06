@@ -6,7 +6,9 @@
 // B5 with the AI edit panel open too, the AI rounds box (folded or open) covers no view button, B6 with the Code drawer
 // open (a low board pane) in 나란히 the folded header shares no area with the 2D or the 3D view, B8 on that low 3D pane
 // the hint is an ⓘ chip, not the line, and with the BOM drawer or none the line is back, B7 in 2D, zoomed in, the
-// folded header shares none with the board drawing.
+// folded header shares none with the board drawing, B9 the gerber step warns on a board with a net left unrouted, a part
+// with no footprint or a break KiCad found, in its colour, title and lines, and still downloads (it was green with
+// "그대로 올리면 됩니다" on such a board: review of 2026-11-06), and a clean board stays green.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -29,9 +31,11 @@ try {
     { round: 1, part: 'place', reason: 'C3을 U1 가까이 옮깁니다', actions: { moves: [{ ref: 'C3', dx: 2, dy: 0 }] }, before: m, kept: false, note: '배치 사전 검사 불합격: C3 자리가 R2 자리와 겹침' },
     { round: 2, part: 'place', reason: 'R1을 옮깁니다', actions: { moves: [{ ref: 'R1', dx: 1, dy: 0 }] }, before: m, after: { ...m, hpwl: 125 }, kept: false, note: '개선 없음' },
   ]
+  let builtBoard = ''   // the real stream, for B9
   await page.route(/\/generate_pcb_stream$/, async route => {
     const res = await route.fetch({ timeout: 300000 })
     const body = (await res.text()).replace(/^event: done$/m, rounds.map(r => `event: ai\ndata: ${JSON.stringify(r)}\n\n`).join('') + 'event: done')
+    builtBoard = body
     await route.fulfill({ response: res, body })
   })
   await page.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
@@ -160,6 +164,43 @@ try {
   const h7 = await list.boundingBox(), d7 = await view2d()
   check('B7 2D zoomed in, folded: the header covers none of the board drawing', !!h7 && area(h7, d7) === 0,
     `over the drawing ${pct(area(h7, d7), d7)}`)
+
+  // B9: that board's stream with one thing wrong in it each time; the gerber answer faked, so only the screen is tested
+  const edited = (event, change) => builtBoard.replace(new RegExp(`^event: ${event}\\ndata: (.*)$`, 'm'), (_, raw) => {
+    const data = JSON.parse(raw)
+    change(data)
+    return `event: ${event}\ndata: ${JSON.stringify(data)}`
+  })
+  const gerberStep = async stream => {
+    const p = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+    await p.route(/\/generate_pcb_stream$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: stream }))
+    await p.route(/\/generate_gerber$/, r => r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ gerberDir: 'check', files: ['check-F_Cu.gtl', 'check-PTH.drl'], zip: 'check.zip' }) }))
+    await p.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+    await p.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+    await p.getByRole('button', { name: /^거버$/ }).click({ timeout: 30000 })
+    const zip = p.getByTestId('gerber-zip')
+    await zip.waitFor({ timeout: 10000 })
+    await p.locator('button.sf-drawer-tab', { hasText: 'Netlist' }).first().click()
+    await p.getByTestId('gerber-zip-panel').waitFor({ timeout: 5000 })
+    const seen = { title: await zip.getAttribute('title'), color: await zip.evaluate(e => getComputedStyle(e).color), href: await zip.getAttribute('href'),
+      panel: await p.getByTestId('gerber-zip-panel').locator('xpath=ancestor::div[2]').innerText(), panelHref: await p.getByTestId('gerber-zip-panel').getAttribute('href') }
+    await p.context().close()
+    return seen
+  }
+  const clean = await gerberStep(builtBoard)
+  const green = /그대로 올립니다/.test(clean.title ?? '') && /제조사 업로드 가능/.test(clean.panel) && /그대로 올리면 됩니다/.test(clean.panel)
+  check('B9 a clean board: the gerber step stays green with its upload lines', green && !/확인 필요/.test(clean.panel), `title "${clean.title}"`)
+  for (const [what, stream, word] of [
+    ['a net left unrouted', edited('done', d => { d.board.unrouted = [{ net: 'OUT', from: 'R1.1', to: 'C1.2' }] }), /이어지지 않은 연결 1개/],
+    ['a part with no footprint', edited('done', d => { d.summary.unmapped = [{ ref: 'U1', part: 'LM358', reason: 'check' }] }), /풋프린트 없는 부품 1개/],
+    ['a break KiCad found', edited('drc', d => { d.unconnected = 2 }), /KiCad 점검에서 끊긴 곳 2개/],
+  ]) {
+    const s = await gerberStep(stream)
+    const said = [s.title ?? '', s.panel].every(t => word.test(t) && !/그대로 올/.test(t)) && !/제조사 업로드 가능/.test(s.panel) && /제조 전 확인 필요/.test(s.panel)
+    check(`B9 ${what}: the gerber step warns, and still downloads`, said && s.color !== clean.color && !!s.href && !!s.panelHref,
+      `colour ${clean.color} -> ${s.color}; title "${s.title}"`)
+  }
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
