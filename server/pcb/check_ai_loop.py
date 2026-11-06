@@ -4,6 +4,8 @@ Stage-4 checks: fixed placement and the AI improvement loop.
 The loop itself lives in the Node server, so this script talks to a server started
 with SF_AI_STUB=1 (a deterministic stand-in for the model: round 1 proposes a GND widening
 and an off-board move together, round 2 stops). SF_AI_STUB_MODE=fail2: round 2 fails instead.
+What a stopped run leaves behind (24f on) goes through the real OpenAI SDK to a fake model on a local port, which counts
+the calls and can leave one hanging: no real model is called. These servers are started here, with SF_AI_BUDGET_MS short.
 
 Usage: python check_ai_loop.py [--port 8098]   (a stub server already running; without --port it starts its own)
 Exit code 0 only if every check passes.
@@ -265,6 +267,126 @@ def check_failed_round(work):
     }
 
 
+def check_left(work):
+    """24f-24h. the visitor leaves in the middle of the AI rounds and retries at once: the model is not called again and
+    the file stays the retry's. The loop went on, and the file changed under a board already on screen (review of 2026-11-06)."""
+    body = new_net(work, 'ai_left_check')
+    widths = [0.8, 0.9, 1.0]
+    fake = FakeModel(lambda n: {'reason': '(테스트) GND 폭', 'net_widths': [{'net': 'GND', 'mm': widths[min(n, 3) - 1]}]}, delay=1)
+    with fake, Server(**fake.env()) as server:
+        stream = Stream(server.base, {**body, 'ai': True})
+        for kind, _ in stream.events():
+            if kind == 'ai':
+                break
+        stream.close()
+        time.sleep(1)       # a call already on its way when the line dropped may still arrive
+        calls = fake.calls
+        retry = sse_post(f'{server.base}/generate_pcb_stream', body)
+        done = [d for k, d in retry if k == 'done'][-1]
+        differs = 0
+        for _ in range(20):     # longer than a model answer, a reroute and a DRC, which is how the old loop overwrote it
+            time.sleep(1)
+            differs += board_or_none('ai_left_check') != done['board']
+        later = fake.calls
+        left = server.backups()
+    return {
+        '24f left: the model calls stop': (later == calls and calls >= 1, f'{calls} call(s) when the line dropped, {later} 20 s after'),
+        '24g left: the retry\'s board stays in the file': (differs == 0, f'differed from done.board in {differs} of 20 looks, 1 s apart'),
+        '24h left: no backup left': (not left, f'sf_bak_ files: {len(left)}'),
+    }
+
+
+def check_replaced(work):
+    """24i. a second request for a board stops the run writing it, whoever is still reading that run's stream."""
+    body = new_net(work, 'ai_replaced_check')
+    fake = FakeModel(lambda n: None)
+    with fake, Server(**fake.env()) as server:
+        first = Stream(server.base, {**body, 'ai': True})
+        seen = []
+        reader = threading.Thread(target=lambda: seen.extend(first.events()), daemon=True)
+        reader.start()
+        called = wait_for(lambda: fake.calls >= 1, 90)
+        second = sse_post(f'{server.base}/generate_pcb_stream', body)
+        reader.join(20)
+        done = [d for k, d in second if k == 'done'][-1]
+        same = done['board'] == outputs_board('ai_replaced_check')
+        dropped = wait_for(lambda: fake.dropped >= 1, 5)
+        first.close()
+    kinds = [k for k, _ in seen]
+    said = next((d.get('error', '') for k, d in seen if k == 'error'), '')
+    return {'24i a new request takes the board over': (
+        called and kinds[-1:] == ['error'] and 'done' not in kinds and '멈췄습니다' in said and same and dropped,
+        f'first stream ends {kinds[-2:]}, second done.board is the file: {same}, the hanging model call dropped: {dropped}')}
+
+
+def check_cut_trial(work):
+    """24j. the visitor leaves while a trial reroutes: the generator is stopped and the file goes back to the best board."""
+    body = new_net(work, 'ai_cut_check')
+    fake = FakeModel(lambda n: {'reason': '(테스트) GND 폭', 'net_widths': [{'net': 'GND', 'mm': 0.8}]}, delay=1)
+    with fake, Server(**fake.env()) as server:
+        stream = Stream(server.base, {**body, 'ai': True})
+        for kind, _ in stream.events():
+            if kind == 'drc':
+                break
+        before = outputs_board('ai_cut_check')
+        answered = wait_for(lambda: fake.answered >= 1, 30)
+        time.sleep(0.2)
+        stream.close()
+        quiet = [0]
+
+        def settled():
+            quiet[0] = 0 if server.backups() else quiet[0] + 1
+            time.sleep(0.5)
+            return quiet[0] >= 6
+        wait_for(settled, 60)
+        after = board_or_none('ai_cut_check')
+        left = server.backups()
+    return {'24j a trial cut short is rolled back': (
+        answered and after == before and not left,
+        f'GND {gnd_widths(before)} before, {gnd_widths(after) if after else "(half written)"} after; sf_bak_ files: {len(left)}')}
+
+
+def check_budget(work, label, stem, answer, budget_s):
+    """The budget ends a run whose model hangs: done with the best board so far, an ai event saying so, no error."""
+    body = new_net(work, stem)
+    fake = FakeModel(answer)
+    t0 = time.time()
+    with fake, Server(SF_AI_BUDGET_MS=str(budget_s * 1000), **fake.env()) as server:
+        events = sse_post(f'{server.base}/generate_pcb_stream', {**body, 'ai': True}, timeout=240)
+        seconds = time.time() - t0
+        dropped = wait_for(lambda: fake.dropped >= 1, 5)
+        left = server.backups()
+    kinds = [k for k, _ in events]
+    rounds = [d for k, d in events if k == 'ai']
+    done = next((d for k, d in events if k == 'done'), {})
+    disk = outputs_board(stem)
+    said = rounds[-1]['reason'] if rounds else ''
+    # the SDK alone would give up on a hanging call after 60 s, twice
+    return kinds, rounds, done, disk, {
+        f'{label} hanging model, {budget_s} s budget: done, its board is the file': (
+            kinds[-1:] == ['done'] and 'error' not in kinds and done.get('board') == disk and dropped and seconds < budget_s + 60 and not left,
+            f'ends {kinds[-2:]} after {seconds:.0f} s, done.board is the file: {done.get("board") == disk}, call dropped: {dropped}, sf_bak_ files: {len(left)}'),
+        f'{label}b the screen is told': ('정해진 시간' in said, said),
+    }
+
+
+def check_budget_nothing_kept(work):
+    """24k-24l. the model hangs from its first call: the first board, whole."""
+    kinds, rounds, done, disk, res = check_budget(work, '24k', 'ai_hang_check', lambda n: None, 20)
+    res['24l nothing kept: round 0'] = (rounds[-1:] and rounds[-1]['round'] == 0, f'last round {rounds[-1:] and rounds[-1]["round"]}')
+    return res
+
+
+def check_budget_kept(work):
+    """24m-24o. the model answers once, then hangs: the kept board, not the first one (which was an error before)."""
+    edit = {'reason': '(테스트) GND 폭', 'net_widths': [{'net': 'GND', 'mm': 0.8}]}
+    kinds, rounds, done, disk, res = check_budget(work, '24m', 'ai_hang2_check', lambda n: edit if n == 1 else None, 60)
+    res['24o kept round stays, a stop in its round'] = (
+        gnd_widths(disk) == [0.8] and rounds[-1]['round'] == 2 and rounds[-1]['actions'].get('stop') is True,
+        f'GND {gnd_widths(disk)}, last round {rounds[-1]["round"]}, stop={rounds[-1]["actions"].get("stop")}')
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=0, help='a stub server already running; without it, one is started')
@@ -283,7 +405,7 @@ def main():
                 return check_loop(args.port, work)
             with Server(SF_AI_STUB='1') as server:
                 return check_loop(server.port, work)
-        groups = [stub_loop, check_failed_round]
+        groups = [stub_loop, check_failed_round, check_left, check_replaced, check_cut_trial, check_budget_nothing_kept, check_budget_kept]
         for group in groups:
             try:
                 for name, (passed, info) in (group() if group is stub_loop else group(work)).items():

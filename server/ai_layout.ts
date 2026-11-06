@@ -514,10 +514,10 @@ export function stubEdit(round: number): BoardEdit {
   return { reason: '더 고칠 것이 없습니다', stop: true }
 }
 
-export async function askModel(prompt: string, history: string[]): Promise<BoardEdit> {
+export async function askModel(prompt: string, history: string[], signal?: AbortSignal): Promise<BoardEdit> {
   if (process.env.SF_AI_STUB === '1') return stubEdit(history.length + 1)
   const openai = modelClient()
-  if (JSON_MODE) return askModelJson(openai, prompt, history)
+  if (JSON_MODE) return askModelJson(openai, prompt, history, signal)
   const res = await openai.chat.completions.create({
     model: AI_MODEL, ...modelExtra(),
     temperature: 0.2,
@@ -528,14 +528,14 @@ export async function askModel(prompt: string, history: string[]): Promise<Board
     ],
     tools: [TOOL],
     tool_choice: { type: 'function', function: { name: 'edit_board' } },
-  })
+  }, { signal })
   const call = res.choices[0]?.message?.tool_calls?.[0]
   if (!call || call.type !== 'function') throw new Error('model returned no edit')
   return JSON.parse(call.function.arguments) as BoardEdit
 }
 
 /** Same question without `tools`: the schema goes into the prompt and the reply is parsed as JSON. */
-async function askModelJson(openai: OpenAI, prompt: string, history: string[]): Promise<BoardEdit> {
+async function askModelJson(openai: OpenAI, prompt: string, history: string[], signal?: AbortSignal): Promise<BoardEdit> {
   const system = SYSTEM.replace('Always call the edit_board function.',
     'Reply with ONLY one JSON object, no prose and no code fence, matching this JSON schema:\n' +
     JSON.stringify(TOOL.function.parameters))
@@ -546,7 +546,7 @@ async function askModelJson(openai: OpenAI, prompt: string, history: string[]): 
       ...history.map(h => ({ role: 'assistant' as const, content: h })),
       { role: 'user', content: prompt },
     ],
-  })
+  }, { signal })
   const text = res.choices[0]?.message?.content || ''
   const start = text.indexOf('{'), end = text.lastIndexOf('}')
   if (start < 0 || end <= start) throw new Error('model returned no JSON edit')
@@ -579,8 +579,9 @@ export function applyEdit(ov: Overrides, edit: BoardEdit, board: BoardJson): str
 }
 
 export function runGenerator(netPath: string, pcbPath: string, style: string, ov: Overrides,
-                             cwd: string): Promise<Record<string, unknown>> {
+                             cwd: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('generator stopped'))
     const ovPath = join(tmpdir(), `sf_ov_${randomUUID().slice(0, 8)}.json`)
     writeFileSync(ovPath, JSON.stringify(ov), 'utf8')
     const proc = spawn('python', [join(cwd, 'pcb_generator.py'), netPath, pcbPath,
@@ -588,11 +589,19 @@ export function runGenerator(netPath: string, pcbPath: string, style: string, ov
     let stdout = '', stderr = ''
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('generator timed out')) }, 60000)
-    proc.on('error', e => { clearTimeout(timer); reject(e) })
+    // stopped or out of time, the error comes at 'close': the caller restores the board, which must not run while this
+    // process is still writing it
+    let stopped = ''
+    const stop = (why: string) => { stopped = why; proc.kill('SIGKILL') }
+    const onAbort = () => stop('generator stopped')
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const timer = setTimeout(() => stop('generator timed out'), 60000)
+    proc.on('error', e => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(e) })
     proc.on('close', code => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       try { unlinkSync(ovPath) } catch { /* already gone */ }
+      if (stopped) return reject(new Error(stopped))
       if (code !== 0) return reject(new Error(stderr || 'generator failed'))
       try {
         resolve(JSON.parse(stdout.trim().split('\n').pop() || '{}') as Record<string, unknown>)

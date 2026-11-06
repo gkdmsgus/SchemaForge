@@ -1293,14 +1293,14 @@ interface DrcResult {
 }
 
 /** Run KiCad's design rule check on a finished board. Never throws. */
-async function runDrc(pcbPath: string): Promise<DrcResult> {
+async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult> {
   const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
   const t0 = Date.now()
   const seconds = () => Math.round((Date.now() - t0) / 100) / 10
   try {
     // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
     // The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000)
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
@@ -1323,11 +1323,13 @@ async function runDrc(pcbPath: string): Promise<DrcResult> {
 /**
  * Stage 4: let the model improve the finished board, but keep a round only when the
  * numbers improve. Returns the final done payload and DRC, or null if nothing was kept.
+ * `signal` stops it: the running model call or process is cut, the board file goes back to the best so far, and what
+ * was kept is still returned. The board file always holds what this returns.
  */
 async function runAiLoop(
   netPath: string, pcbPath: string, style: PcbStyle,
   doneEvent: Record<string, unknown>, drc: DrcResult,
-  emit: (r: AiRound) => void,
+  emit: (r: AiRound) => void, signal: AbortSignal,
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
   const summary = (doneEvent.summary || {}) as Record<string, unknown>
@@ -1338,9 +1340,13 @@ async function runAiLoop(
   let bestDone = doneEvent
   let kept = false
   let round = 0
+  // round 0 is what the screen reads as "AI 다듬기 건너뜀", so not once a round was kept: a stop in its round
+  const stopHere = (why: string) => emit(kept
+    ? { round, reason: `AI 다듬기를 여기서 멈추고 지금까지 채택한 기판을 씁니다: ${why}`, actions: { stop: true }, before: best, kept: false }
+    : { round: 0, reason: `AI 다듬기를 건너뜁니다: ${why}`, actions: {}, before: best, kept: false })
   try {
     // Every round is judged on DRC errors, so an unavailable DRC must not read as "0 errors".
-    if (!drc.available) drc = await runDrc(pcbPath)
+    if (!drc.available) drc = await runDrc(pcbPath, signal)
     if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
     best = metricsOf(summary, drc.errors ?? 0, board)
@@ -1352,10 +1358,10 @@ async function runAiLoop(
     const history: string[] = []
     const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
 
-    while (round < MAX_ROUNDS) {
+    while (round < MAX_ROUNDS && !signal.aborted) {
       round++
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
-      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history)
+      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history, signal)
       history.push(JSON.stringify(edit))
       if (edit.stop) {
         // no note: the list's 중단 chip says it (a note "stop" showed under it in English)
@@ -1365,6 +1371,7 @@ async function runAiLoop(
       // A proposal often mixes a width change with a move. Judge them one after the other so a good
       // width change is not thrown away with a bad move (or a bad move carried in by a good width change).
       for (const [part, sub] of splitEdit(edit)) {
+        if (signal.aborted) break
         const label = part === 'width' ? '선 폭' : '배치'
         const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
         const notes = applyEdit(trial, sub, board)
@@ -1382,8 +1389,8 @@ async function runAiLoop(
         let after: Metrics | undefined
         let note = notes.join(', ')
         try {
-          const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
-          const drc2 = await runDrc(pcbPath)
+          const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd(), signal)
+          const drc2 = await runDrc(pcbPath, signal)
           if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
           after = metricsOf(s2, drc2.errors ?? 0, readBoard(jsonPath))
           if (better(after, best)) {
@@ -1405,17 +1412,16 @@ async function runAiLoop(
           note = `적용 실패: ${(e as Error).message}`
         }
         restore()                                   // put the previous board back
+        if (signal.aborted) break                   // cut short, not judged: no row for it
         feedback.push(describeOutcome(round, sub, best, after, false))
         emit({ round, part, reason: edit.reason || '', actions: sub, before: best, after, kept: false, note })
       }
     }
   } catch (e) {
-    const why = modelFailure(e)?.text ?? (e as Error).message
-    // round 0 is what the screen reads as "AI 다듬기 건너뜀", so not once a round was kept: a stop in its round
-    emit(kept
-      ? { round, reason: `AI 다듬기를 여기서 멈추고 지금까지 채택한 기판을 씁니다: ${why}`, actions: { stop: true }, before: best, kept: false }
-      : { round: 0, reason: `AI 다듬기를 건너뜁니다: ${why}`, actions: {}, before: best, kept: false })
+    // a model call the signal cut is not a failed one
+    if (!signal.aborted) stopHere(modelFailure(e)?.text ?? (e as Error).message)
   }
+  if (signal.reason === 'budget') stopHere('정해진 시간 안에 끝나지 않았습니다.')
   return kept ? { done: bestDone, drc: bestDrc } : null
 }
 
@@ -1449,7 +1455,18 @@ app.get('/board_model', async (req: Request, res: Response) => {
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
 // Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
 
-app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Response) => {
+/** what DRC and the AI rounds may take after the generator is done. The checks shorten it (pcb/check_ai_loop.py) */
+const AI_BUDGET_MS = Number(process.env.SF_AI_BUDGET_MS) || 420000
+
+/**
+ * The run writing each board file, stopped by its signal with the reason 'closed' (the visitor left), 'budget' or
+ * 'replaced'. A retry names the same file as the run it follows, and a loop left running kept overwriting it: the
+ * screen showed one board and the gerbers came from another (review of 2026-11-06). So a new request stops the run
+ * before it and waits for its end: its processes gone, its best board back in the file.
+ */
+const boardRuns = new Map<string, { abort: AbortController; ended: Promise<void> }>()
+
+app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   const { filename, graph, baseName, style, ai } = req.body || {}
   if (ai === true) {
     // the board itself is open to all (the demos); the AI rounds call the model
@@ -1484,12 +1501,22 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
   res.flushHeaders()
   if (res.socket) res.socket.setNoDelay(true)
 
-  const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
-    '--style', pcbStyle(style), '--stream'])
+  const abort = new AbortController()
+  let release = () => {}
+  const run = { abort, ended: new Promise<void>(r => { release = r }) }
+  const previous = boardRuns.get(pcbPath)
+  boardRuns.set(pcbPath, run)
+  const leave = () => {
+    if (boardRuns.get(pcbPath) === run) boardRuns.delete(pcbPath)
+    release()
+  }
+
   let buf = ''
   let stderr = ''
   let finished = false
   let awaitingDrc = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const send = (event: string, data: unknown) => { if (!finished) res.write(sse(event, JSON.stringify(data))) }
   const end = (event: string, data: unknown) => {
     if (finished) return
     finished = true
@@ -1497,8 +1524,22 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
     res.write(sse(event, JSON.stringify(data)))
     res.end()
   }
-  let timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
-  res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); proc.kill() } })
+  res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); abort.abort('closed') } })
+  abort.signal.addEventListener('abort', () => {
+    if (abort.signal.reason === 'replaced') end('error', { error: '같은 기판을 새로 만들기 시작해서 이 작업은 멈췄습니다.' })
+  })
+
+  previous?.abort.abort('replaced')
+  await previous?.ended
+  if (abort.signal.aborted) return leave()
+
+  const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
+    '--style', pcbStyle(style), '--stream'])
+  abort.signal.addEventListener('abort', () => proc.kill())
+  // the run ends when python has and the DRC and AI rounds after its done line have
+  let checked: Promise<void> = Promise.resolve()
+  void new Promise<void>(r => { proc.once('close', () => r()); proc.once('error', () => r()) }).then(() => checked).finally(leave)
+  timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
 
   proc.stdout.on('data', (d: Buffer) => {
     buf += d.toString()
@@ -1514,24 +1555,28 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
           awaitingDrc = true
           // The 60 s budget is for generation. DRC and the AI loop (up to MAX_ROUNDS model calls,
           // each followed by a reroute and DRC) get their own, longer budget.
+          // With AI rounds the budget only stops them and done goes out below with the best board so far: an error here
+          // cost a board DRC had passed, because the optional rounds hung (review of 2026-11-06).
           clearTimeout(timer)
-          timer = setTimeout(() => end('error', { error: 'DRC / AI loop timed out' }), useAi ? 420000 : 120000)
-          runDrc(pcbPath).then(async drc => {
+          timer = setTimeout(() => {
+            abort.abort('budget')
+            if (!useAi) end('error', { error: 'DRC timed out' })
+          }, useAi ? AI_BUDGET_MS : 120000)
+          checked = runDrc(pcbPath, abort.signal).then(async drc => {
             if (finished) return
-            res.write(sse('drc', JSON.stringify(drc)))
+            send('drc', drc)
             let final = ev as Record<string, unknown>
             let lastDrc = drc
             if (useAi) {
-              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc,
-                                          r => res.write(sse('ai', JSON.stringify(r))))
+              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal)
               if (out) {
                 final = out.done
                 lastDrc = out.drc
-                res.write(sse('drc', JSON.stringify(lastDrc)))
+                send('drc', lastDrc)
               }
             }
             end('done', { ...final, pcbFilename, drc: lastDrc })
-          })
+          }).catch(e => end('error', { error: (e as Error).message }))
         } else res.write(sse(ev.type, line))
       } catch { /* not an event line */ }
     }
@@ -1642,9 +1687,12 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
 const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
 
-function runKicadCli(args: string[], label: string, timeoutMs = 30000): Promise<void> {
+function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error(`${label} stopped`))
     const proc = spawn(KICAD_CLI, args)
+    const onAbort = () => proc.kill('SIGKILL')
+    signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''
     proc.stdout.on('data', () => { /* drain so a chatty kicad-cli never blocks on a full pipe */ })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
@@ -1652,10 +1700,13 @@ function runKicadCli(args: string[], label: string, timeoutMs = 30000): Promise<
     // Without this handler a missing kicad-cli crashes the whole server.
     proc.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       reject(new Error(e.code === 'ENOENT' ? 'KiCad (kicad-cli) is not installed on this server' : e.message))
     })
     proc.on('close', (code: number | null) => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      if (signal?.aborted) return reject(new Error(`${label} stopped`))
       if (code !== 0) return reject(new Error(stderr || `${label} failed`))
       resolve()
     })
