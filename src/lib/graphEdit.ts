@@ -253,8 +253,11 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
   return { actions: out, held: [...held.values()], dropped, kept: [...new Set(kept)], valued: [...new Set(valued)] }
 }
 
-/** a reply that asks the person something: a question mark, or a sentence ending like one ("적용할까요.") */
-export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|나요|습니까)[.!]?(\s|$)/.test(reply)
+/**
+ * a reply that asks the person something: a question mark, or a sentence ending like one ("적용할까요.", "켜지나요."). Not the
+ * verb 나요 on its own or in 빛나요 (2026-11-06 sweep: "이제 버저에서 소리가 나요." held back the edit it was reporting)
+ */
+export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|(?<=[^\s빛])나요|습니까)[.!]?(\s|$)/.test(reply)
 
 /**
  * An AI edit as the chat applies it: references filled in, what the request did not ask for held back (guardEdit),

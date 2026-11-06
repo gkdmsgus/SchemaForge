@@ -14,7 +14,7 @@ import { fromBoard, fromGraph, operatingChecks, operatingHeadline } from '../src
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
+import { actionLabel, applyActions, asksBack, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import { boardNetlist, guideNote, netlistNote } from '../src/lib/drawerNotes.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
@@ -385,6 +385,14 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const answered = !!answer && chatEdit(blinker, move, answer, 'C1의 연결을 바꿨습니다.').graph.nets.find(n => n.name === 'TRIG_THRES')!.nodes.some(nd => nd.ref === 'C1')
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
+
+  // G12c. 나요 as a verb is no question (2026-11-06 sweep: "이제 버저에서 소리가 나요." held back the edit it reported)
+  const said: [string, boolean][] = [['이제 버저에서 소리가 나요.', false], ['LED에 불이 나요', false], ['LED가 빛나요.', false], ['소리가 나요.', false], ['C2를 연결했습니다.', false],
+    ['켜지나요.', true], ['적용할까요.', true], ['이 연결이 맞습니까.', true], ['적용할까요', true], ['소리가 나요?', true], ['연결이 맞나요!', true]]
+  const asksWrong = said.filter(([t, want]) => asksBack(t) !== want).map(([t]) => t)
+  const verb = chatEdit(open, join, msg, '이제 C2가 이어져서 소리가 나요.')
+  check('G12c a sentence ending in the verb 나요 is no question and the edit applies; 켜지나요. and 적용할까요. still ask',
+    !asksWrong.length && verb.changed && !/아직/.test(verb.note), JSON.stringify({ asksWrong, note: verb.note }))
 
   // G12b. a reply that changed nothing says so first, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no
   // edit, C1's pin still on its own): with parts held back, and after a question too (review of 2026-11-03: "연결했습니다.
