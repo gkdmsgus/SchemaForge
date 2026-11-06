@@ -1254,7 +1254,7 @@ app.get('/download/:filename', (req: Request, res: Response) => {
 // ── POST /netlist/restore ──────────────────────────────────────────
 // Render's disk is wiped on a restart or sleep, so a circuit opened from the history can name a netlist outputs/
 // no longer has. The front end sends the session's filename and graph, and the file is written back under that
-// name. Open like /generate_pcb_from_graph (a netlist from a graph, nothing runs); a file that is there stays.
+// name. Open like /generate_pcb_stream, which takes a graph too (here a netlist from a graph, nothing runs); a file that is there stays.
 
 const NETLIST_NAME = /^[A-Za-z0-9_-]{1,80}\.net$/
 
@@ -1277,83 +1277,9 @@ app.post('/netlist/restore', (req: Request, res: Response) => {
   }
 })
 
-// ── POST /generate_pcb ─────────────────────────────────────────────
-
 type PcbStyle = 'smd' | 'tht'
 
-interface PcbSummary {
-  components: number
-  nets: number
-  unmapped: { ref: string; part: string; reason: string }[]
-  warnings: string[]
-  style: PcbStyle
-  board: { w: number; h: number }
-  boardJson: string
-}
-
-/** Run pcb_generator.py; its last stdout line is a JSON summary. */
-function runPcbGenerator(netPath: string, pcbPath: string, style: PcbStyle): Promise<PcbSummary> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath, '--style', style])
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('PCB generation timed out')) }, 30000)
-    proc.on('error', (e: Error) => { clearTimeout(timer); reject(e) })
-    proc.on('close', (code: number | null) => {
-      clearTimeout(timer)
-      if (code !== 0) return reject(new Error(stderr || 'PCB generation failed'))
-      try {
-        const last = stdout.trim().split('\n').pop() || '{}'
-        resolve(JSON.parse(last) as PcbSummary)
-      } catch {
-        reject(new Error('PCB generator returned no summary'))
-      }
-    })
-  })
-}
-
 const pcbStyle = (s: unknown): PcbStyle => (s === 'tht' ? 'tht' : 'smd')
-
-app.post('/generate_pcb', async (req: Request, res: Response) => {
-  const { filename, style } = req.body || {}
-  if (!filename) return res.status(400).json({ error: 'No netlist filename provided.' })
-
-  const netPath = join(OUTPUTS_DIR, basename(filename as string))
-  if (!existsSync(netPath)) return res.status(404).json({ error: 'Netlist file not found.' })
-
-  const pcbFilename = basename(filename as string, '.net') + '.kicad_pcb'
-  const pcbPath = join(OUTPUTS_DIR, pcbFilename)
-
-  try {
-    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated successfully' })
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
-  }
-})
-
-// ── POST /generate_pcb_from_graph ─────────────────────────────────
-
-app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
-  const { graph, baseName, style } = req.body || {}
-  if (!graph) return res.status(400).json({ error: 'No graph provided.' })
-
-  const uid = randomUUID().slice(0, 8)
-  const netFilename = `${fileStem(baseName)}_${uid}.net`
-  const netPath = join(OUTPUTS_DIR, netFilename)
-  const pcbFilename = netFilename.replace('.net', '.kicad_pcb')
-  const pcbPath = join(OUTPUTS_DIR, pcbFilename)
-
-  try {
-    writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
-    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated from edited graph' })
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
-  }
-})
 
 interface DrcResult {
   available: boolean
@@ -1506,34 +1432,6 @@ app.get('/board_model', async (req: Request, res: Response) => {
     res.status(503).json({ error: (e as Error).message })
   } finally {
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* already gone */ }
-  }
-})
-
-// ── GET /render_board ──────────────────────────────────────────────
-// KiCad's own 3D renderer, for the photo view next to the schematic-style board.
-// ?pcb=<file in outputs>&rot=X,Y,Z&w=&h=  -> image/png
-app.get('/render_board', async (req: Request, res: Response) => {
-  const file = basename(String(req.query.pcb || ''))
-  if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
-  const pcbPath = join(OUTPUTS_DIR, file)
-  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
-  const rot = /^-?\d{1,3},-?\d{1,3},-?\d{1,3}$/.test(String(req.query.rot || '')) ? String(req.query.rot) : '-30,0,35'
-  const side = String(req.query.side || 'top') === 'bottom' ? 'bottom' : 'top'
-  const w = Math.min(2000, Math.max(400, Number(req.query.w) || 1400))
-  const h = Math.min(1400, Math.max(300, Number(req.query.h) || 900))
-  const out = join(tmpdir(), `sf_render_${randomUUID().slice(0, 8)}.png`)
-  try {
-    await runKicadCli(['pcb', 'render', '--output', out, '--width', String(w), '--height', String(h),
-      '--quality', 'high', '--floor', '--perspective', '--rotate', rot, '--side', side,
-      '--background', 'opaque', pcbPath], '3D render', 180000)
-    const png = readFileSync(out)
-    res.setHeader('Content-Type', 'image/png')
-    res.setHeader('Cache-Control', 'no-store')
-    res.send(png)
-  } catch (e) {
-    res.status(503).json({ error: (e as Error).message })
-  } finally {
-    try { unlinkSync(out) } catch { /* already gone */ }
   }
 })
 

@@ -57,11 +57,13 @@ const route = (path: string) => src.split('\n').find(l => l.startsWith(`app.post
 const guarded = ['/clarify', '/plan', '/chat_edit', '/generate', '/test_code'].filter(p => !/requireMember/.test(route(p)))
 const stream = src.slice(src.indexOf("app.post('/generate_pcb_stream'"), src.indexOf('const useAi'))
 const auth = src.slice(src.indexOf("app.post('/auth/register'"), src.indexOf("app.post('/auth/logout'"))
-check('D8 routes wired to the guard', guarded.length === 0 && /memberRefusal\(GUARD/.test(stream)
+const uncalled = ["'/render_board'", "'/generate_pcb'", "'/generate_pcb_from_graph'", 'runPcbGenerator'].filter(r => src.includes(r))
+  .concat(["'/render_board'", "'/generate_pcb'"].filter(r => readFileSync(join(process.cwd(), '..', 'vite.config.ts'), 'utf8').includes(r)))
+check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length && /memberRefusal\(GUARD/.test(stream)
   && (auth.match(/localLoginRefusal\(GUARD\)/g) ?? []).length === 2
-  && !/\$\{\(baseName as string\)/.test(src) && (src.match(/fileStem\(baseName\)/g) ?? []).length === 2
+  && !/\$\{\(baseName as string\)/.test(src) && (src.match(/fileStem\(baseName\)/g) ?? []).length === 1
   && !/basename\(req\.params/.test(src),
-  guarded.length ? `not guarded: ${guarded.join(', ')}` : '')
+  guarded.length || uncalled.length ? `not guarded: ${guarded.join(', ')}; still there: ${uncalled.join(', ')}` : '')
 
 // D10. render.yaml (the Render Blueprint, read as text): every secret is declared with sync: false and no value, the
 //      plan is free, the health check is a route the server has, and PORT is the one Render routes to
@@ -125,8 +127,11 @@ async function live() {
       ai_board: (await post('/generate_pcb_stream', { filename: demoBody.filename, ai: true })).status,
       // before deploy_guard.ts this sent server/index.ts (the one route with two names: "..", then a file)
       dotdot: await raw('/download_gerber_file/%2E%2E/index.ts'),
+      // nothing on the screen called these, and anyone could: a 2000x1400 render took 17-30 s on 16 cores (review of 2026-11-06)
+      pcb_route: (await post('/generate_pcb', {})).status,
+      pcb_graph_route: (await post('/generate_pcb_from_graph', {})).status,
     }
-    const want = { demo: 200, generate: 401, chat_edit: 401, clarify: 401, plan: 401, test_code: 401, login: 503, register: 503, ai_board: 401, dotdot: 404 }
+    const want = { demo: 200, generate: 401, chat_edit: 401, clarify: 401, plan: 401, test_code: 401, login: 503, register: 503, ai_board: 401, dotdot: 404, pcb_route: 404, pcb_graph_route: 404 }
     const wrong = Object.entries(want).filter(([k, v]) => codes[k as keyof typeof codes] !== v)
     check('D9 production server: demo open, the rest refused', wrong.length === 0 && !!demoBody.filename,
       wrong.length ? wrong.map(([k, v]) => `${k} ${codes[k as keyof typeof codes]} (want ${v})`).join(', ') : JSON.stringify(codes))
