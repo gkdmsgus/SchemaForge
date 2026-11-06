@@ -1447,12 +1447,16 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
     if (refusal) return refuse(req, res, refusal)
   }
   const useAi = ai === true && (process.env.SF_AI_STUB === '1' || !!process.env.OPENAI_API_KEY)
+  // cleaned as /erc_graph does: a value like 0.1" passed the netlist check there and the generator died on it here
+  // (IndexError, review of 2026-11-06)
+  const clean = graph ? cleanGraph(graph) : null
+  if (graph && !clean) return res.status(400).json({ error: 'graph with components and nets required' })
   let netPath: string
   let pcbFilename: string
   if (graph) {
     const netFilename = `${fileStem(baseName)}_${randomUUID().slice(0, 8)}.net`
     netPath = join(OUTPUTS_DIR, netFilename)
-    writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
+    writeFileSync(netPath, graphToNetlist(clean!), 'utf8')
     pcbFilename = netFilename.replace('.net', '.kicad_pcb')
   } else if (filename) {
     netPath = join(OUTPUTS_DIR, basename(filename as string))

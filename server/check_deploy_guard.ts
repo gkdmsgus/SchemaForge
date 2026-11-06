@@ -5,7 +5,7 @@
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn } from 'child_process'
-import { readFileSync } from 'fs'
+import { readFileSync, rmSync } from 'fs'
 import { request } from 'http'
 import { createServer } from 'net'
 import { join } from 'path'
@@ -114,7 +114,8 @@ async function live() {
     }
     if (!up) return check('D9 production server', false, `did not start in 30 s on port ${port}: ${stderr.trim().slice(-400)}`)
     const demo = await fetch(base + '/demo_result/led')
-    const demoBody = demo.ok ? await demo.json() as { filename?: string } : {}
+    type Graph = { components: { ref: string; value: string }[]; nets: unknown[] }
+    const demoBody = demo.ok ? await demo.json() as { filename?: string; graph?: Graph } : {}
     const codes = {
       demo: demo.status,
       generate: (await post('/generate', { prompt: 'LED' })).status,
@@ -135,6 +136,26 @@ async function live() {
     const wrong = Object.entries(want).filter(([k, v]) => codes[k as keyof typeof codes] !== v)
     check('D9 production server: demo open, the rest refused', wrong.length === 0 && !!demoBody.filename,
       wrong.length ? wrong.map(([k, v]) => `${k} ${codes[k as keyof typeof codes]} (want ${v})`).join(', ') : JSON.stringify(codes))
+
+    // D9b. the board route cleans a graph as /erc_graph does: a value like 0.1" passed the netlist check there and the
+    //      generator died on it here (IndexError, review of 2026-11-06). Open to all, so the demo's graph will do
+    const graph = demoBody.graph ?? { components: [], nets: [] }
+    const resistor = graph.components.find(c => /^R\d/.test(c.ref))?.ref
+    const board = async (value: string) => {
+      const sent = { ...graph, components: graph.components.map(c => (c.ref === resistor ? { ...c, value } : c)) }
+      const text = await (await post('/generate_pcb_stream', { graph: sent, baseName: 'guardcheck' })).text()
+      const done = /event: done\ndata: (.+)/.exec(text)
+      if (!done) return `no done: ${text.slice(-160).trim()}`
+      const d = JSON.parse(done[1]) as { pcbFilename: string; board: { parts: { ref: string; value: string }[] } }
+      const stem = d.pcbFilename.replace('.kicad_pcb', '')
+      for (const end of ['.net', '.kicad_pcb', '.board.json']) rmSync(join('outputs', stem + end), { force: true })
+      return d.board.parts.find(q => q.ref === resistor)?.value ?? '(no part)'
+    }
+    const values = await Promise.all(['0.1" pitch', '470\\', '"470"'].map(board))
+    const noGraph = await post('/generate_pcb_stream', { graph: {} })
+    check('D9b a graph on the board route is cleaned: inch mark, trailing backslash, quotes; not a graph is 400', !!resistor
+      && values.join() === '0.1 pitch,470,470' && noGraph.status === 400 && /json/.test(noGraph.headers.get('content-type') ?? ''),
+      `${JSON.stringify(values)} graph {} -> ${noGraph.status}`)
   } finally {
     if (proc.exitCode === null && proc.signalCode === null) {
       const gone = new Promise(r => proc.once('exit', r))
