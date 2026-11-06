@@ -120,9 +120,10 @@ if (boards.length) {
   const want = { smd: { 1: 'G', 2: 'S', 3: 'D' }, tht: { 1: 'S', 2: 'G', 3: 'D' } }   // 2N7002 SOT-23, 2N7000 TO-92
   for (const style of ['smd', 'tht'] as const) {
     const b = fet(style)
-    const it = b && reviewItems(b).find(i => i.part === 'Q_NMOS')
+    if (!b) { skip(`H3c N-MOSFET pinout ${style}`, 'no board with Q_NMOS (scripts/make_check_boards.ts makes one)'); continue }
+    const it = reviewItems(b).find(i => i.part === 'Q_NMOS')
     check(`H3c N-MOSFET pinout ${style}`, !!it && JSON.stringify(pins(it)) === JSON.stringify(want[style])
-      && JSON.stringify(marksOf(it)) === JSON.stringify(want[style]), it ? JSON.stringify(marksOf(it)) : 'no board with Q_NMOS')
+      && JSON.stringify(marksOf(it)) === JSON.stringify(want[style]), it ? JSON.stringify(marksOf(it)) : 'no Q_NMOS item')
   }
 } else skip('H3 board labels on real boards', NO_BOARDS, 4)
 
