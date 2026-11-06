@@ -164,9 +164,12 @@ const HEAVY_PART = (p: BoardPart) =>
   DRIVER_IC.test(`${p.part} ${p.value}`) ||
   (/^J\d/i.test(p.ref) && /MOTOR|\bMOT\b|FAN|PUMP|SOLENOID|HEATER|LOAD/i.test(p.value || ''))
 
-/** Resistance in ohms from a value like 0.1, 100m, R10, 0R1, 10mR, 2.2k — NaN when it is not a resistance. */
+/** A value without the rating after it: "0.1 1W" -> "0.1", "680 1/4W" -> "680" (src/lib/operatingCheck.ts valuePart; the server image has no src/). */
+const valuePart = (v: string) => String(v ?? '').trim().replace(/(?:(?<=[A-Za-zµμΩ])\s*[,/]\s*|\s+)(?=\d+(?:\.\d+)?\s*(?:V|W|%)|\d+\s*\/\s*\d+\s*W).*$/i, '')
+
+/** Resistance in ohms from a value like 0.1, 100m, R10, 0R1, 10mR, 2.2k, 0.1 1W — NaN when it is not a resistance. */
 export function parseOhms(value: string): number {
-  const v = (value || '').trim().replace(/Ω|ohms?/gi, '')
+  const v = valuePart(value).replace(/Ω|ohms?/gi, '')
   let m = v.match(/^(\d*)R(\d+)$/i)                          // 0R1, R10
   if (m) return Number(`${m[1] || '0'}.${m[2]}`)
   m = v.match(/^(\d+(?:\.\d+)?)\s*([mkM]?)R?$/)
