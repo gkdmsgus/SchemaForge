@@ -156,6 +156,11 @@ async function live() {
     check('D9b a graph on the board route is cleaned: inch mark, trailing backslash, quotes; not a graph is 400', !!resistor
       && values.join() === '0.1 pitch,470,470' && noGraph.status === 400 && /json/.test(noGraph.headers.get('content-type') ?? ''),
       `${JSON.stringify(values)} graph {} -> ${noGraph.status}`)
+
+    // D9c. a BOM price search spends the operator's Mouser quota, one call per line: a visitor is told refused and keeps
+    //      the search links, before any key is read (review of 2026-11-06)
+    const mouser = await (await post('/mouser_search', { components: [{ ref: 'R1', value: '1k', name: 'R' }] })).json() as { available?: boolean; refused?: boolean; results?: unknown[] }
+    check('D9c /mouser_search refuses a visitor', mouser.available === false && mouser.refused === true && mouser.results?.length === 0, JSON.stringify(mouser))
   } finally {
     if (proc.exitCode === null && proc.signalCode === null) {
       const gone = new Promise(r => proc.once('exit', r))

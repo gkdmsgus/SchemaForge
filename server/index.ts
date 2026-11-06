@@ -1626,7 +1626,10 @@ function mouserKeyword(q: MouserQuery): string {
   return [keepWord ? word : '', value, pkg].filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 80)
 }
 
-app.post('/mouser_search', async (req: Request, res: Response) => {
+app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Response) => {
+  // one call per line on the operator's key, and its quota is the listed accounts' too: a visitor is told refused and
+  // the BOM keeps its search links (open to anyone before, review of 2026-11-06)
+  if (memberRefusal(GUARD, req.user)) return res.json({ available: false, refused: true, results: [] })
   const { components } = req.body || {}
   if (!Array.isArray(components) || !components.length) return res.status(400).json({ error: 'No components' })
   if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `Too many components (max ${MOUSER_MAX_LINES})` })
