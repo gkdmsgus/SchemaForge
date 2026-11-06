@@ -2,7 +2,8 @@
 // 만들기" sends the approved plan with the generation (it was shown and approved but never sent, so a 12 V LM7812
 // plan came out as a 5 V LM7805: frame review of the tour, 2026-10-30), P2 ↺ of the same description sends it again,
 // P3 the generation screen opens at its top when the plan was approved further down the page (it opened scrolled down,
-// "회로 만드는 중" out of view: 2026-11-03 tour takes 1 and 3, S28).
+// "회로 만드는 중" out of view: 2026-11-03 tour takes 1 and 3, S28), P4 a stream cut off inside its done frame says the
+// connection was lost (it went back to the home screen with no word, the model already paid for: review of 2026-11-06).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -76,6 +77,15 @@ try {
   check('P3 the generation screen opens at its top after a plan approved further down', before > 0 && after === 0 && room > 0,
     `plan page at ${before} px, generation screen at ${after} px (it scrolls ${room} px)`)
   answer()
+
+  // P4
+  const cut = await ctx.newPage()
+  await fake(cut, r => r.fulfill({ status: 200, contentType: 'text/event-stream',
+    body: 'event: status\ndata: 회로를 만들고 있습니다\n\nevent: done\ndata: {"code":"from skidl imp' }))
+  await toPlan(cut, '전원 회로 만들어줘 9V로')
+  await cut.getByRole('button', { name: '이 계획으로 회로 만들기' }).click()
+  const lost = await cut.getByText('회로 생성 중 연결이 끊겼습니다').waitFor({ timeout: 10000 }).then(() => true, () => false)
+  check('P4 a stream cut off inside its done frame says the connection was lost', lost, lost ? '' : 'no word on screen')
 } finally {
   await browser.close()
 }

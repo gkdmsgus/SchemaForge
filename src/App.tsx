@@ -434,9 +434,9 @@ export default function App() {
                 try { msg = JSON.parse(raw).message || raw } catch (_) {}
                 setError({ text: msg }); setProgress(null); setLoading(false)
                 return
-              } else if (evt === 'done') {
-                gotResult = true
               }
+              // a done frame here is cut off (the server ends every frame with a blank line): it counts as no result,
+              // so the check below says the connection was lost
             }
           }
           break
