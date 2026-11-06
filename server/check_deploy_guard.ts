@@ -1,13 +1,15 @@
-// Checks D1-D11: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
+// Checks D1-D12: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
 // D7 the names taken from requests, D8 the routes wired to them (index.ts read as text), D9 a real server started
 // in production mode with no Supabase: the demo and its gerbers stay open; model calls, code runs and the
 // password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text). D11 a port in use.
+// D12 the built app's cache headers, on a small dist/ of its own.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn } from 'child_process'
-import { readFileSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { request } from 'http'
 import { createServer } from 'net'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
 
@@ -195,7 +197,46 @@ async function portTaken() {
   check('D11 a port in use: exit 1, not "running"', code === 1 && !/running on/.test(said), `exit ${code}: ${said.trim().split('\n').pop()?.slice(0, 120)}`)
 }
 
+// D12. a file under /assets has its hash in its name, so it is kept for a year; index.html names the current ones, so it
+//      is asked for every time. Everything came with max-age=0 (review of 2026-11-06). The server runs in a temp folder
+//      that holds a small dist/, so no build is needed and no outputs/ of the checkout is touched
+async function cacheHeaders() {
+  const cwd = mkdtempSync(join(tmpdir(), 'sf_static_'))
+  mkdirSync(join(cwd, 'dist', 'assets'), { recursive: true })
+  writeFileSync(join(cwd, 'dist', 'index.html'), '<!doctype html>')
+  writeFileSync(join(cwd, 'dist', 'assets', 'index-abc123.js'), 'export {}')
+  const port = await freePort()
+  const here = process.cwd()
+  const proc = spawn(process.execPath, [join(here, 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(here, 'index.ts')], {
+    cwd, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '' },
+    stdio: 'ignore',
+  })
+  try {
+    const base = `http://127.0.0.1:${port}`
+    let up = false
+    for (let t0 = Date.now(); !up && Date.now() - t0 < 30000; await new Promise(r => setTimeout(r, 300))) {
+      up = await fetch(base + '/health').then(r => r.ok, () => false)
+    }
+    const cache = async (path: string) => {
+      const r = await fetch(base + path)
+      return `${r.status} ${r.headers.get('cache-control')}`
+    }
+    const asset = up ? await cache('/assets/index-abc123.js') : 'server did not start'
+    const page = up ? await cache('/') : '', route = up ? await cache('/some/route') : ''
+    check('D12 hashed assets for a year, index.html every time', /^200 .*max-age=31536000/.test(asset) && /immutable/.test(asset)
+      && page === '200 public, max-age=0' && route === '200 public, max-age=0', `/assets: ${asset} | /: ${page} | a route: ${route}`)
+  } finally {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const gone = new Promise(r => proc.once('exit', r))
+      proc.kill()
+      await gone
+    }
+    try { rmSync(cwd, { recursive: true, force: true }) } catch { /* the server may hold it a moment longer */ }
+  }
+}
+
 // exitCode, not process.exit(): exiting with fetch's sockets still open crashed Node on Windows (0xC0000409)
 live().catch(e => check('D9 production server', false, (e as Error).message))
   .then(portTaken).catch(e => check('D11 a port in use', false, (e as Error).message))
+  .then(cacheHeaders).catch(e => check('D12 cache headers', false, (e as Error).message))
   .finally(() => { process.exitCode = ok ? 0 : 1 })

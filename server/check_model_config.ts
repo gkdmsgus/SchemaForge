@@ -219,8 +219,10 @@ async function main() {
     n = seen.length
     const edit = await post(grok.base, '/chat_edit', { graph: { components: [{ ref: 'R1', value: '1k' }], nets: [] }, message: 'R1 값을 2k로 바꿔줘' })
     await edit.text()
-    check('L4 AI editor: SF_MODEL_MINI at the base URL, streamed', asked(at(n), 'grok-mini-test', s => s.stream),
-      JSON.stringify(at(n).map(s => [s.model, s.effort, s.stream])))
+    // no-transform as the other streams: a compressing proxy in front (Caddy's encode) would compress only this one
+    const editCache = edit.headers.get('cache-control')
+    check('L4 AI editor: SF_MODEL_MINI at the base URL, streamed, not to be transformed', asked(at(n), 'grok-mini-test', s => s.stream) && editCache === 'no-cache, no-transform',
+      `${JSON.stringify(at(n).map(s => [s.model, s.effort, s.stream]))} ${editCache}`)
 
     // L4b. the AI editor is told the free refs and to leave unnamed parts alone (live, 2026-10-30, the 555 blinker:
     // a new capacitor took C3, which exists, and the battery's + pin was moved off VCC)

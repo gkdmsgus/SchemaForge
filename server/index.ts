@@ -103,6 +103,9 @@ const distPath = distCandidates.find(p => existsSync(p)) ?? join(process.cwd(), 
 console.log('[static] distPath:', distPath, '| exists:', existsSync(distPath))
 
 if (existsSync(distPath)) {
+  // a build's files have their hash in the name, so they can stay for a year; index.html names the current ones and
+  // stays max-age=0. All of it was asked for again on every visit (review of 2026-11-06)
+  app.use('/assets', express.static(join(distPath, 'assets'), { immutable: true, maxAge: '1y' }))
   app.use(express.static(distPath))
 }
 
@@ -903,7 +906,7 @@ changed.`
   }]
 
   res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
   res.setHeader('Connection', 'keep-alive')
 
   const abort = new AbortController()
