@@ -7,7 +7,8 @@
 // its late answer is only kept for later, V5 the logo during a generation stops it and goes home for good, V6-V8 a
 // PCB stream stops when its result screen goes: on ↺ and the logo, after an AI refusal rebuilt it without the AI rounds,
 // and a real stream cut in the middle says nothing (it ran on unseen: python, DRC and the paid AI rounds, and a new PCB
-// overlapped it on a 4 CPU server: review of 2026-11-06).
+// overlapped it on a 4 CPU server: review of 2026-11-06), V9 an AI editor stream that ends with no result says the
+// connection was lost, and its half answer does not go to the model with the next request (the cursor blinked on: 2026-11-06).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -211,6 +212,25 @@ try {
   await v8.waitForTimeout(500)
   check('V8 a real PCB stream cut in the middle says nothing, and the home screen stays', cutOff === 1 && complained === 0 && await v8.locator('.sf-home-input textarea').isVisible(),
     `cut ${cutOff}, failures logged ${complained}`)
+
+  // V9
+  const v9 = await onResult(never)
+  const edits = []
+  await v9.p.route(/\/chat_edit$/, r => {
+    edits.push(r.request().postDataJSON())
+    return r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: text\ndata: "R1 값을 바꾸는 중인 답"\n\n' })
+  })
+  const box = v9.p.getByTestId('chat-input')
+  await box.fill('R1 값을 470으로 바꿔줘')
+  await box.press('Enter')
+  const lostSaid = await v9.p.getByText('오류: 연결이 끊겼습니다').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const cursor = await v9.p.evaluate(() => [...document.querySelectorAll('[data-testid="left-panel"] span')].some(s => s.style.animation.includes('pulse')))
+  await box.fill('다시 해줘')
+  await box.press('Enter')
+  for (let i = 0; i < 30 && edits.length < 2; i++) await v9.p.waitForTimeout(100)
+  const half = JSON.stringify(edits[1]?.history ?? []).includes('바꾸는 중인 답')
+  check('V9 an AI editor stream with no result says the connection was lost, and its half answer is not sent on', lostSaid && !cursor && edits.length === 2 && !half,
+    `said ${lostSaid}, cursor ${cursor}, ${edits.length} requests, half answer sent on ${half}`)
 } finally {
   await browser.close()
 }

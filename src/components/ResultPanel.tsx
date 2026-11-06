@@ -508,6 +508,7 @@ export default function ResultPanel({
       const decoder = new TextDecoder()
       let buf = ''
       let streamedText = ''
+      let finished = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -532,6 +533,7 @@ export default function ResultPanel({
             })
             setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 10)
           } else if (evt === 'done') {
+            finished = true
             const { reply, actions: proposed } = JSON.parse(raw)
             const snapshot = effectiveGraph ?? null
             // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit): a pin of a part the
@@ -560,11 +562,15 @@ export default function ResultPanel({
             saveChat(msg, assistantMsg)
             if (newGraph && newGraph !== snapshot) saveToSession({ graph: newGraph })
           } else if (evt === 'error') {
+            finished = true
             const { message } = JSON.parse(raw)
             setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${message as string}`, actions: [] }])
           }
         }
       }
+      // ended with no answer (a proxy that closes cleanly when the server is replaced), as the PCB and generation
+      // streams report: the cursor blinked on and the half answer went to the model with the next request (2026-11-06)
+      if (!finished) throw new Error('연결이 끊겼습니다. 다시 요청해 주세요.')
     } catch (e) {
       setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${(e as Error).message}`, actions: [] }])
     }
