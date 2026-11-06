@@ -3,6 +3,8 @@
 // PATCH /sessions/:id with the new name and the list shows it, R3 Escape keeps the old name and sends nothing,
 // R4 a click on the item opens the circuit and closes the drawer, R5 a favourite has no ✎, R6-R7 a slow list shows
 // '불러오는 중' until it comes, not '저장된 회로가 없습니다'.
+// A1-A3 the login form (not the drawer, but no other browser check
+// logs in and out): no password left after a login and logout or a close, and a sign-up waiting for its mail keeps it.
 // (Before R1 the name was renamed by double-click, whose first click already opened the circuit and slid the
 // drawer out with the name field in it.) Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_drawer.mjs [BASE]   (default http://localhost:3000)
@@ -103,6 +105,48 @@ try {
       !during.empty && during.loading && !favDuring.empty && favDuring.loading && shown && after === 0, JSON.stringify({ during, favDuring, shown, after }))
     await slow.context().close()
   }
+
+  // A1-A3: the login form stays mounted, and what was typed in it must not (2026-11-06 sweep: after a logout the next person
+  // opened it on the last password, and pressing 로그인 logged in as that account)
+  const authPage = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  const signedIn = { user: { id: 'u1', email: 'owner@example.com' }, token: 'fake-token', refresh_token: 'fake-refresh' }
+  await authPage.route(/\/auth\/login$/, r => json(r, signedIn))
+  await authPage.route(/\/auth\/logout$/, r => json(r, { ok: true }))
+  await authPage.route(/\/auth\/register$/, r => json(r, { needsConfirm: true, message: '가입 확인 메일을 보냈습니다.' }))
+  await authPage.route(/\/auth\/me$/, r => json(r, { user: signedIn.user, canGenerate: true }))
+  await authPage.route(/\/(favorites|sessions)$/, r => json(r, { favorites: [], sessions: [] }))
+  const email = authPage.locator("input[aria-label='이메일']"), password = authPage.locator("input[aria-label='비밀번호']"), again = authPage.locator("input[aria-label='비밀번호 확인']")
+  const openLogin = async () => { await authPage.getByRole('button', { name: '로그인', exact: true }).first().click(); await email.waitFor({ timeout: 5000 }) }
+  const secret = 'typed-password-1'
+  await authPage.goto(BASE, { waitUntil: 'networkidle' })
+
+  await openLogin()
+  await email.fill(signedIn.user.email)
+  await password.fill(secret)
+  await authPage.locator('.auth-form button[type=submit]').click()
+  await authPage.getByRole('button', { name: '로그아웃' }).waitFor({ timeout: 5000 })
+  await authPage.getByRole('button', { name: '로그아웃' }).click()
+  await authPage.getByRole('button', { name: '로그인', exact: true }).first().waitFor({ timeout: 5000 })
+  await openLogin()
+  check('A1 after a login and a logout the login form holds no password, the mail address stays',
+    await password.inputValue() === '' && await email.inputValue() === signedIn.user.email, `password ${(await password.inputValue()).length} chars, mail '${await email.inputValue()}'`)
+
+  await password.fill(secret)
+  await authPage.keyboard.press('Escape')
+  await email.waitFor({ state: 'hidden', timeout: 5000 })
+  await openLogin()
+  check('A2 a form closed without logging in holds no password either', await password.inputValue() === '', `password ${(await password.inputValue()).length} chars`)
+
+  // the mail's link confirms the address and the person logs in here: the form stays open and keeps the password for that
+  await authPage.locator('.auth-tabs').getByRole('button', { name: '회원가입' }).click()
+  await email.fill('new@example.com')
+  await password.fill(secret)
+  await again.fill(secret)
+  await authPage.locator('.auth-form button[type=submit]').click()
+  await authPage.getByText('가입 확인 메일을 보냈습니다.').waitFor({ timeout: 5000 })
+  check('A3 a sign-up waiting for its mail stays on the form with the password kept, for the login after the link',
+    await password.inputValue() === secret && !(await again.isVisible()), `password ${(await password.inputValue()).length} chars`)
+  await authPage.context().close()
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
