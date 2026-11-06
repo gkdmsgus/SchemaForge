@@ -8,7 +8,8 @@ and an off-board move together, round 2 stops). SF_AI_STUB_MODE=fail2: round 2 f
 Usage: python check_ai_loop.py [--port 8098]   (a stub server already running; without --port it starts its own)
 Exit code 0 only if every check passes.
 """
-import argparse, json, os, re, socket, subprocess, sys, tempfile, shutil, time, urllib.request
+import argparse, http.client, json, os, re, select, socket, subprocess, sys, tempfile, threading, shutil, time, urllib.parse, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
@@ -72,9 +73,105 @@ class Server:
         return sorted(f for f in os.listdir(self.tmp) if f.startswith('sf_bak_'))
 
 
+class FakeModel(ThreadingHTTPServer):
+    """An OpenAI-compatible API on a free port. answer(n) is the n-th call's edit, or None to leave that call hanging
+    until its caller goes away (dropped counts those)."""
+    def __init__(self, answer, delay=0):
+        super().__init__(('127.0.0.1', 0), FakeModelCall)
+        self.answer, self.delay = answer, delay
+        self.calls = self.answered = self.dropped = 0
+        self.closing = threading.Event()
+        self.base = f'http://127.0.0.1:{self.server_address[1]}/v1'
+
+    def handle_error(self, *_):
+        pass    # the caller hung up, which is what these checks do
+
+    def __enter__(self):
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(self, *_):
+        self.closing.set()
+        self.shutdown()
+        self.server_close()
+
+    def env(self):
+        return {'OPENAI_API_KEY': 'check-only', 'OPENAI_BASE_URL': self.base, 'SF_AI_MODEL': 'fake-model'}
+
+
+class FakeModelCall(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def do_POST(self):
+        fake = self.server
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        fake.calls += 1
+        edit = fake.answer(fake.calls)
+        if edit is None:
+            while not fake.closing.is_set():
+                if select.select([self.connection], [], [], 0.2)[0] and not self.connection.recv(1, socket.MSG_PEEK):
+                    fake.dropped += 1
+                    return
+            return
+        time.sleep(fake.delay)
+        call = {'id': 't', 'type': 'function', 'function': {'name': 'edit_board', 'arguments': json.dumps(edit)}}
+        body = json.dumps({'id': 'c', 'object': 'chat.completion', 'created': 0, 'model': 'fake-model', 'choices': [
+            {'index': 0, 'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None, 'tool_calls': [call]}}]}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        fake.answered += 1
+
+
+class Stream:
+    """A board stream read as it comes; close() hangs up as a closed tab does."""
+    def __init__(self, base, body, timeout=300):
+        url = urllib.parse.urlsplit(base)
+        self.conn = http.client.HTTPConnection(url.hostname, url.port, timeout=timeout)
+        self.conn.request('POST', '/generate_pcb_stream', json.dumps(body).encode('utf-8'), {'Content-Type': 'application/json'})
+        self.res = self.conn.getresponse()
+
+    def events(self):
+        name = None
+        for raw in self.res:
+            line = raw.decode('utf-8').rstrip('\r\n')
+            if line.startswith('event: '):
+                name = line[7:]
+            elif line.startswith('data: ') and name:
+                yield name, json.loads(line[6:])
+                name = None
+
+    def close(self):
+        self.res.close()
+        self.conn.close()
+
+
+def wait_for(ready, seconds):
+    t0 = time.time()
+    while time.time() - t0 < seconds and not ready():
+        time.sleep(0.1)
+    return ready()
+
+
 def outputs_board(stem):
     with open(os.path.join(SERVER, 'outputs', f'{stem}.board.json'), encoding='utf-8') as f:
         return json.load(f)
+
+
+def board_or_none(stem):
+    """None while a process is halfway through writing it."""
+    try:
+        return outputs_board(stem)
+    except ValueError:
+        return None
+
+
+def new_net(work, stem):
+    shutil.copy(os.path.join(work, 'ne555_blink.net'), os.path.join(SERVER, 'outputs', f'{stem}.net'))
+    return {'filename': f'{stem}.net', 'style': 'smd'}
 
 
 def gnd_widths(board):
@@ -186,9 +283,10 @@ def main():
                 return check_loop(args.port, work)
             with Server(SF_AI_STUB='1') as server:
                 return check_loop(server.port, work)
-        for group in (stub_loop, lambda: check_failed_round(work)):
+        groups = [stub_loop, check_failed_round]
+        for group in groups:
             try:
-                for name, (passed, info) in group().items():
+                for name, (passed, info) in (group() if group is stub_loop else group(work)).items():
                     all_ok &= passed
                     print(f'{"ok  " if passed else "FAIL"} {name}  {info}')
             except Exception as e:
