@@ -559,13 +559,37 @@ function analyzePower(b: Base, force = false) {
     }
   }
 
-  // A GND-named net that no battery reaches and nothing else feeds (no connector) cannot return
-  // current to a battery whose group has no GND of its own.
-  const deadGround = noGround.length ? [...named.keys()].filter(n => named.get(n) === 0 && !volts.has(n) && !blocked.has(n) && !hasConn(n)) : []
-  if (deadGround.length) {
+  // A GND-named net that no battery reaches and nothing else feeds (no connector) cannot return current to a battery
+  // whose group has no GND of its own, nor to the supply's ground when it is a second ground beside it (2026-11-06 sweep:
+  // the battery's − on GND, the LEDs' cathodes on an AGND joined to nothing read '동작 검사 통과'). Joined to that ground by
+  // a net tie (a resistor of 1 Ω or less, or one with no value to judge), an inductor, or what the circuit is judged with
+  // closed or on (a switch, a relay's contact, a transistor), it is the same ground. With no battery or connector on any
+  // ground there is nothing to be cut off from: the names stand.
+  const grounds = [...named.keys()].filter(n => named.get(n) === 0)
+  const supplyGrounds = grounds.filter(n => volts.has(n) || hasConn(n))
+  const returns = new Set([...supplyGrounds, ...edges.filter(e => noGround.includes(e.ref)).map(e => e.minus)])
+  const tiePins = (p: OpPart): [number, number][] => {
+    if (p.part === 'L' || p.part === 'SW') return [[1, 2]]
+    if (p.part === 'R') { const r = parseOhms(p.value); return r == null || r <= 1 ? [[1, 2]] : [] }
+    if (p.part === 'Relay') return [[3, 4], [3, 5]]
+    return p.part === 'Q_NPN' || p.part === 'Q_NMOS' ? [[2, 3]] : []
+  }
+  const ties = b.parts().flatMap(p => tiePins(p).map(([a, z]) => [b.net(p.ref, a), b.net(p.ref, z)] as const))
+  for (let grew = true; grew;) {
+    grew = false
+    for (const [a, z] of ties) if (a && z && returns.has(a) !== returns.has(z)) { returns.add(a); returns.add(z); grew = true }
+  }
+  const deadGround = returns.size ? grounds.filter(n => !returns.has(n) && !blocked.has(n)) : []
+  if (deadGround.length && noGround.length) {
     issue(noGround[0], `${noGround.join('·')} 배터리가 ${deadGround.slice(0, 3).join(', ')} 넷과 이어져 있지 않습니다: 이 넷에 연결된 부품은 배터리로 전류가 돌아가지 못합니다`,
       ['배터리 − 단자를 GND 넷에 연결해야 합니다', `${deadGround.join(', ')}의 전압은 이름만 보고 정하지 않습니다`])
     for (const n of deadGround) blocked.set(n, { why: `${ga(n)} 배터리와 이어져 있지 않습니다`, cause: noGround[0] })
+  } else if (deadGround.length) {
+    const main = supplyGrounds[0]
+    const owner = edges[0]?.ref ?? b.on(main).find(nd => { const p = b.part(nd.ref); return !!p && /^Conn_/.test(p.part) && !isMotor(p) })!.ref
+    issue(owner, `${deadGround.slice(0, 3).join(', ')} 넷이 전원 쪽 ${wa(main)} 이어져 있지 않습니다: 이 넷에 연결된 부품은 전원으로 전류가 돌아가지 못합니다`,
+      [`${deadGround.join(', ')} 넷을 ${main}에 바로 잇거나, 0 Ω 저항이나 인덕터로 이어야 합니다`, `${deadGround.join(', ')}의 전압은 이름만 보고 정하지 않습니다`])
+    for (const n of deadGround) blocked.set(n, { why: `${ga(n)} 전원 쪽 ${wa(main)} 이어져 있지 않습니다`, cause: owner })
   }
 
   // Regulator outputs and closed switches, until nothing changes: one regulator can feed another,
