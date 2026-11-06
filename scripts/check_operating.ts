@@ -241,6 +241,17 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     && is(run(lm), 'op_led', 'pass', 'D1', /14 mA/)
     && is(run(variant(variant(fed, setValue('U1', 'AMS1117CD-3.3')), setValue('BT1', '3.7V'))), 'op_reg', 'error', 'U1', /유지하지 못합니다/),
     [show(lmLow, 'op_led'), lowLed?.detail.join(' | ') ?? '', show(run(lm), 'op_led')].join(' / '))
+  // a 1117's voltage written with a V for the point (2026-11-06 sweep: AMS1117-3V3 read 3 V, its right +3V3 net an
+  // op_power error, and the LED it feeds was reckoned on 3 V; 1V8 read 1 V, 2V5 2 V), a package after it too
+  const named3V3 = (value: string) => run(variant(fed, c => { setValue('U1', value)(c); c.nets.find(n => n.name === 'V3')!.name = '+3V3' }))
+  const out = (value: string, v: RegExp) => is(run(variant(reg, setValue('U1', value))), 'op_reg', 'pass', 'U1', v)
+  const v3 = named3V3('AMS1117-3V3'), pkg = named3V3('AMS1117-3V3 SOT-223')
+  check('O7f3 AMS1117-3V3, 1V8, 2V5 and with a package after it read their voltage; a +3V3 net agrees; LM1117-3V3 too, still no verdict',
+    !v3.some(r => r.rule === 'op_power') && is(v3, 'op_led', 'pass', 'D1', /14 mA/) && is(v3, 'op_reg', 'pass', 'U1', /→ 3\.3 V/)
+    && !pkg.some(r => r.rule === 'op_power') && is(pkg, 'op_led', 'pass', 'D1', /14 mA/)
+    && out('AMS1117-1V8', /→ 1\.8 V/) && out('AMS1117-2V5', /→ 2\.5 V/) && out('AMS1117-3.3', /→ 3\.3 V/)
+    && is(named3V3('LM1117-3V3'), 'op_reg', 'unknown', 'U1', /LM1117-3\.3/) && is(named3V3('LM1117-3V3'), 'op_led', 'pass', 'D1', /14 mA/),
+    [show(v3, 'op_power'), show(v3, 'op_reg'), show(pkg, 'op_reg'), show(run(variant(reg, setValue('U1', 'AMS1117-1V8'))), 'op_reg')].join(' / '))
 }
 
 // O8. headline ──────────────────────────────────────────────────────────────────

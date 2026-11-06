@@ -235,8 +235,9 @@ function regSpec(value: string) {
   const v = value.toUpperCase().replace(/\s+/g, '')
   // a 1117's voltage: d.d(d) right after its package letters (AMS1117CD-3.3, LM1117MPX-3.3, 'LM1117 3.3V'), or one
   // digit after a dash (LM1117-5). Not two bare digits (ST12 is 12 V, S12 1.2 V by maker), not a package name
-  // (AMS1117 SOT-223 read 2.2 V), never an ADJ (review of 2026-11-03)
-  const x1117 = /([A-Z]*)1117(?!SOT|TO)[A-Z]{0,4}(?:-?(\d\.\d{1,2})|-(\d))(?![\d.])/.exec(v)
+  // (AMS1117 SOT-223 read 2.2 V), never an ADJ (review of 2026-11-03). 3V3 is 3.3 here as in parseVolts and net names
+  // (2026-11-06 sweep: AMS1117-3V3 read 3 V, and its right +3V3 net read '동작 안 됨'; 1V8 read 1 V, 2V5 2 V)
+  const x1117 = /([A-Z]*)1117(?!SOT|TO)[A-Z]{0,4}(?:-?(\d\.\d{1,2})|-(\d))(?![\d.])/.exec(v.replace(/(\d)V(\d)/g, '$1.$2'))
   if (x1117 && !/ADJ/.test(v)) {
     const out = x1117[2] ?? x1117[3]
     // the AMS1117's limits are looked up
