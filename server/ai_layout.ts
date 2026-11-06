@@ -502,11 +502,15 @@ const TOOL = {
   },
 }
 
-/** Deterministic stand-in for the model, used by the checks (SF_AI_STUB=1). */
+/**
+ * Deterministic stand-in for the model, used by the checks (SF_AI_STUB=1).
+ * SF_AI_STUB_MODE=fail2: round 2 fails, as a 429 or JSON that does not parse does (pcb/check_ai_loop.py).
+ */
 export function stubEdit(round: number): BoardEdit {
   // One mixed proposal: the width change should be kept and the move rolled back, in the same round.
   if (round === 1) return { reason: '(테스트) GND를 0.8 mm로 넓히고 R1을 기판 밖으로 옮깁니다',
                             net_widths: [{ net: 'GND', mm: 0.8 }], moves: [{ ref: 'R1', dx: 40, dy: 40 }] }
+  if (process.env.SF_AI_STUB_MODE === 'fail2') throw new Error('stub: the model call failed')
   return { reason: '더 고칠 것이 없습니다', stop: true }
 }
 
@@ -597,13 +601,18 @@ export function runGenerator(netPath: string, pcbPath: string, style: string, ov
   })
 }
 
-export function backup(paths: string[]): () => void {
+/**
+ * Copies of files for one trial: restore() puts them back, drop() is for a trial that is kept. Either one removes the
+ * copies: a kept trial left its two for the container's life (about 113 KB each time, review of 2026-11-06).
+ */
+export function backup(paths: string[]): { restore: () => void; drop: () => void } {
   const copies = paths.filter(existsSync).map(p => {
     const b = join(tmpdir(), `sf_bak_${randomUUID().slice(0, 8)}`)
     copyFileSync(p, b)
     return [p, b] as const
   })
-  return () => copies.forEach(([p, b]) => { copyFileSync(b, p); try { unlinkSync(b) } catch { /* gone */ } })
+  const drop = () => copies.forEach(([, b]) => { try { unlinkSync(b) } catch { /* gone */ } })
+  return { restore: () => { copies.forEach(([p, b]) => copyFileSync(b, p)); drop() }, drop }
 }
 
 export function readBoard(path: string): BoardJson {

@@ -1329,24 +1329,30 @@ async function runAiLoop(
   emit: (r: AiRound) => void,
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
+  const summary = (doneEvent.summary || {}) as Record<string, unknown>
+  // outside the try: a kept round is already in the board file, so a later round that fails still returns it. Null sent
+  // the screen the first board while downloads and gerbers read the kept one (review of 2026-11-06)
+  let best = metricsOf(summary, drc.errors ?? 0)
+  let bestDrc = drc
+  let bestDone = doneEvent
+  let kept = false
+  let round = 0
   try {
     // Every round is judged on DRC errors, so an unavailable DRC must not read as "0 errors".
     if (!drc.available) drc = await runDrc(pcbPath)
     if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
-    let summary = (doneEvent.summary || {}) as Record<string, unknown>
-    let best = metricsOf(summary, drc.errors ?? 0, board)
-    let bestDrc = drc
-    let bestDone = doneEvent
+    best = metricsOf(summary, drc.errors ?? 0, board)
+    bestDrc = drc
     const ov: Overrides = {
       parts: Object.fromEntries(board.parts.map(p => [p.ref, [p.x, p.y, p.rot] as [number, number, number]])),
       net_width: { ...((summary.net_width as Record<string, number>) || {}) },
     }
     const history: string[] = []
     const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
-    let kept = false
 
-    for (let round = 1; round <= MAX_ROUNDS; round++) {
+    while (round < MAX_ROUNDS) {
+      round++
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
       const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history)
       history.push(JSON.stringify(edit))
@@ -1371,7 +1377,7 @@ async function runAiLoop(
                  note: [...notes, precheckNote(label, problems)].join(', ') })
           continue
         }
-        const restore = backup([pcbPath, jsonPath])
+        const { restore, drop } = backup([pcbPath, jsonPath])
         let after: Metrics | undefined
         let note = notes.join(', ')
         try {
@@ -1388,6 +1394,7 @@ async function runAiLoop(
             ov.parts = trial.parts
             ov.net_width = trial.net_width
             kept = true
+            drop()
             feedback.push(describeOutcome(round, sub, before, after, true))
             emit({ round, part, reason: edit.reason || '', actions: sub, before, after, kept: true, note })
             continue
@@ -1401,12 +1408,14 @@ async function runAiLoop(
         emit({ round, part, reason: edit.reason || '', actions: sub, before: best, after, kept: false, note })
       }
     }
-    return kept ? { done: bestDone, drc: bestDrc } : null
   } catch (e) {
-    emit({ round: 0, reason: `AI 다듬기를 건너뜁니다: ${modelFailure(e)?.text ?? (e as Error).message}`, actions: {},
-           before: metricsOf((doneEvent.summary || {}) as Record<string, unknown>, drc.errors ?? 0), kept: false })
-    return null
+    const why = modelFailure(e)?.text ?? (e as Error).message
+    // round 0 is what the screen reads as "AI 다듬기 건너뜀", so not once a round was kept: a stop in its round
+    emit(kept
+      ? { round, reason: `AI 다듬기를 여기서 멈추고 지금까지 채택한 기판을 씁니다: ${why}`, actions: { stop: true }, before: best, kept: false }
+      : { round: 0, reason: `AI 다듬기를 건너뜁니다: ${why}`, actions: {}, before: best, kept: false })
   }
+  return kept ? { done: bestDone, drc: bestDrc } : null
 }
 
 // ── GET /board_model ───────────────────────────────────────────────

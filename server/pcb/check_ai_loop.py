@@ -3,12 +3,12 @@ Stage-4 checks: fixed placement and the AI improvement loop.
 
 The loop itself lives in the Node server, so this script talks to a server started
 with SF_AI_STUB=1 (a deterministic stand-in for the model: round 1 proposes a GND widening
-and an off-board move together, round 2 stops).
+and an off-board move together, round 2 stops). SF_AI_STUB_MODE=fail2: round 2 fails instead.
 
-Usage: python check_ai_loop.py [--port 8098]
+Usage: python check_ai_loop.py [--port 8098]   (a stub server already running; without --port it starts its own)
 Exit code 0 only if every check passes.
 """
-import argparse, json, os, re, subprocess, sys, tempfile, shutil, urllib.request
+import argparse, json, os, re, socket, subprocess, sys, tempfile, shutil, time, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
@@ -32,6 +32,55 @@ def sse_post(url, body, timeout=300):
     return events
 
 
+class Server:
+    """The real server on a free port, with a temp folder of its own (sf_bak_ files are counted there)."""
+    def __init__(self, **env):
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            self.port = s.getsockname()[1]
+        self.base = f'http://127.0.0.1:{self.port}'
+        self.tmp = tempfile.mkdtemp(prefix='sf_ailoop_')
+        self.log = open(os.path.join(self.tmp, 'server.log'), 'w', encoding='utf-8')
+        # node --import tsx: one process to stop, where the tsx command would leave its child running on Windows.
+        # Every setting named, so a server/.env in the checkout (dotenv never overrides one) adds no model or login
+        self.proc = subprocess.Popen(['node', '--import', 'tsx', 'index.ts'], cwd=SERVER, stdout=self.log, stderr=self.log, env={
+            **os.environ, 'PORT': str(self.port), 'NODE_ENV': 'development', 'SUPABASE_URL': '', 'SUPABASE_SERVICE_KEY': '',
+            'ALLOWED_EMAILS': '', 'SF_AI_JSON': '', 'SF_AI_STUB': '', 'SF_AI_STUB_MODE': '', 'OPENAI_API_KEY': '',
+            'TMP': self.tmp, 'TEMP': self.tmp, 'TMPDIR': self.tmp, **env})
+
+    def __enter__(self):
+        t0 = time.time()
+        while time.time() - t0 < 60:
+            try:
+                urllib.request.urlopen(f'{self.base}/health', timeout=2).close()
+                return self
+            except OSError:
+                time.sleep(0.3)
+        self.stop()
+        raise RuntimeError(f'the server did not start in 60 s on port {self.port}')
+
+    def __exit__(self, *_):
+        self.stop()
+
+    def stop(self):
+        self.proc.terminate()
+        self.proc.wait(30)
+        self.log.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def backups(self):
+        return sorted(f for f in os.listdir(self.tmp) if f.startswith('sf_bak_'))
+
+
+def outputs_board(stem):
+    with open(os.path.join(SERVER, 'outputs', f'{stem}.board.json'), encoding='utf-8') as f:
+        return json.load(f)
+
+
+def gnd_widths(board):
+    return sorted({t['width'] for t in board['tracks'] if t['net'] == 'GND'})
+
+
 def check_fixed_placement(work):
     """20. re-running with the produced positions reproduces the same board."""
     shutil.copy(os.path.join(SERVER, 'test_circuits', 'ne555_blink.py'), work)
@@ -49,11 +98,9 @@ def check_fixed_placement(work):
     return ok, f'same positions={same} GND widths={sorted(widths)} unrouted={len(b["unrouted"])}'
 
 
-def check_loop(port):
+def check_loop(port, work):
     """21-23. the stub loop: good round kept, bad round rolled back, stream well formed."""
-    src = os.path.join(SERVER, 'outputs', 'stage0_ne555.net')
-    dst = os.path.join(SERVER, 'outputs', 'ai_check.net')
-    shutil.copy(src, dst)
+    shutil.copy(os.path.join(work, 'ne555_blink.net'), os.path.join(SERVER, 'outputs', 'ai_check.net'))
     events = sse_post(f'http://localhost:{port}/generate_pcb_stream',
                       {'filename': 'ai_check.net', 'style': 'smd', 'ai': True})
     kinds = [k for k, _ in events]
@@ -96,9 +143,34 @@ def check_loop(port):
     return res
 
 
+def check_failed_round(work):
+    """24c-24e. round 1 is kept and the model fails in round 2 (a 429, JSON that does not parse): what the screen gets
+    is what the file holds. It got the first board while downloads and gerbers read the kept one (review of 2026-11-06)."""
+    shutil.copy(os.path.join(work, 'ne555_blink.net'), os.path.join(SERVER, 'outputs', 'ai_fail_check.net'))
+    with Server(SF_AI_STUB='1', SF_AI_STUB_MODE='fail2') as server:
+        events = sse_post(f'{server.base}/generate_pcb_stream', {'filename': 'ai_fail_check.net', 'style': 'smd', 'ai': True})
+        left = server.backups()
+    kinds = [k for k, _ in events]
+    rounds = [d for k, d in events if k == 'ai']
+    done = [d for k, d in events if k == 'done'][-1]
+    disk = outputs_board('ai_fail_check')
+    last = rounds[-1]
+    return {
+        '24c failed round: done.board is the file': (
+            any(r['kept'] for r in rounds) and done['board'] == disk and gnd_widths(disk) == [0.8] and kinds[-1] == 'done',
+            f'done GND {gnd_widths(done["board"])}, disk GND {gnd_widths(disk)}, same={done["board"] == disk}'),
+        # stop and a round number: round 0 is what the screen reads as "AI 다듬기 건너뜀", and a round was kept
+        '24d failed round: said once, as a stop': (
+            last['round'] == 2 and last['actions'].get('stop') is True and not last['kept'] and '여기서 멈추고' in last['reason']
+            and kinds[-2] == 'drc' and kinds[-3] == 'ai',
+            f'last round={last["round"]} {last["reason"]!r}, stream ends {kinds[-3:]}'),
+        '24e no backup left in the temp folder': (not left, f'sf_bak_ files: {len(left)} (a kept trial left 2 each)'),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--port', type=int, default=8098)
+    ap.add_argument('--port', type=int, default=0, help='a stub server already running; without it, one is started')
     ap.add_argument('--skip-loop', action='store_true', help='only the generator-side check')
     args = ap.parse_args()
     work = tempfile.mkdtemp(prefix='sf_ai_')
@@ -109,14 +181,20 @@ def main():
     print(f'{"ok  " if ok else "FAIL"} 20 fixed placement  {info}')
 
     if not args.skip_loop:
-        try:
-            for name, (passed, info) in check_loop(args.port).items():
-                all_ok &= passed
-                print(f'{"ok  " if passed else "FAIL"} {name}  {info}')
-        except Exception as e:
-            all_ok = False
-            print(f'FAIL loop checks  {e} (is the stub server running on {args.port}? '
-                  f'SF_AI_STUB=1 PORT={args.port} npx tsx index.ts)')
+        def stub_loop():
+            if args.port:
+                return check_loop(args.port, work)
+            with Server(SF_AI_STUB='1') as server:
+                return check_loop(server.port, work)
+        for group in (stub_loop, lambda: check_failed_round(work)):
+            try:
+                for name, (passed, info) in group().items():
+                    all_ok &= passed
+                    print(f'{"ok  " if passed else "FAIL"} {name}  {info}')
+            except Exception as e:
+                all_ok = False
+                print(f'FAIL loop checks  {e!r}' + (f' (is the stub server running on {args.port}?'
+                      f' SF_AI_STUB=1 PORT={args.port} npx tsx index.ts)' if args.port else ''))
 
     print('ALL PASS' if all_ok else 'SOME CHECKS FAILED')
     sys.exit(0 if all_ok else 1)
