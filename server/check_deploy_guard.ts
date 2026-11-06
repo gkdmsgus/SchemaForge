@@ -1,7 +1,7 @@
-// Checks D1-D10: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
+// Checks D1-D11: what a deployed server (NODE_ENV=production) lets a visitor do (deploy_guard.ts). D1-D6 the rules,
 // D7 the names taken from requests, D8 the routes wired to them (index.ts read as text), D9 a real server started
 // in production mode with no Supabase: the demo and its gerbers stay open; model calls, code runs and the
-// password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text).
+// password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text). D11 a port in use.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn } from 'child_process'
@@ -175,5 +175,27 @@ async function live() {
   }
 }
 
+// D11. a port already in use is a failure: the server printed "running" and exited 0 (review of 2026-11-06)
+async function portTaken() {
+  const held = createServer()
+  await new Promise<void>((resolve, reject) => { held.once('error', reject).listen(0, resolve) })
+  const { port } = held.address() as { port: number }
+  const proc = spawn(process.execPath, [join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'index.ts'], {
+    env: { ...process.env, NODE_ENV: 'development', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let said = ''
+  proc.stdout!.on('data', (d: Buffer) => { said += d.toString() })
+  proc.stderr!.on('data', (d: Buffer) => { said += d.toString() })
+  const code = await new Promise<number | null | string>(resolve => {
+    const late = setTimeout(() => { proc.kill(); resolve('still running after 60 s') }, 60000)
+    proc.once('exit', c => { clearTimeout(late); resolve(c) })
+  })
+  held.close()
+  check('D11 a port in use: exit 1, not "running"', code === 1 && !/running on/.test(said), `exit ${code}: ${said.trim().split('\n').pop()?.slice(0, 120)}`)
+}
+
 // exitCode, not process.exit(): exiting with fetch's sockets still open crashed Node on Windows (0xC0000409)
-live().catch(e => check('D9 production server', false, (e as Error).message)).finally(() => { process.exitCode = ok ? 0 : 1 })
+live().catch(e => check('D9 production server', false, (e as Error).message))
+  .then(portTaken).catch(e => check('D11 a port in use', false, (e as Error).message))
+  .finally(() => { process.exitCode = ok ? 0 : 1 })

@@ -1820,4 +1820,11 @@ if (existsSync(distPath)) {
 }
 
 const PORT = Number(process.env.PORT) || 8002
-app.listen(PORT, () => console.log(`SchemaForge v2 running on http://localhost:${PORT}`))
+// Express 5 hands a listen error to this callback: a port in use printed "running" and exited 0 (review of 2026-11-06)
+app.listen(PORT, err => {
+  if (err) {
+    console.error(`Cannot listen on port ${PORT}: ${err.message}`)
+    process.exit(1)
+  }
+  console.log(`SchemaForge v2 running on http://localhost:${PORT}`)
+})
