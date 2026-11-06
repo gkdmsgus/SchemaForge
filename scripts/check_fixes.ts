@@ -386,6 +386,17 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
 
+  // G12d. an add_net with no pin changes nothing (2026-11-06 sweep: changed true, an empty NEW on the nets, an undo step and
+  // a stale PCB, no word of it): no nodes, or only a pin with no reference; beside a real edit it leaves no net and no chip
+  const noPin = [chatEdit(open, [{ type: 'add_net', name: 'NEW', nodes: [] }], msg, '완료했습니다.'), chatEdit(open, [{ type: 'add_net', name: 'NEW' }], msg, '완료했습니다.'),
+    chatEdit(open, [{ type: 'add_net', name: 'NEW', nodes: [{ ref: ' ', pin: '1' }] }], msg, '완료했습니다.')]
+  const nothing = noPin.every(e => !e.changed && !e.actions.length && JSON.stringify(e.graph) === JSON.stringify(open) && /^\n\n이 답으로 회로는 바뀌지 않았습니다\./.test(e.note))
+  const beside = chatEdit(open, [...join, { type: 'add_net', name: 'NEW', nodes: [] }], msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
+  const bare = applyActions(open, [{ type: 'add_net', name: 'NEW', nodes: [] }])
+  check('G12d an add_net with no pin leaves the circuit as it is and says so; beside a real edit it leaves no net and no chip',
+    nothing && beside.changed && !beside.graph.nets.some(n => n.name === 'NEW') && beside.actions.map(actionLabel).join() === '+TRIG_THRES' && JSON.stringify(bare.nets) === JSON.stringify(open.nets),
+    JSON.stringify({ nothing, notes: noPin.map(e => e.note), beside: beside.actions.map(actionLabel), nets: beside.graph.nets.map(n => n.name) }))
+
   // G12c. 나요 as a verb is no question (2026-11-06 sweep: "이제 버저에서 소리가 나요." held back the edit it reported)
   const said: [string, boolean][] = [['이제 버저에서 소리가 나요.', false], ['LED에 불이 나요', false], ['LED가 빛나요.', false], ['소리가 나요.', false], ['C2를 연결했습니다.', false],
     ['켜지나요.', true], ['적용할까요.', true], ['이 연결이 맞습니까.', true], ['적용할까요', true], ['소리가 나요?', true], ['연결이 맞나요!', true]]

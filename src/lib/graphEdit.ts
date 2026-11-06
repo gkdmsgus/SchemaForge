@@ -52,7 +52,8 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
         .filter(n => n.name === name || n.nodes.length > 0)
       const at = nets.findIndex(n => n.name === name)
       if (at >= 0) nets[at] = { ...nets[at], nodes: [...nets[at].nodes, ...add.filter(x => !nets[at].nodes.some(nd => same(nd, x)))] }
-      else nets = [...nets, { name, nodes: add }]
+      // no pins, no net (2026-11-06 sweep: an empty NEW counted as a changed circuit: an undo step, a stale PCB, no word of it)
+      else if (add.length) nets = [...nets, { name, nodes: add }]
     } else if (a.type === 'remove_net') {
       nets = nets.filter(n => n.name !== a.name)
     }
@@ -237,7 +238,7 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
   const without = (drop: (nd: { ref: string; pin: string }) => boolean) => out.flatMap(a => {
     if (a.type !== 'add_net') return [a]
     const nodes = (a.nodes || []).filter(nd => !drop(nd))
-    return nodes.length || !(a.nodes || []).length ? [{ ...a, nodes }] : []
+    return nodes.some(nd => (nd.ref || '').trim()) ? [{ ...a, nodes }] : []
   })
   const dropped = out.flatMap(a => (a.type === 'add_net' ? (a.nodes || []) : [])).filter(nd => reused.has((nd.ref || '').trim())).map(key)
   out = without(nd => reused.has((nd.ref || '').trim()))
