@@ -3,7 +3,10 @@
 // plan came out as a 5 V LM7805: frame review of the tour, 2026-10-30), P2 ↺ of the same description sends it again,
 // P3 the generation screen opens at its top when the plan was approved further down the page (it opened scrolled down,
 // "회로 만드는 중" out of view: 2026-11-03 tour takes 1 and 3, S28), P4 a stream cut off inside its done frame says the
-// connection was lost (it went back to the home screen with no word, the model already paid for: review of 2026-11-06).
+// connection was lost (it went back to the home screen with no word, the model already paid for: review of 2026-11-06),
+// P5-P7 a cancelled plan request stays cancelled, whether its stop comes in time or not: its late plan does not come back
+// over the home screen, its failure does not start a generation (the plan is optional, so a failed one generates), and
+// its plan does not replace the steps of a later generation, whose 취소 still stops it (review of 2026-11-06).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -86,6 +89,75 @@ try {
   await cut.getByRole('button', { name: '이 계획으로 회로 만들기' }).click()
   const lost = await cut.getByText('회로 생성 중 연결이 끊겼습니다').waitFor({ timeout: 10000 }).then(() => true, () => false)
   check('P4 a stream cut off inside its done frame says the connection was lost', lost, lost ? '' : 'no word on screen')
+
+  // P5-P7: the first description's plan waits; with abort doing nothing too, so the sequence number is tested on its own
+  const lateCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await lateCtx.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: true }))
+    AbortController.prototype.abort = function () {}
+  })
+  const home = p => p.locator('.sf-home-input textarea')
+  const approve = p => p.getByRole('button', { name: '이 계획으로 회로 만들기' })
+  const shows = l => l.isVisible().catch(() => false)
+  const submit = async (p, description) => {
+    await home(p).fill(description)
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  }
+  const holding = async (c, late, onGenerate = done) => {
+    const p = await c.newPage()
+    const held = { generations: 0, stopped: 0, release: () => {} }
+    const released = new Promise(r => { held.release = r })
+    p.on('requestfailed', r => { if (/\/(plan|generate)$/.test(r.url())) held.stopped++ })
+    await fake(p, r => { held.generations++; return onGenerate(r) })
+    await p.route(/\/plan$/, async r => {
+      if (!/늦는/.test(r.request().postDataJSON()?.description)) return json(r, PLAN)
+      await released
+      await late(r).catch(() => {})
+    })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    return { p, held }
+  }
+  const cancelPlan = async p => {
+    await p.getByText('부품과 회로 구성을 정리하고 있습니다').waitFor({ timeout: 10000 })
+    await p.getByRole('button', { name: '취소', exact: true }).click()
+    await home(p).waitFor({ timeout: 5000 })
+  }
+  for (const [c, how] of [[ctx, 'stopped'], [lateCtx, 'stop too late']]) {
+    const p5 = await holding(c, r => json(r, PLAN))
+    await submit(p5.p, '늦는 계획의 전원 회로 5')
+    await cancelPlan(p5.p)
+    p5.held.release()
+    await p5.p.waitForTimeout(500)
+    check(`P5 a cancelled plan does not come back over the home screen (${how})`, await shows(home(p5.p)) && !(await shows(approve(p5.p)))
+      && p5.held.stopped === (c === ctx ? 1 : 0), `${p5.held.stopped} requests stopped`)
+
+    const p6 = await holding(c, r => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"check"}' }))
+    await submit(p6.p, '늦는 계획의 전원 회로 6')
+    await cancelPlan(p6.p)
+    p6.held.release()
+    await p6.p.waitForTimeout(500)
+    check(`P6 a cancelled plan's failure starts no generation (${how})`, await shows(home(p6.p)) && p6.held.generations === 0, `${p6.held.generations} generations`)
+
+    let answer7
+    const answered7 = new Promise(r => { answer7 = r })
+    const p7 = await holding(c, r => json(r, PLAN), async r => { await answered7; await done(r).catch(() => {}) })
+    await submit(p7.p, '늦는 계획의 전원 회로 7')
+    await cancelPlan(p7.p)
+    await submit(p7.p, '다른 설명의 전원 회로')
+    await approve(p7.p).click({ timeout: 10000 })
+    await p7.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 10000 })
+    p7.held.release()
+    await p7.p.waitForTimeout(500)
+    const steps = await shows(p7.p.getByText(/^회로 만드는 중 · /)), over = await shows(approve(p7.p))
+    if (steps) await p7.p.getByRole('button', { name: '취소', exact: true }).click()
+    answer7()
+    await p7.p.waitForTimeout(500)
+    check(`P7 an old plan leaves a later generation's steps alone, and 취소 stops that generation (${how})`,
+      steps && !over && await shows(home(p7.p)) && !(await shows(p7.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first())),
+      `steps ${steps}, plan over them ${over}`)
+  }
 } finally {
   await browser.close()
 }

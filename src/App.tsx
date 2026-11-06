@@ -113,6 +113,10 @@ export default function App() {
   // the plan approved for a description goes with its generation, and with ↺ of the same description
   const approvedPlan = useRef<{ prompt: string; plan: unknown } | null>(null)
   const pendingGenerateRef = useRef<PendingRun | null>(null)
+  // which plan request may still answer, and its way to stop: cancelled, a late plan came back over the home screen
+  // or a later generation's steps, and a failed one started the generation the person had just cancelled (2026-11-06)
+  const planSeq = useRef(0)
+  const planAbort = useRef<AbortController | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   // bumped whenever another circuit takes the screen (history open, version pick, new generation, home):
   // a slower answer for the one before (a history load, a session save) does not land on it
@@ -196,6 +200,14 @@ export default function App() {
     abortRef.current?.abort()
     abortRef.current = null
     setLoading(false)
+    stopPlan()
+  }
+
+  /** the plan request on its way answers no more; its stop may come too late, so the number is what counts */
+  function stopPlan() {
+    planSeq.current++
+    planAbort.current?.abort()
+    planAbort.current = null
   }
 
   function goHome() {
@@ -280,26 +292,39 @@ export default function App() {
    * A refusal from /clarify, /plan or /generate stops the steps: 401 asks for the login again (the prompt waits
    * for it), 403 says why as the server wrote it, with no retry (it would be refused the same way). true = stopped.
    */
-  async function refused(res: Response, pending: PendingRun): Promise<boolean> {
+  async function refused(res: Response, pending: PendingRun, stale: () => boolean): Promise<boolean> {
     if (res.status === 401) { authExpired(pending); return true }
-    if (res.status === 403) { setError({ text: await errorText(res), refused: true }); return true }
+    if (res.status === 403) {
+      const why = await errorText(res)
+      if (!stale()) setError({ text: why, refused: true })
+      return true
+    }
     return false
   }
 
   async function fetchPlan(prompt: string) {
+    stopPlan()
+    const seq = planSeq.current
+    const stale = () => seq !== planSeq.current
+    const abort = new AbortController()
+    planAbort.current = abort
     setPlan({ originalPrompt: prompt, plan: null, loading: true })
     try {
       const res = await authFetch(`${API}/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: prompt }),
+        signal: abort.signal,
       })
-      if (await refused(res, { prompt, plan: true })) { setPlan(null); return }
+      if (stale()) return
+      if (await refused(res, { prompt, plan: true }, stale)) { if (!stale()) setPlan(null); return }
       // any other failure: the plan is optional, so generation goes on without it
       if (!res.ok) throw new Error('plan request failed')
       const data = await res.json()
-      setPlan({ originalPrompt: prompt, plan: data, loading: false })
+      if (!stale()) setPlan({ originalPrompt: prompt, plan: data, loading: false })
     } catch (e) {
+      // first: a stop lands here as an AbortError, and it must not generate
+      if (stale()) return
       setPlan(null)
       executeGenerate(prompt)
     }
@@ -331,7 +356,7 @@ export default function App() {
           body: JSON.stringify({ description: p }),
         })
         // refused: no plan or generation after it (they would be refused too)
-        if (await refused(cRes, { prompt: p, typeKey, skipCache })) return
+        if (await refused(cRes, { prompt: p, typeKey, skipCache }, () => false)) return
         if (cRes.ok) {
           const cData = await cRes.json() as ClarifyApiResponse
           if (cData?.clear === false && Array.isArray(cData.questions) && cData.questions.length) {
@@ -376,6 +401,7 @@ export default function App() {
   }
 
   async function executeGenerate(p: string) {
+    stopPlan()
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
@@ -665,7 +691,7 @@ export default function App() {
               : plan.originalPrompt
             fetchPlan(enriched)
           }}
-          onCancel={() => setPlan(null)}
+          onCancel={() => { stopPlan(); setPlan(null) }}
         />
       )}
 
