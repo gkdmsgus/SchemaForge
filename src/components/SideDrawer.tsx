@@ -69,6 +69,13 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
   // a server list on its way: the drawer says so instead of '저장된 회로가 없습니다' (about 1.5 s on the deployed server)
   const [loading, setLoading] = useState({ history: false, favorites: false })
 
+  // the drawer stays mounted, so a list outlives a logout: it goes as soon as the account changes (2026-11-06 sweep: A logs
+  // out, B logs in, and A's circuits showed in B's drawer and opened on a click until B's list came). Before the effect below
+  useEffect(() => {
+    setSavedResults([])
+    setFavorites([])
+  }, [user?.id])
+
   useEffect(() => {
     if (!open) return
     let live = true   // an answer for a drawer since closed (or reopened) is not shown

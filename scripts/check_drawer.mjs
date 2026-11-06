@@ -2,7 +2,7 @@
 // R1 the ✎ button opens the name field inside the open drawer and does not open the circuit, R2 Enter sends
 // PATCH /sessions/:id with the new name and the list shows it, R3 Escape keeps the old name and sends nothing,
 // R4 a click on the item opens the circuit and closes the drawer, R5 a favourite has no ✎, R6-R7 a slow list shows
-// '불러오는 중' until it comes, not '저장된 회로가 없습니다'.
+// '불러오는 중' until it comes, not '저장된 회로가 없습니다', R8-R9 another account's drawer never shows the last one's list.
 // A1-A3 the login form (not the drawer, but no other browser check
 // logs in and out): no password left after a login and logout or a close, and a sign-up waiting for its mail keeps it.
 // (Before R1 the name was renamed by double-click, whose first click already opened the circuit and slid the
@@ -147,6 +147,56 @@ try {
   check('A3 a sign-up waiting for its mail stays on the form with the password kept, for the login after the link',
     await password.inputValue() === secret && !(await again.isVisible()), `password ${(await password.inputValue()).length} chars`)
   await authPage.context().close()
+
+  // R8-R9: the drawer stays mounted, and a list must not outlive its account (2026-11-06 sweep: A logs out, B logs in, and A's
+  // circuits showed in B's drawer until B's list came, about 1.5 s on the deployed server, and opened on a click)
+  const shared = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  const isB = r => /token-b/.test(r.request().headers().authorization || '')
+  const account = b => (b ? { id: 'ub', email: 'b@example.com' } : { id: 'ua', email: 'a@example.com' })
+  const lists = b => { const name = b ? 'B' : 'A', id = b ? 'sb' : 'sa'
+    return { sessions: [{ ...session, id, name: null, prompt: `${name}의 회로` }],
+      favorites: [{ id: `f${id}`, session_id: null, created_at: session.created_at, sessions: { prompt: `${name}의 즐겨찾기`, graph: session.graph, filename: session.filename } }] } }
+  const later = async (r, body) => { if (isB(r)) await new Promise(ok => setTimeout(ok, 1500)); return json(r, body) }
+  await shared.route(/\/auth\/login$/, r => { const b = /^b@/.test(r.request().postDataJSON().email)
+    return json(r, { user: account(b), token: b ? 'token-b' : 'token-a', refresh_token: 'fake-refresh' }) })
+  await shared.route(/\/auth\/logout$/, r => json(r, { ok: true }))
+  await shared.route(/\/auth\/me$/, r => json(r, { user: account(isB(r)), canGenerate: true }))
+  await shared.route(/\/sessions$/, r => later(r, { sessions: lists(isB(r)).sessions }))
+  await shared.route(/\/favorites$/, r => later(r, { favorites: lists(isB(r)).favorites }))
+  const logIn = async mail => {
+    await shared.getByRole('button', { name: '로그인', exact: true }).first().click()
+    await shared.locator("input[aria-label='이메일']").fill(mail)
+    await shared.locator("input[aria-label='비밀번호']").fill('typed-password-1')
+    await shared.locator('.auth-form button[type=submit]').click()
+    await shared.getByRole('button', { name: '로그아웃' }).waitFor({ timeout: 5000 })
+  }
+  const menu = shared.locator("button[aria-label='메뉴']")
+  const tabOf = name => shared.getByRole('button', { name })
+  await shared.goto(BASE, { waitUntil: 'networkidle' })
+  await logIn('a@example.com')
+  await menu.click()
+  await shared.getByText('A의 회로').first().waitFor({ timeout: 5000 })
+  await tabOf('⭐ 즐겨찾기').click()
+  await shared.getByText('A의 즐겨찾기').first().waitFor({ timeout: 5000 })
+  await tabOf('히스토리').click()
+  await shared.getByRole('button', { name: '×' }).first().click()
+  await shared.waitForTimeout(400)
+  await shared.getByRole('button', { name: '로그아웃' }).click()
+  await shared.getByRole('button', { name: '로그인', exact: true }).first().waitFor({ timeout: 5000 })
+  const afterLogout = { list: await shared.getByText('A의 회로').count(), favourites: await shared.getByText('A의 즐겨찾기').count() }
+  check('R8 a logout clears the account\'s list and favourites from the closed drawer at once', !afterLogout.list && !afterLogout.favourites, JSON.stringify(afterLogout))
+
+  await logIn('b@example.com')
+  await menu.click()
+  await shared.waitForTimeout(300)
+  const whileB = { a: await shared.getByText('A의 회로').count(), loading: await shared.getByText('불러오는 중').first().isVisible() }
+  await tabOf('⭐ 즐겨찾기').click()
+  const whileFav = { a: await shared.getByText('A의 즐겨찾기').count(), loading: await shared.getByText('불러오는 중').first().isVisible() }
+  await tabOf('히스토리').click()
+  const bShown = await shared.getByText('B의 회로').first().waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('R9 the next account\'s drawer shows no circuit or favourite of the last one while its own list is on its way, then its own',
+    !whileB.a && whileB.loading && !whileFav.a && whileFav.loading && bShown && !(await shared.getByText('A의 회로').count()), JSON.stringify({ whileB, whileFav, bShown }))
+  await shared.context().close()
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
