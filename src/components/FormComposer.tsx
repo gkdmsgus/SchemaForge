@@ -515,10 +515,11 @@ function fieldHasValue(field: {key: string; multi?: boolean}, values: Record<str
 
 function fieldValueString(field: {key: string; multi?: boolean}, values: Record<string, unknown>, customs: Record<string, string>) {
   const c = customs[field.key]?.trim()
-  if (c) return c
   const v = values[field.key]
-  if (field.multi) return Array.isArray(v) && v.length ? v.join(', ') : null
-  return v || null
+  // a field that takes several sends its chips and what was typed (2026-11-06 sweep: 'LM386 사용' typed and the '전원 LED'
+  // chip lit sent only the typing, and the chip's feature was silently left out of the circuit)
+  if (field.multi) return [...(Array.isArray(v) ? v : []), ...(c ? [c] : [])].join(', ') || null
+  return c || v || null
 }
 
 export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, typeKey?: string) => void }) {
@@ -562,7 +563,8 @@ export default function FormComposer({ onSubmit }: { onSubmit: (prompt: string, 
 
   function setCustom(fieldKey: string, val: string) {
     setCustoms(c => ({ ...c, [fieldKey]: val }))
-    if (val.trim()) {
+    // typing replaces a single choice; the chips of a field that takes several stay
+    if (val.trim() && !type?.fields.find(f => f.key === fieldKey)?.multi) {
       setValues(v => {
         const next = { ...v }
         delete next[fieldKey]
