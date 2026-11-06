@@ -108,6 +108,23 @@ function isPowerNet(name: string): boolean {
 
 const isGround = (name: string) => /GND|EARTH|VSS|VEE/i.test(name)
 
+/**
+ * Net `b` joined into net `a`. A power net's name stays whichever pin was clicked first: the checks and the symbols go by
+ * the name, so a signal net clicked first would have left the circuit with no GND.
+ */
+function joinNets(nets: NetEntry[], a: number, b: number): NetEntry[] {
+  const rail = (n: string) => isPowerNet(n) || /^[+-]\d/.test(n)
+  const name = !rail(nets[a].name) && rail(nets[b].name) ? nets[b].name : nets[a].name
+  return nets.map((n, i) => (i === a ? { ...n, name, nodes: [...n.nodes, ...nets[b].nodes] } : n)).filter((_, i) => i !== b)
+}
+
+/** the next NET_n no net has: two nets of one name are one net in the netlist */
+function freeNetName(nets: NetEntry[]): string {
+  let n = nets.length + 1
+  while (nets.some(x => x.name === `NET_${n}`)) n++
+  return `NET_${n}`
+}
+
 type SymDir = 'up' | 'down' | 'left' | 'right'
 
 // which way a power symbol points from its pin. On a side with other pins (an IC) it points away from the part:
@@ -253,9 +270,18 @@ interface CircuitCanvasProps {
   invalidRefs?: Set<string>
   /** the parts' spots in this result, kept by the result panel: the schematic is unmounted on the other tabs */
   spots?: Spots
+  /**
+   * A hand edit (a wire joined, moved or deleted, a value): the result panel takes it as it takes a chat edit. They stayed
+   * in here, so the checks, the BOM and the PCB kept the old circuit under a "● 수정됨", and a tab switch lost them (2026-11-06)
+   */
+  onGraphChange?: (next: NetGraph) => void
+  /** the last edit taken back; none when there is nothing to take back */
+  onUndo?: () => void
+  /** the circuit on screen is not the generated one */
+  modified?: boolean
 }
 
-export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set(), spots }: CircuitCanvasProps) {
+export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = new Set(), spots, onGraphChange, onUndo, modified = false }: CircuitCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -273,16 +299,20 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   const wireDragRef = useRef<WireDragLive | null>(null)
   const [wireBends, setWireBends] = useState<Record<string, {mx: number; my: number}>>({})
   const [cursor, setCursor] = useState<Pos>({ x:0, y:0 })
-  const [localNets, setLocalNets] = useState<NetEntry[] | null>(null)
-  const [netsHistory, setNetsHistory] = useState<NetEntry[][]>([])
   const [toast, setToast] = useState<{msg: string; timeoutId: ReturnType<typeof setTimeout>} | null>(null)
+  // a value being typed in the part's panel: it goes up on blur or Enter (per keystroke, undo had a step for each letter)
   const [edits, setEdits] = useState<Record<string, {value: string}>>({})
   const [editingRef, setEditingRef] = useState<string | null>(null)
   const [editingValue, setEditingValue] = useState('')
+  // the value field open: Enter and Escape close it, and its blur on the way out must not commit it a second time or at all
+  const editingNow = useRef<string | null>(null)
+  const draftDropped = useRef(false)
+  // the graph this schematic just sent up: coming back down, it is no new circuit
+  const ownEdit = useRef<NetGraph | null>(null)
+  const bendsFor = useRef<NetEntry[] | undefined>(undefined)
 
   const comps = graph?.components || []
   const nets = graph?.nets || []
-  const effectiveNets = localNets || nets
 
   // Non-passive wheel listener to allow preventDefault for zoom
   const containerRef = useRef<HTMLDivElement>(null)
@@ -295,9 +325,17 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     return () => el.removeEventListener('wheel', handler)
   }, [])
 
+  // each part keeps the pins it has been drawn with in this result: counted from the nets alone, a deleted wire took
+  // its pin along, so the pin could not be wired again and an IC's other pins moved (2026-11-06)
+  const pinCounts = useRef<Record<string, number>>(spots?.pins ?? {})
+  if (spots) spots.pins = pinCounts.current
   const layouts = useMemo<Record<string, Layout>>(() => {
     const ls: Record<string, Layout> = {}
-    comps.forEach(c => { ls[c.ref] = getPinLayout(c.ref, getMaxPin(c.ref, nets)) })
+    comps.forEach(c => {
+      const count = Math.max(getMaxPin(c.ref, nets), pinCounts.current[c.ref] ?? 0)
+      pinCounts.current[c.ref] = count
+      ls[c.ref] = getPinLayout(c.ref, count)
+    })
     return ls
   }, [graph])
 
@@ -319,7 +357,6 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     edited.current = !!placedFor && comps.some(c => was[c.ref])
     setPlacedFor(graph)
     setPositions(carried ?? auto.positions)
-    setLocalNets(null)
   }
   // the layout as it is, dragged parts too, for when the schematic is shown again
   useEffect(() => { if (spots) { spots.graph = placedFor; spots.at = positions } }, [positions, placedFor, spots])
@@ -337,7 +374,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   function fitTo() {
     const el = containerRef.current
     // the parts with their pin stubs, the power symbols and labels drawn past them, and the wires around them
-    const b = drawing(effectiveNets, positions, layouts).box
+    const b = drawing(nets, positions, layouts).box
     if (!el || !b || !el.clientWidth || !el.clientHeight) { setZoom(1); setPan({ x:0, y:0 }); return }
     const PAD = 24
     const { x0, y0, x1, y1 } = b
@@ -371,22 +408,26 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }, [hasGraph])
 
   useEffect(() => {
-    setSelected(null)
+    // a hand edit keeps the part picked and its toast with the undo; the wires' bends go by net, and a value leaves those
+    const own = ownEdit.current === graph
+    if (!own) {
+      setSelected(null)
+      setToast(null)
+    }
     setSelectedNet(null)
-    setNetsHistory([])
-    setToast(null)
     setEdits({})
     setWireState(null)
     setWireDrag(null)
     wireDragRef.current = null
-    setWireBends({})
+    if (!own || bendsFor.current !== graph?.nets) setWireBends({})
+    bendsFor.current = graph?.nets
     // after an edit the view stays while all of the drawing is still in it, so nothing on screen moves
-    const v = visible(), b = drawing(effectiveNets, positions, layouts).box
+    const v = visible(), b = drawing(nets, positions, layouts).box
     if (!edited.current || !v || !b || b.x0 < v.x0 || b.y0 < v.y0 || b.x1 > v.x1 || b.y1 > v.y1) fitTo()
   }, [graph])
 
   // routed again only when a part moves or a net changes, not on every hover
-  const drawn = useMemo(() => drawing(effectiveNets, positions, layouts), [effectiveNets, positions, layouts])
+  const drawn = useMemo(() => drawing(nets, positions, layouts), [nets, positions, layouts])
 
   if (!graph || !comps.length) return null
 
@@ -513,28 +554,22 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }
 
   function connectPins(ref1: string, pin1: string, ref2: string, pin2: string) {
-    setLocalNets(prev => {
-      const base = prev ? [...prev] : nets.map(n => ({ ...n, nodes: [...n.nodes] }))
-      const i1 = base.findIndex(n => n.nodes.some(nd => nd.ref===ref1 && String(nd.pin)===String(pin1)))
-      const i2 = base.findIndex(n => n.nodes.some(nd => nd.ref===ref2 && String(nd.pin)===String(pin2)))
-      // already on one net: nothing to join (it used to add the second pin to that net again)
-      if (i1>=0 && i1===i2) return prev
-      if (i1>=0 && i2>=0 && i1!==i2) {
-        const merged = [...base]
-        merged[i1] = { ...merged[i1], nodes: [...merged[i1].nodes, ...merged[i2].nodes] }
-        merged.splice(i2, 1)
-        return merged
-      } else if (i1>=0) {
-        const merged = [...base]
-        merged[i1] = { ...merged[i1], nodes: [...merged[i1].nodes, { ref:ref2, pin:String(pin2) }] }
-        return merged
-      } else if (i2>=0) {
-        const merged = [...base]
-        merged[i2] = { ...merged[i2], nodes: [...merged[i2].nodes, { ref:ref1, pin:String(pin1) }] }
-        return merged
-      }
-      return [...base, { name:`NET_${base.length+1}`, nodes:[{ ref:ref1, pin:String(pin1) }, { ref:ref2, pin:String(pin2) }] }]
-    })
+    const i1 = nets.findIndex(n => n.nodes.some(nd => nd.ref===ref1 && String(nd.pin)===String(pin1)))
+    const i2 = nets.findIndex(n => n.nodes.some(nd => nd.ref===ref2 && String(nd.pin)===String(pin2)))
+    // already on one net: nothing to join (it used to add the second pin to that net again)
+    if (i1>=0 && i1===i2) return
+    if (i1>=0 && i2>=0) return changeNets(joinNets(nets, i1, i2))
+    if (i1>=0) return changeNets(nets.map((n, i) => (i===i1 ? { ...n, nodes: [...n.nodes, { ref:ref2, pin:String(pin2) }] } : n)))
+    if (i2>=0) return changeNets(nets.map((n, i) => (i===i2 ? { ...n, nodes: [...n.nodes, { ref:ref1, pin:String(pin1) }] } : n)))
+    changeNets([...nets, { name:freeNetName(nets), nodes:[{ ref:ref1, pin:String(pin1) }, { ref:ref2, pin:String(pin2) }] }])
+  }
+
+  function changeGraph(next: NetGraph) {
+    ownEdit.current = next
+    onGraphChange?.(next)
+  }
+  function changeNets(next: NetEntry[]) {
+    if (graph) changeGraph({ ...graph, nets: next })
   }
 
   function showToast(msg: string) {
@@ -546,23 +581,15 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }
 
   function deleteNet(ni: number) {
-    const base = localNets ? [...localNets] : [...nets]
-    const deleted = base[ni]
-    setNetsHistory(prev => [...prev.slice(-19), base])
-    setLocalNets(base.filter((_, i) => i !== ni))
+    const deleted = nets[ni]
+    changeNets(nets.filter((_, i) => i !== ni))
     setSelectedNet(null)
     showToast(`'${deleted?.name || '선'}' 삭제됨`)
   }
 
-  function undoNetDelete() {
-    setNetsHistory(prev => {
-      if (!prev.length) return prev
-      const next = [...prev]
-      const restored = next.pop()
-      setLocalNets(restored ?? null)
-      setToast(null)
-      return next
-    })
+  function undoEdit() {
+    onUndo?.()
+    setToast(null)
   }
 
   function findNearestPin(x: number, y: number, threshold = 22): {ref: string; pin: string} | null {
@@ -581,27 +608,22 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }
 
   function reconnectEndpoint(netIdx: number, nodeIdx: number, newRef: string, newPin: string) {
-    setLocalNets(prev => {
-      let nts = (prev || nets).map(n => ({ ...n, nodes: [...n.nodes] }))
-      // Remove the dragged node from its net
-      nts[netIdx] = { ...nts[netIdx], nodes: nts[netIdx].nodes.filter((_, i) => i !== nodeIdx) }
-      // Find if newRef:newPin already lives in another net
-      const destIdx = nts.findIndex(n => n.nodes.some(nd => nd.ref === newRef && String(nd.pin) === String(newPin)))
-      if (nts[netIdx].nodes.length === 0) {
-        // Net is now empty, remove it
-        return nts.filter((_, i) => i !== netIdx)
-      }
-      if (destIdx >= 0 && destIdx !== netIdx) {
-        // Merge dest net into our net
-        nts[netIdx] = { ...nts[netIdx], nodes: [...nts[netIdx].nodes, ...nts[destIdx].nodes] }
-        nts = nts.filter((_, i) => i !== destIdx)
-      } else if (destIdx < 0) {
-        nts[netIdx] = { ...nts[netIdx], nodes: [...nts[netIdx].nodes, { ref: newRef, pin: String(newPin) }] }
-      }
-      return nts
-    })
     setReconnectState(null)
     setSelectedNet(null)
+    const moving = nets[netIdx]?.nodes[nodeIdx]
+    // dropped on the pin it came from: nothing changed
+    if (!moving || (moving.ref === newRef && String(moving.pin) === String(newPin))) return
+    // Remove the dragged node from its net
+    const nts = nets.map(n => ({ ...n, nodes: [...n.nodes] }))
+    nts[netIdx] = { ...nts[netIdx], nodes: nts[netIdx].nodes.filter((_, i) => i !== nodeIdx) }
+    // Find if newRef:newPin already lives in another net
+    const destIdx = nts.findIndex(n => n.nodes.some(nd => nd.ref === newRef && String(nd.pin) === String(newPin)))
+    // Net is now empty, remove it
+    if (nts[netIdx].nodes.length === 0) return changeNets(nts.filter((_, i) => i !== netIdx))
+    // Merge dest net into our net
+    if (destIdx >= 0 && destIdx !== netIdx) return changeNets(joinNets(nts, netIdx, destIdx))
+    if (destIdx < 0) nts[netIdx] = { ...nts[netIdx], nodes: [...nts[netIdx].nodes, { ref: newRef, pin: String(newPin) }] }
+    changeNets(nts)
   }
 
   function onEndpointPointerDown(e: React.PointerEvent, netIdx: number, nodeIdx: number) {
@@ -639,17 +661,37 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   // ── Value inline edit ─────────────────────────────────────
   function startEdit(ref: string, val: string) {
+    editingNow.current = ref
     setEditingRef(ref)
     setEditingValue(val)
   }
   function commitEdit() {
-    if (editingRef) setEdits(es => ({ ...es, [editingRef]: { value: editingValue } }) as Record<string, {value: string}>)
+    const ref = editingNow.current
+    editingNow.current = null
     setEditingRef(null)
+    if (ref) commitValue(ref, editingValue)
+  }
+  function cancelEdit() {
+    editingNow.current = null
+    setEditingRef(null)
+  }
+  /** a value goes up when it is one and it changed; an emptied field gives the old one back */
+  function commitValue(ref: string, typed: string) {
+    const value = typed.trim(), part = comps.find(c => c.ref === ref)
+    setEdits(({ [ref]: _done, ...rest }) => rest)
+    if (!graph || !part || !value || value === (part.value ?? '')) return
+    changeGraph({ ...graph, components: comps.map(c => (c.ref === ref ? { ...c, value } : c)) })
+  }
+  function commitDraft(ref: string) {
+    const dropped = draftDropped.current
+    draftDropped.current = false
+    if (dropped) setEdits(({ [ref]: _done, ...rest }) => rest)
+    else if (edits[ref]) commitValue(ref, edits[ref].value)
   }
 
   const selectedComp = selected ? comps.find(c => c.ref===selected) : null
   const connectedRefs = hoveredNet!=null
-    ? new Set(effectiveNets[hoveredNet]?.nodes.map(n=>n.ref)||[])
+    ? new Set(nets[hoveredNet]?.nodes.map(n=>n.ref)||[])
     : null
 
   // ── Wire preview path ─────────────────────────────────────
@@ -665,7 +707,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
         background:'var(--sf-bg-1)', borderBottom:'2px solid var(--sf-line-strong)', flexShrink:0,
       }}>
         <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:TEXT_DIM, letterSpacing:'0.1em' }}>
-          {comps.length} COMPS · {effectiveNets.length} NETS
+          {comps.length} COMPS · {nets.length} NETS
         </span>
         {wireState && (
           <span style={{
@@ -677,7 +719,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           </span>
         )}
         {selectedNet !== null && !wireState && (() => {
-          const net = effectiveNets[selectedNet]
+          const net = nets[selectedNet]
           if (!net) return null
           const color = NET_COLORS[selectedNet % NET_COLORS.length]
           return (
@@ -699,15 +741,15 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
             </span>
           )
         })()}
-        {netsHistory.length > 0 && (
-          <button onClick={undoNetDelete} style={{
+        {onUndo && (
+          <button onClick={undoEdit} data-testid="schematic-undo" title="마지막 수정 취소" style={{
             padding:'2px 8px', borderRadius:4, border:'1px solid var(--sf-violet-line)',
             background:'transparent', color:'var(--sf-violet)', cursor:'pointer',
             fontFamily:'var(--sf-font-mono)', fontSize:10,
           }}>↩ 되돌리기</button>
         )}
-        {localNets && (
-          <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'var(--sf-cyan)', letterSpacing:'0.08em' }}>● 수정됨</span>
+        {modified && (
+          <span title="처음 생성한 회로에서 바뀌었습니다" style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'var(--sf-cyan)', letterSpacing:'0.08em' }}>● 수정됨</span>
         )}
         <div style={{ flex:1 }} />
         {Object.keys(wireBends).length > 0 && (
@@ -749,7 +791,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           animation:'fadeIn 0.15s ease',
         }}>
           <span>{toast.msg}</span>
-          <button onClick={undoNetDelete} style={{
+          <button onClick={undoEdit} style={{
             padding:'2px 8px', borderRadius:4, border:'1px solid var(--sf-violet-line)',
             background:'transparent', color:'var(--sf-violet)', cursor:'pointer', fontSize:10,
           }}>↩ 되돌리기</button>
@@ -802,7 +844,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           <g transform={`scale(${zoom}) translate(${pan.x},${pan.y})`}>
 
             {/* ── Nets ─────────────────────────────────── */}
-            {effectiveNets.map((net, ni) => {
+            {nets.map((net, ni) => {
               const isPwr = isPowerNet(net.name)
               const color = isPwr
                 ? (/GND|EARTH|VSS|VEE/i.test(net.name) ? '#4a7a6a' : '#f08080')
@@ -1011,7 +1053,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
                         autoFocus
                         onChange={e => setEditingValue(e.target.value)}
                         onBlur={commitEdit}
-                        onKeyDown={e => { if (e.key==='Enter') commitEdit(); if (e.key==='Escape') setEditingRef(null) }}
+                        onKeyDown={e => { if (e.key==='Enter') commitEdit(); if (e.key==='Escape') cancelEdit() }}
                         onClick={e => e.stopPropagation()}
                       />
                     </foreignObject>
@@ -1040,7 +1082,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
             {/* drawn over the parts: an end handle sits on a pin, and with the parts on top a press on it
                 started a new wire from that pin instead of moving the end (tour take of 2026-10-29) */}
             {/* ── Endpoint handles for selected net ───── */}
-            {selectedNet !== null && !reconnectState && effectiveNets[selectedNet]?.nodes.map((nd, nodeIdx) => {
+            {selectedNet !== null && !reconnectState && nets[selectedNet]?.nodes.map((nd, nodeIdx) => {
               const pt = pinAbsPos(nd.ref, nd.pin, positions, layouts)
               if (!pt) return null
               const netColor = NET_COLORS[selectedNet % NET_COLORS.length]
@@ -1063,7 +1105,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
             {/* ── Reconnect drag preview ───────────────── */}
             {reconnectState && (() => {
-              const net = effectiveNets[reconnectState.netIdx]
+              const net = nets[reconnectState.netIdx]
               if (!net) return null
               const fixedNodeIdx = net.nodes.findIndex((_, i) => i !== reconnectState.nodeIdx)
               const fixedNode = fixedNodeIdx >= 0 ? net.nodes[fixedNodeIdx] : null
@@ -1126,7 +1168,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
           <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:9, color:TEXT_DIM, letterSpacing:'0.14em', marginRight:4 }}>NETS</span>
-          {effectiveNets.map((net, ni) => {
+          {nets.map((net, ni) => {
             const isPwr = net.name==='VCC'||net.name==='GND'||net.name==='PWR'
             const color = isPwr
               ? (net.name==='GND' ? '#8a8270' : '#b04826')
@@ -1168,8 +1210,13 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           </div>
           <div style={{ padding:'12px 14px', flex:1, overflowY:'auto' }}>
             <PropRow label="Value">
-              <input value={edits[selectedComp.ref]?.value ?? selectedComp.value ?? ''}
+              <input value={edits[selectedComp.ref]?.value ?? selectedComp.value ?? ''} data-testid="part-value"
                      onChange={e => setEdits(es => ({ ...es, [selectedComp.ref]: { value: e.target.value } }) as Record<string, {value: string}>)}
+                     onBlur={() => commitDraft(selectedComp.ref)}
+                     onKeyDown={e => {
+                       if (e.key === 'Escape') draftDropped.current = true
+                       if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+                     }}
                      style={{
                        width:'100%', boxSizing:'border-box', padding:'5px 8px', height:30,
                        background:'#151821', border:'1px solid #1c2030', borderRadius:4,
@@ -1184,7 +1231,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
             </PropRow>
             <PropRow label="Nets">
               <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                {effectiveNets.filter(n => n.nodes.some(nd => nd.ref===selectedComp.ref)).map(n => (
+                {nets.filter(n => n.nodes.some(nd => nd.ref===selectedComp.ref)).map(n => (
                   <span key={n.name} style={{ fontSize:10, color:'#34d3a0', padding:'3px 6px', background:'#0f1520', borderRadius:3 }}>{n.name}</span>
                 ))}
               </div>

@@ -167,9 +167,16 @@ export default function ResultPanel({
   const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
-  // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph,
-  // or with savedEdit when its saved circuit is an AI edit)
+  // the circuit is no longer the generated one: changed in the AI chat or by hand on the schematic (a session opened
+  // from history starts with localGraph === result.graph, or with savedEdit when its saved circuit is an AI edit)
   const aiEdited = !!localGraph && localGraph !== result?.graph
+  // the circuits with a hand edit in them, by object as every test of an edit here, so an undo brings the words back
+  // too: every path below is the same for both, but "AI 편집" on a hand edit says what did not happen. An entry opened
+  // with a circuit no chat answer explains has one too
+  const handGraphs = useRef(new WeakSet<NetGraph>())
+  if (aiEdited && localGraph === initialChatSession?.graph && !initialChatSession?.messages.some(m => m.actions?.length)) handGraphs.current.add(localGraph)
+  const handEdited = !!localGraph && handGraphs.current.has(localGraph)
+  const editWord = handEdited ? '편집' : 'AI 편집'
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
     : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
@@ -178,8 +185,8 @@ export default function ResultPanel({
   // built from it has its own (the one the .kicad_pcb was made from), and that is the file shown and given
   const boardNet = boardNetlist(aiEdited, pcbStatus, pcbStale, pcbFilename)
   const netFile = boardNet ?? result?.filename
-  const netNote = netlistNote(aiEdited, boardNet)
-  const guideLine = guideNote(!!result?.codeEdited, aiEdited)
+  const netNote = netlistNote(aiEdited, boardNet, editWord)
+  const guideLine = guideNote(!!result?.codeEdited, aiEdited, editWord)
   useEffect(() => {
     if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
     let off = false
@@ -259,9 +266,10 @@ export default function ResultPanel({
       if (!aiErcNow.findings) return { tone: 'warn' as const, head: '바뀐 회로의 연결 점검을 돌리지 못했습니다', retry: true,
         lines: [aiErcNow.error ?? '이유를 알 수 없습니다', '회로가 틀렸다는 뜻은 아닙니다. 다시 점검하거나, PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
       const errs = aiErcNow.findings.filter(f => f.severity === 'error')
-      if (errs.length) return { tone: 'bad' as const, head: `AI 편집 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
-        lines: ['AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
-      return { tone: 'ok' as const, head: 'AI 편집 뒤 연결 점검 통과', lines: ['바뀐 회로를 다시 점검했습니다. 기판은 PCB를 다시 만들어야 바뀝니다.'] }
+      if (errs.length) return { tone: 'bad' as const, head: `${editWord} 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
+        lines: [handEdited ? '바뀐 회로를 다시 점검한 결과입니다. 아래처럼 고치거나, 마지막 수정을 되돌립니다.'
+          : 'AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
+      return { tone: 'ok' as const, head: `${editWord} 뒤 연결 점검 통과`, lines: ['바뀐 회로를 다시 점검했습니다. 기판은 PCB를 다시 만들어야 바뀝니다.'] }
     }
     const erc = result?.erc
     if (!erc || result?.codeEdited) return null
@@ -279,7 +287,7 @@ export default function ResultPanel({
     if (rep?.kept) return { tone: 'ok' as const, head: `넷리스트 점검(ERC) 오류를 자동으로 고쳤습니다 (오류 ${rep.before} → ${rep.after})`,
       lines: ['AI가 고친 코드를 다시 실행해 오류가 줄고, 맞게 이어져 있던 연결과 부품 값이 그대로일 때만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
     return null
-  }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow])
+  }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow, handEdited, editWord])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
@@ -316,6 +324,15 @@ export default function ResultPanel({
       .then(() => saveMessage(sid, 'assistant', reply.content || '...', reply.actions ?? []))
       .then(() => setSyncError(null))
       .catch(e => setSyncError(`AI 편집 대화를 기록에 저장하지 못했습니다: ${(e as Error).message}`))
+  }
+
+  /** A hand edit on the schematic goes the way of a chat edit: the checks, the BOM, the PCB, undo and the saves follow it. */
+  function applyHandEdit(next: NetGraph) {
+    handGraphs.current.add(next)
+    if (effectiveGraph) pushGraphHistory(effectiveGraph)
+    setLocalGraph(next)
+    updateSavedResultChat(lastPrompt, chatMessages, next)
+    saveToSession({ graph: next })
   }
 
   function undoGraph() {
@@ -564,6 +581,7 @@ export default function ResultPanel({
             if (edit?.changed && snapshot) {
               pushGraphHistory(snapshot)
               newGraph = edit.graph
+              if (handGraphs.current.has(snapshot)) handGraphs.current.add(newGraph)
               const diff = computeDiff(snapshot, newGraph)
               setGraphDiff(diff)
               // Let removed parts flash before they disappear, then show diagnostics.
@@ -768,7 +786,7 @@ export default function ResultPanel({
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
               <button onClick={() => setEditorOpen(false)} title="접기" aria-label="AI 편집 패널 접기" style={collapseBtn}>‹</button>
               {graphHistory.length > 0 && (
-                <button onClick={undoGraph} title="마지막 AI 수정 취소" style={{
+                <button onClick={undoGraph} title={handEdited ? '마지막 수정 취소' : '마지막 AI 수정 취소'} style={{
                   fontSize: 9, fontFamily: 'var(--sf-font-mono)', color: 'var(--sf-violet)',
                   background: 'none', border: '1px solid var(--sf-violet-line)', borderRadius: 4,
                   padding: '2px 6px', cursor: 'pointer',
@@ -1072,7 +1090,8 @@ export default function ResultPanel({
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
-              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} spots={schematicSpots.current} />
+              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} spots={schematicSpots.current}
+                  onGraphChange={applyHandEdit} onUndo={graphHistory.length ? undoGraph : undefined} modified={aiEdited} />
               : viewMode === 'assembly'
                 ? board?.final && board.status === 'done'
                   ? <BoardView key="assembly" mode="assembly" pcbFilename={pcbFilename ?? undefined}
@@ -1224,7 +1243,7 @@ export default function ResultPanel({
             )}
             {activeTab === 'Code' && (
               <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
-                lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited}
+                lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited} editWord={editWord}
                 pcbStale={pcbStale === 'circuit'} onRegeneratePcb={() => generatePCB()} canRun={!!authUser} onAuthExpired={onAuthExpired} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (

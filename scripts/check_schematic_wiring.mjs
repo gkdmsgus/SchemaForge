@@ -13,7 +13,9 @@
 // origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31), S13 the check above the
 // schematic follows the SMD/THT choice: it runs again with that style on THT and after an AI edit, so its pad numbers
 // are the board's (the check always used the SMD table: a floating Q_NPN base read pad 1 on a THT board, where it is
-// pad 2: review of 2026-11-06). /erc_graph is faked, by the style it is sent.
+// pad 2: review of 2026-11-06). /erc_graph is faked, by the style it is sent, S14 hand edits are the circuit's, not just
+// the drawing's: a joined wire and a value reach the checks, the saved session, undo and the next PCB, and outlive a tab
+// switch (they stayed in the schematic, under a "● 수정됨": review of 2026-11-06), and are not called AI edits.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -25,6 +27,8 @@ const check = (name, ok, info = '') => { if (!ok) failed++; console.log(`${ok ? 
 const browser = await chromium.launch()
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  // an edit brings the check's notice above the schematic, which moves it: answered at once, the wait below outlasts both
+  await page.route(/\/erc_graph$/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"erc":[]}' }))
   await page.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
 
@@ -43,7 +47,7 @@ try {
   const toolbarHeight = async () => Math.round((await toolbar.boundingBox()).height)
   const partY = ref => page.locator(`g[data-comp='${ref}']`).boundingBox().then(b => Math.round(b.y))
   // pins and the net whose drawn wire passes each pin's end (pins carry no ref or net in the page)
-  const pinMap = () => page.evaluate(() => {
+  const pinMap = (on = page) => on.evaluate(() => {
     const scr = (el, x, y) => { const c = el.getScreenCTM(); return { x: x * c.a + y * c.c + c.e, y: x * c.b + y * c.d + c.f } }
     const nets = [...document.querySelectorAll('g[data-net]')].map(g => {
       const pts = []
@@ -57,11 +61,13 @@ try {
     // only pins in the part of the schematic on screen (some parts sit below it)
     const view = document.querySelector('svg:has(g[data-comp])').getBoundingClientRect()
     for (const comp of document.querySelectorAll('g[data-comp]')) {
+      let num = 0
       for (const hit of comp.querySelectorAll("g[style*='crosshair'] circle[r='8']")) {
+        num++
         const p = scr(hit, +hit.getAttribute('cx'), +hit.getAttribute('cy'))
         if (p.x < view.left + 15 || p.x > view.right - 15 || p.y < view.top + 15 || p.y > view.bottom - 15) continue
         const net = nets.findIndex(pts => pts.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 5))
-        pins.push({ ref: comp.getAttribute('data-comp'), x: p.x, y: p.y, net })
+        pins.push({ ref: comp.getAttribute('data-comp'), pin: String(num), x: p.x, y: p.y, net })
       }
     }
     return { pins, nets: nets.length }
@@ -90,7 +96,7 @@ try {
   // S2
   if (!started) await page.mouse.click(pair.a.x, pair.a.y)   // so the next checks still run on the old build
   await page.mouse.click(pair.b.x, pair.b.y)
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(900)
   const joined = await pinMap()
   check('S2 a click on a pin of another net joins the two nets', !(await hint.isVisible()) && joined.nets === before.nets - 1
     && await page.getByText('● 수정됨').isVisible(), `nets ${before.nets}→${joined.nets}`)
@@ -106,8 +112,9 @@ try {
   check('S3 a click on empty space drops a started wire', shown && !(await hint.isVisible()) && (await pinMap()).nets === joined.nets)
 
   // S4: a and b are on one net now
-  const a = joined.pins.find(p => Math.hypot(p.x - pair.a.x, p.y - pair.a.y) < 3)
-  const b = joined.pins.find(p => Math.hypot(p.x - pair.b.x, p.y - pair.b.y) < 3)
+  const samePin = q => p => p.ref === q.ref && p.pin === q.pin
+  const a = joined.pins.find(samePin(pair.a))
+  const b = joined.pins.find(samePin(pair.b))
   await page.mouse.click(a.x, a.y)
   await page.waitForTimeout(200)
   await page.mouse.click(b.x, b.y)
@@ -163,8 +170,8 @@ try {
     await page.mouse.move(move.target.x, move.target.y, { steps: 12 })
     wireStarted = await hint.isVisible()
     await page.mouse.up()
-    await page.waitForTimeout(400)
-    const m = await pinMap(), now = q => m.pins.find(p => Math.hypot(p.x - q.x, p.y - q.y) < 4)
+    await page.waitForTimeout(900)
+    const m = await pinMap(), now = q => m.pins.find(samePin(q))
     const t = now(move.target), k = now(move.keep), o = now(move.own)
     moved = !!t && !!k && t.net >= 0 && t.net === k.net && (!o || o.net !== k.net)
   }
@@ -400,6 +407,88 @@ try {
     /\(1번\)/.test(atSmd) && sentAtSmd === 0 && thtPad && onResult?.style === 'tht' && r1(onResult?.graph) === r1(demo13.graph) && /\(1번\)/.test(backSmd)
     && /기판 패드 2/.test(editedTht) && sentEdited?.style === 'tht' && r1(sentEdited?.graph) === '2k2' && !/기판 패드/.test(editedSmd) && sentSmd?.style === 'smd',
     `SMD ${sentAtSmd} calls; THT pad 2 ${thtPad} (${onResult?.style}); back on SMD ${/\(1번\)/.test(backSmd)}; edited ${sentEdited?.style} ${/기판 패드 2/.test(editedTht)}, then ${sentSmd?.style} ${!/기판 패드/.test(editedSmd)}`)
+
+  // S14-S16: a generated circuit in a saved session, every request kept
+  const ctx14 = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await ctx14.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+  })
+  const p14 = await ctx14.newPage()
+  const rechecked = [], saved = [], pcbs = []
+  const final14 = { outline: [0, 0, 20, 14], parts: [], nets: [], style: 'smd', erc: [], tracks: [], vias: [], unrouted: [] }
+  await p14.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await p14.route(/\/favorites$/, r => json(r, { favorites: [] }))
+  await p14.route(/\/sessions$/, r => json(r, { id: 's14', sessions: [] }))
+  await p14.route(/\/sessions\/s14$/, r => { saved.push(r.request().postDataJSON()); return json(r, { ok: true }) })
+  await p14.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(demo13)}\n\n` }))
+  await p14.route(/\/erc_graph$/, r => { rechecked.push(r.request().postDataJSON().graph); return json(r, { erc: [] }) })
+  await p14.route(/\/generate_pcb_stream$/, r => {
+    pcbs.push(r.request().postDataJSON())
+    return r.fulfill({ status: 200, contentType: 'text/event-stream',
+      body: `event: done\ndata: ${JSON.stringify({ board: final14, pcbFilename: 'check.kicad_pcb', summary: { unmapped: [], warnings: [] } })}\n\n` })
+  })
+  await p14.route(/\/board_model/, r => r.fulfill({ status: 404, body: '' }))
+  await p14.goto(BASE, { waitUntil: 'networkidle' })
+  await p14.locator('.sf-home-input textarea').fill('손으로 고칠 모터 회로')
+  await p14.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 20000 })
+  await p14.waitForTimeout(600)
+  const settle = () => p14.waitForTimeout(900)
+  const netGroups = () => p14.locator('g[data-net]').count()
+  const notice14 = () => p14.getByTestId('erc-notice').innerText().catch(() => '')
+  const undo14 = p14.getByTestId('schematic-undo')
+  const modifiedMark = p14.getByText('● 수정됨')
+  const onOneNet = (g, x, y) => (g?.nets ?? []).some(n => n.nodes.some(nd => nd.ref === x.ref && nd.pin === x.pin) && n.nodes.some(nd => nd.ref === y.ref && nd.pin === y.pin))
+  const valueOf = (g, ref) => g?.components?.find(c => c.ref === ref)?.value
+  const wiredPair = pins => {
+    let best = null
+    for (const a of pins) for (const b of pins) {
+      const d = Math.hypot(a.x - b.x, a.y - b.y)
+      if (a.ref !== b.ref && a.net >= 0 && b.net >= 0 && a.net !== b.net && (!best || d < best.d)) best = { a, b, d }
+    }
+    return best
+  }
+  const join = async () => {
+    const { pins } = await pinMap(p14)
+    const { a, b } = wiredPair(pins)
+    await p14.mouse.click(a.x, a.y)
+    await p14.waitForTimeout(200)
+    await p14.mouse.click(b.x, b.y)
+    await settle()
+    return { a, b }
+  }
+
+  const nets0 = await netGroups()
+  const { a: a14, b: b14 } = await join()
+  const joinedNets = await netGroups(), said14 = await notice14()
+  const undoWords = await p14.locator('[data-testid="left-panel"] button', { hasText: '되돌리기' }).getAttribute('title').catch(() => null)
+  const reachedCheck = onOneNet(rechecked.at(-1), a14, b14), reachedSave = onOneNet(saved.at(-1)?.graph, a14, b14)
+  const inBrowser = await p14.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]?.graph)
+  check('S14a a joined wire reaches the check, the saved session and this browser\'s record, and is not called an AI edit',
+    joinedNets === nets0 - 1 && reachedCheck && reachedSave && onOneNet(inBrowser, a14, b14) && /^편집 뒤/.test(said14) && !/AI 편집/.test(said14) && undoWords === '마지막 수정 취소',
+    `nets ${nets0}→${joinedNets}, check ${reachedCheck}, session ${reachedSave}, notice "${said14.split('\n')[0]}", undo "${undoWords}"`)
+
+  await p14.getByTestId('view-tab-pcb').click()
+  await p14.waitForTimeout(500)
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
+  check('S14b it outlives the PCB tab', await netGroups() === nets0 - 1 && await modifiedMark.isVisible())
+
+  await undo14.click()
+  await settle()
+  const undone = await netGroups() === nets0 && !(await modifiedMark.isVisible()) && !onOneNet(saved.at(-1)?.graph, a14, b14)
+  check('S14c undo takes it back, on screen and in the saved session', undone, `nets ${await netGroups()}, marked ${await modifiedMark.isVisible()}`)
+
+  const { a: a14d, b: b14d } = await join()
+  await p14.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+  await p14.getByRole('button', { name: /\.kicad_pcb/ }).waitFor({ timeout: 10000 })
+  check('S14d the next PCB is made from the edited circuit', onOneNet(pcbs.at(-1)?.graph, a14d, b14d) && !pcbs.at(-1)?.filename && !!pcbs.at(-1)?.baseName, JSON.stringify(Object.keys(pcbs.at(-1) ?? {})))
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
 } finally {
   await browser.close()
 }

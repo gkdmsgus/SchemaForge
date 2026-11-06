@@ -19,9 +19,9 @@ export interface Size { w: number; h: number }
  * tabs, and laid out again it moved every part (2026-11-03 tour, 328 s). `at` is the last layout with the graph it was
  * for; `gone` the last spot of each part a graph change took out, by its ref and partKey: by ref alone a diode that
  * took the ref D1 after "LED D1 빼줘" wrote over the LED's spot, and two undos put the LED by its nets (recheck of
- * 2026-11-03).
+ * 2026-11-03). `pins`: how many pins each part has been drawn with (CircuitCanvas layouts).
  */
-export interface Spots { graph?: NetGraph; at: Record<string, Pt>; gone: Record<string, Pt> }
+export interface Spots { graph?: NetGraph; at: Record<string, Pt>; gone: Record<string, Pt>; pins?: Record<string, number> }
 
 /** a part's ref, kind and the net on each of its pins: the same for a part an undo brings back */
 export function partKey(graph: NetGraph, ref: string): string {

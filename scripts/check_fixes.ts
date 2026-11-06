@@ -518,9 +518,12 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
 {
   const ai = guideNote(false, true), both = guideNote(true, true), code = guideNote(true, false)
   const src = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8')
-  const wired = /const guideLine = guideNote\(!!result\?\.codeEdited, aiEdited\)/.test(src) && /\{guideLine && <div style=\{drawerNote\}>\{guideLine\}<\/div>\}/.test(src)
+  const wired = /const guideLine = guideNote\(!!result\?\.codeEdited, aiEdited, editWord\)/.test(src) && /\{guideLine && <div style=\{drawerNote\}>\{guideLine\}<\/div>\}/.test(src)
+  // a hand edit on the schematic is not called an AI edit (2026-11-06)
+  const hand = [guideNote(false, true, '편집'), netlistNote(true, null, '편집'), netlistNote(true, 'x.net', '편집')]
   check('D2 the Guide tab says an AI edit is not in it; a code run keeps its line',
-    /AI 편집으로 바꾼 곳은 안내에 없습니다/.test(ai ?? '') && both === ai && /코드를 고친 뒤에는/.test(code ?? '') && guideNote(false, false) === null && wired,
+    /AI 편집으로 바꾼 곳은 안내에 없습니다/.test(ai ?? '') && both === ai && /코드를 고친 뒤에는/.test(code ?? '') && guideNote(false, false) === null && wired
+    && hand.every(t => !!t && !/AI/.test(t) && /편집/.test(t)),
     JSON.stringify({ ai, both, code, wired }))
 }
 
