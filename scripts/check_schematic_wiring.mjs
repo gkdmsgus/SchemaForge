@@ -15,7 +15,10 @@
 // are the board's (the check always used the SMD table: a floating Q_NPN base read pad 1 on a THT board, where it is
 // pad 2: review of 2026-11-06). /erc_graph is faked, by the style it is sent, S14 hand edits are the circuit's, not just
 // the drawing's: a joined wire and a value reach the checks, the saved session, undo and the next PCB, and outlive a tab
-// switch (they stayed in the schematic, under a "● 수정됨": review of 2026-11-06), and are not called AI edits.
+// switch (they stayed in the schematic, under a "● 수정됨": review of 2026-11-06), and are not called AI edits, S15 a value
+// goes up on blur or Enter, once, not per keystroke, and Escape keeps the old one, S16 a deleted wire leaves its pin on the
+// part and its toast takes it back, S17 a hand-changed value moves the operating check, S18 opened again from this
+// browser's record it is the edited circuit, not called an AI edit.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -489,6 +492,112 @@ try {
   await p14.getByTestId('view-tab-schematic').click()
   await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
   await settle()
+
+  // S15: the part's own value field, then its panel
+  const part14 = async () => { const b = await p14.locator("g[data-comp='R2']").boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 } }
+  const bomValue = v => p14.locator('[data-testid="right-panel"]').getByText(v, { exact: true }).first().isVisible().catch(() => false)
+  const r0 = valueOf(demo13.graph, 'R2')
+  let r1At = await part14()
+  const beforeTyping = { checks: rechecked.length, saves: saved.length }
+  await p14.mouse.dblclick(r1At.x, r1At.y)
+  const valueField = p14.locator('svg foreignObject input').first()
+  await valueField.waitFor({ timeout: 3000 })
+  await valueField.fill('')
+  await valueField.pressSequentially('2k2', { delay: 40 })
+  await p14.waitForTimeout(500)
+  const whileTyping = rechecked.length === beforeTyping.checks && saved.length === beforeTyping.saves
+  await p14.keyboard.press('Enter')
+  await settle()
+  const entered = valueOf(saved.at(-1)?.graph, 'R2') === '2k2' && saved.length === beforeTyping.saves + 1 && await bomValue('2k2')
+  const staleButton = await p14.getByRole('button', { name: 'PCB 다시 생성' }).first().isVisible().catch(() => false)
+  await p14.getByTestId('view-tab-pcb').click()
+  const staleBanner = await p14.getByTestId('pcb-stale').waitFor({ timeout: 3000 }).then(() => true, () => false)
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
+  await undo14.click()
+  await settle()
+  const oneStep = valueOf(saved.at(-1)?.graph, 'R2') === r0 && onOneNet(saved.at(-1)?.graph, a14d, b14d)
+  check('S15a a value goes up on Enter, once, not per keystroke; the BOM and the PCB banner follow, and one undo takes it back',
+    whileTyping && entered && staleButton && staleBanner && oneStep, `while typing nothing ${whileTyping}, on Enter ${entered}, PCB button ${staleButton}, banner ${staleBanner}, one undo ${oneStep}`)
+
+  r1At = await part14()
+  await p14.mouse.dblclick(r1At.x, r1At.y)
+  await valueField.waitFor({ timeout: 3000 })
+  await valueField.fill('999')
+  await p14.keyboard.press('Escape')
+  await settle()
+  const escInline = saved.at(-1) && valueOf(saved.at(-1).graph, 'R2') === r0 && !(await valueField.isVisible())
+  r1At = await part14()
+  await p14.mouse.click(r1At.x, r1At.y)
+  const panelField = p14.getByTestId('part-value')
+  await panelField.waitFor({ timeout: 3000 })
+  const savesBefore = saved.length
+  await panelField.fill('33k')
+  await p14.waitForTimeout(400)
+  const panelTyping = saved.length === savesBefore
+  await panelField.press('Enter')
+  await settle()
+  const panelSaved = valueOf(saved.at(-1)?.graph, 'R2') === '33k' && saved.length === savesBefore + 1 && await bomValue('33k')
+  await panelField.fill('777')
+  await panelField.press('Escape')
+  await settle()
+  const escPanel = valueOf(saved.at(-1)?.graph, 'R2') === '33k' && saved.length === savesBefore + 1 && await panelField.inputValue() === '33k'
+  check('S15b Escape keeps the old value; the part\'s panel commits on Enter, not per keystroke', escInline && panelTyping && panelSaved && escPanel,
+    `Escape in the part ${escInline}, panel typing ${panelTyping}, panel Enter ${panelSaved}, Escape in the panel ${escPanel}`)
+
+  // S16: the pins are counted, a wire is picked and deleted, its toast takes it back
+  const box14 = await p14.locator('svg:has(g[data-comp])').first().boundingBox()
+  await p14.mouse.click(box14.x + 6, box14.y + box14.height - 6)
+  await p14.waitForTimeout(300)
+  const pinCount = () => p14.locator("g[data-comp] g[style*='crosshair'] circle[r='8']").count()
+  const pins0 = await pinCount(), nets16 = await netGroups()
+  const wire = await p14.evaluate(() => {
+    for (const p of document.querySelectorAll("g[data-net] path[stroke='transparent']")) {
+      const L = p.getTotalLength()
+      if (L < 40) continue
+      const m = p.getPointAtLength(L / 2), c = p.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    }
+    return null
+  })
+  await p14.mouse.click(wire.x, wire.y)
+  await p14.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+  await settle()
+  const pinsAfter = await pinCount(), netsAfter = await netGroups(), toast16 = await p14.getByText('삭제됨').isVisible()
+  await p14.getByText('삭제됨').locator('xpath=..').getByRole('button', { name: /되돌리기/ }).click()
+  await settle()
+  check('S16 a deleted wire leaves its pins on the parts, and its toast takes it back', pinsAfter === pins0 && netsAfter === nets16 - 1 && toast16 && await netGroups() === nets16,
+    `pins ${pins0}→${pinsAfter}, nets ${nets16}→${netsAfter}→${await netGroups()}, toast ${toast16}`)
+
+  // S18
+  await p14.getByText(/^v0\.4 · /).first().click()
+  await p14.locator('.sf-home-input textarea').fill('손으로 고칠 모터 회로')
+  await p14.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p14.getByRole('button', { name: '불러오기', exact: true }).click({ timeout: 5000 })
+  await p14.locator("g[data-comp='R2']").waitFor({ timeout: 10000 })
+  await settle()
+  const reopened = await p14.locator("g[data-comp='R2']").textContent(), said18 = await notice14()
+  check('S18 opened again from this browser\'s record it is the edited circuit, still not called an AI edit', /33k/.test(reopened) && /^편집 뒤/.test(said18),
+    `R2 "${reopened}", notice "${said18.split('\n')[0]}"`)
+
+  // S17
+  const p17 =await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  await p17.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p17.goto(`${BASE}/?demo=led`, { waitUntil: 'networkidle' })
+  await p17.locator("g[data-comp='R1']").waitFor({ timeout: 60000 })
+  await p17.waitForTimeout(500)
+  const opChip = () => p17.getByTestId('op-chip').innerText()
+  const op0 = await opChip()
+  const r1Box = await p17.locator("g[data-comp='R1']").boundingBox()
+  await p17.mouse.dblclick(r1Box.x + r1Box.width / 2, r1Box.y + r1Box.height / 2)
+  const field17 = p17.locator('svg foreignObject input').first()
+  await field17.waitFor({ timeout: 3000 })
+  await field17.fill('1')
+  await p17.keyboard.press('Enter')
+  await p17.waitForTimeout(900)
+  const op1 = await opChip()
+  check('S17 a hand-changed value moves the operating check', op0 !== op1, `${op0.trim()} → ${op1.trim()}`)
 } finally {
   await browser.close()
 }
