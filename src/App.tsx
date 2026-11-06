@@ -9,7 +9,7 @@ import SideDrawer from './components/SideDrawer'
 import AuthModal, { type AuthNotice } from './components/AuthModal'
 import LegalPage from './components/LegalPage'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
-import { Button } from './components/primitives.tsx'
+import { Button, Spinner } from './components/primitives.tsx'
 import {
   loadAuth, logout as apiLogout, authFetch, clearAuth, errorText, getMe, getMessages, restoreNetlist, saveSession,
   setAuthExpiredHandler, type AuthUser,
@@ -117,6 +117,11 @@ export default function App() {
   // or a later generation's steps, and a failed one started the generation the person had just cancelled (2026-11-06)
   const planSeq = useRef(0)
   const planAbort = useRef<AbortController | null>(null)
+  // /clarify on its way, for this description: the form sat there with nothing shown, for up to 10 minutes if the model
+  // did not answer, so a second click sent the questions and the plan again (2026-11-06). The ref is set before anything
+  // is drawn, for a second click that lands first; it is also the way to stop the request
+  const prepareAbort = useRef<AbortController | null>(null)
+  const [preparing, setPreparing] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   // bumped whenever another circuit takes the screen (history open, version pick, new generation, home):
   // a slower answer for the one before (a history load, a session save) does not land on it
@@ -192,15 +197,23 @@ export default function App() {
   }, [pendingCached])
 
   /**
-   * Another screen takes over: the generation on its way stops (the server stops the model call when the connection
-   * closes). Left running behind a circuit opened from the history, its answer took the screen back and the two
-   * circuits mixed; the logo did nothing while it ran (review of 2026-11-06).
+   * Another screen or generation takes over: what is on its way stops (the server stops the model call when the
+   * connection closes). A generation left running behind a circuit opened from the history took the screen back with
+   * its answer and the two circuits mixed; the logo did nothing while it ran; of two generations 취소 stopped only the
+   * newest (review of 2026-11-06).
    */
-  function stopGeneration() {
+  function stopRunning() {
     abortRef.current?.abort()
     abortRef.current = null
     setLoading(false)
     stopPlan()
+    stopPreparing()
+  }
+
+  function stopPreparing() {
+    prepareAbort.current?.abort()
+    prepareAbort.current = null
+    setPreparing(null)
   }
 
   /** the plan request on its way answers no more; its stop may come too late, so the number is what counts */
@@ -211,7 +224,7 @@ export default function App() {
   }
 
   function goHome() {
-    stopGeneration()
+    stopRunning()
     setResult(null)
     setError(null)
     setProgress(null)
@@ -229,7 +242,7 @@ export default function App() {
   async function handleLoadSession(session: SavedSession) {
     const resultObj: GenerateResult | null = session.result || (session.graph ? { graph: session.graph, filename: session.circuitName || '' } : null)
     if (!resultObj) return
-    stopGeneration()
+    stopRunning()
     setProgress(null)
     setLogLines([])
     const seq = ++loadSeq.current
@@ -331,7 +344,7 @@ export default function App() {
   }
 
   async function runGenerate(p: string, typeKey?: string, skipCache = false) {
-    if (!p.trim() || loading) return
+    if (!p.trim() || loading || prepareAbort.current) return
 
     // 로그인 필요: 모달 열고 로그인 후 자동 재개
     if (!authRef.current) {
@@ -349,22 +362,34 @@ export default function App() {
     }
 
     if (settings.clarify !== false && !typeKey) {
+      const abort = new AbortController()
+      prepareAbort.current = abort
+      setPreparing(p)
+      const stale = () => prepareAbort.current !== abort
       try {
         const cRes = await authFetch(`${API}/clarify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: p }),
+          signal: abort.signal,
         })
+        if (stale()) return
         // refused: no plan or generation after it (they would be refused too)
-        if (await refused(cRes, { prompt: p, typeKey, skipCache }, () => false)) return
+        if (await refused(cRes, { prompt: p, typeKey, skipCache }, stale)) return
         if (cRes.ok) {
           const cData = await cRes.json() as ClarifyApiResponse
+          if (stale()) return
           if (cData?.clear === false && Array.isArray(cData.questions) && cData.questions.length) {
             setClarify({ originalPrompt: p, questions: cData.questions })
             return
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // cancelled: the steps stop here. Any other failure: the questions are optional, so the steps go on
+        if (stale()) return
+      } finally {
+        if (!stale()) stopPreparing()
+      }
     }
 
     if (settings.plan !== false) return fetchPlan(p)
@@ -401,7 +426,7 @@ export default function App() {
   }
 
   async function executeGenerate(p: string) {
-    stopPlan()
+    stopRunning()
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
@@ -569,7 +594,7 @@ export default function App() {
   }
 
   const headerVariant = result ? 'result' : (loading ? 'generating' : 'composer')
-  const modelStatus = loading ? 'busy' : 'ready'
+  const modelStatus = loading || preparing ? 'busy' : 'ready'
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sf-bg)' }}>
@@ -695,7 +720,7 @@ export default function App() {
         />
       )}
 
-      {!LEGAL_PAGE && authUser && cannotGenerate && !result && !loading && !error && !clarify && !plan && (
+      {!LEGAL_PAGE && authUser && cannotGenerate && !result && !loading && !preparing && !error && !clarify && !plan && (
         <div role="status" data-testid="cannot-generate" style={{ maxWidth: 760, margin: '16px auto 0', padding: '0 24px' }}>
           <div style={{
             background: 'var(--sf-bg-2)', border: '1px solid var(--sf-amber-line)', borderRadius: 'var(--sf-r-md)',
@@ -709,17 +734,33 @@ export default function App() {
         </div>
       )}
 
+      {!LEGAL_PAGE && preparing && !result && !error && !clarify && !plan && (
+        <main className="sf-flow" data-testid="preparing">
+          <header className="sf-flow-head">
+            <div>
+              <p className="sf-flow-kicker">설명 확인</p>
+              <h1 className="sf-flow-title">{preparing.split('\n')[0]}</h1>
+            </div>
+            <Button variant="outline" size="md" onClick={stopPreparing}>취소</Button>
+          </header>
+          <p className="sf-flow-wait"><Spinner size={14} color="var(--sf-amber)" /> 확인 중… 설명에 더 물어볼 것이 있는지 살펴보고 있습니다.</p>
+        </main>
+      )}
+
       {!LEGAL_PAGE && !result && !error && !clarify && !plan && (
-        <WizardPanel
-          phase={wizardPhase}
-          initialPrompt=""
-          currentPrompt={lastPrompt.current}
-          onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
-          onCancel={goHome}
-          logLines={logLines}
-          tokensUsed={Math.min(4096, logLines.length * 200)}
-          tokenBudget={4096}
-        />
+        // hidden, not gone, while the questions are asked: 취소 gives the form back as typed
+        <div style={{ display: preparing ? 'none' : 'contents' }}>
+          <WizardPanel
+            phase={wizardPhase}
+            initialPrompt=""
+            currentPrompt={lastPrompt.current}
+            onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
+            onCancel={goHome}
+            logLines={logLines}
+            tokensUsed={Math.min(4096, logLines.length * 200)}
+            tokenBudget={4096}
+          />
+        </div>
       )}
 
       {error && !result && (

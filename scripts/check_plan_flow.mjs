@@ -6,7 +6,11 @@
 // connection was lost (it went back to the home screen with no word, the model already paid for: review of 2026-11-06),
 // P5-P7 a cancelled plan request stays cancelled, whether its stop comes in time or not: its late plan does not come back
 // over the home screen, its failure does not start a generation (the plan is optional, so a failed one generates), and
-// its plan does not replace the steps of a later generation, whose 취소 still stops it (review of 2026-11-06).
+// its plan does not replace the steps of a later generation, whose 취소 still stops it (review of 2026-11-06),
+// P8 while /clarify is asked the screen says so with a 취소, and a double click asks once (the form stayed as it was, so
+// a second click sent the questions and the plan again, four model calls), P9 that 취소 stops the steps and leaves the form
+// as typed, P10 two clicks that reach the generation leave one running, which 취소 stops (the first ran on unseen and its
+// result came up after the cancel: review of 2026-11-06).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -157,6 +161,66 @@ try {
     check(`P7 an old plan leaves a later generation's steps alone, and 취소 stops that generation (${how})`,
       steps && !over && await shows(home(p7.p)) && !(await shows(p7.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first())),
       `steps ${steps}, plan over them ${over}`)
+  }
+
+  // P8-P10: two clicks in one go, so the second lands before the screen has changed
+  const makeTwice = p => p.evaluate(() => {
+    const make = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '회로 만들기')
+    make.click()
+    make.click()
+  })
+  const settled = (settings, stopped) => async c => {
+    const p = await c.newPage()
+    await p.addInitScript(s => localStorage.setItem('sf_settings', JSON.stringify(s)), settings)
+    const held = { asked: 0, plans: 0, generations: 0, stopped: 0, release: () => {} }
+    const released = new Promise(r => { held.release = r })
+    p.on('requestfailed', r => { if (stopped.test(r.url())) held.stopped++ })
+    await fake(p, async r => { held.generations++; await released; await done(r).catch(() => {}) })
+    await p.route(/\/plan$/, r => { held.plans++; return json(r, PLAN) })
+    await p.route(/\/clarify$/, async r => { held.asked++; await released; await json(r, { clear: true }).catch(() => {}) })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    return { p, held }
+  }
+  const asking = settled({ clarify: true, plan: true }, /\/clarify$/)
+  const p8 = await asking(ctx)
+  await home(p8.p).fill('질문을 기다리는 전원 회로')
+  await makeTwice(p8.p)
+  const says = await p8.p.getByText('확인 중').first().waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const cancelShown = await shows(p8.p.getByRole('button', { name: '취소', exact: true }))
+  await p8.p.waitForTimeout(300)
+  p8.held.release()
+  const planCame = await approve(p8.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('P8 while the questions are asked the screen says so with a 취소, and a double click asks once',
+    says && cancelShown && planCame && p8.held.asked === 1 && p8.held.plans === 1, `says ${says}, 취소 ${cancelShown}, /clarify ${p8.held.asked}, /plan ${p8.held.plans}`)
+
+  for (const [c, how] of [[ctx, 'stopped'], [lateCtx, 'stop too late']]) {
+    const p9 = await asking(c)
+    await home(p9.p).fill('질문을 취소하는 전원 회로')
+    await p9.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p9.p.getByText('확인 중').first().waitFor({ timeout: 5000 }).catch(() => {})
+    await p9.p.getByRole('button', { name: '취소', exact: true }).click({ timeout: 2000 }).catch(() => {})
+    await p9.p.waitForTimeout(300)
+    const typed = await home(p9.p).inputValue().catch(() => '')
+    p9.held.release()
+    await p9.p.waitForTimeout(500)
+    const noSteps = p9.held.plans === 0 && !(await shows(approve(p9.p))) && await shows(home(p9.p))
+    await p9.p.getByRole('button', { name: '회로 만들기', exact: true }).click({ timeout: 2000 }).catch(() => {})
+    const again = await approve(p9.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+    check(`P9 취소 while the questions are asked stops the steps and leaves the form as typed (${how})`,
+      noSteps && typed === '질문을 취소하는 전원 회로' && again && p9.held.stopped === (c === ctx ? 1 : 0),
+      `form "${typed}", no steps ${noSteps}, can ask again ${again}, ${p9.held.stopped} requests stopped`)
+
+    const p10 = await settled({ clarify: false, plan: false }, /\/generate$/)(c)
+    await home(p10.p).fill('두 번 눌린 전원 회로')
+    await makeTwice(p10.p)
+    await p10.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 5000 })
+    await p10.p.waitForTimeout(300)
+    await p10.p.getByRole('button', { name: '취소', exact: true }).click()
+    p10.held.release()
+    await p10.p.waitForTimeout(600)
+    const backHome = await shows(home(p10.p)), popped = await shows(p10.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first())
+    check(`P10 of two generations one stays, and 취소 leaves none to come up later (${how})`,
+      backHome && !popped && p10.held.stopped === (c === ctx ? 2 : 0), `${p10.held.generations} sent, ${p10.held.stopped} stopped, home ${backHome}, result came up ${popped}`)
   }
 } finally {
   await browser.close()
