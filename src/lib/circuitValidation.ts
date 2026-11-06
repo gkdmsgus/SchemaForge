@@ -53,7 +53,7 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
   const walked = fromGraph({ ...graph, components: components.map(c => (resistors.has(c.ref) ? { ...c, name: 'R' } : c)), nets })
   for (const string of ledsWithoutResistor(walked)) {
     const names = string.join('·')
-    add({ code: 'CIR101', severity: 'error', title: 'LED 전류 제한 저항이 없습니다', message: `${names}와 직렬로 이어진 전류 제한 저항을 찾지 못했습니다. LED가 손상될 수 있습니다.`, suggestion: '전원과 LED 사이에 계산된 직렬 저항을 추가하세요.', chat: `${names} LED에 전류 제한 저항이 없어. 전원과 ${string[0]}의 A 핀 사이에 저항을 하나 넣어줘. 값은 LED 전류가 10~20 mA가 되게 정해줘.`, refs: string, nets: nets.filter(n => n.nodes.some(node => string.includes(node.ref))).map(n => n.name) })
+    add({ code: 'CIR101', severity: 'error', title: 'LED 전류 제한 저항이 없습니다', message: `${names}에 직렬로 이어진 전류 제한 저항을 찾지 못했습니다. LED가 손상될 수 있습니다.`, suggestion: '전원과 LED 사이에 계산된 직렬 저항을 추가하세요.', chat: `${names} LED에 전류 제한 저항이 없어. 전원과 ${string[0]}의 A 핀 사이에 저항을 하나 넣어줘. 값은 LED 전류가 10~20 mA가 되게 정해줘.`, refs: string, nets: nets.filter(n => n.nodes.some(node => string.includes(node.ref))).map(n => n.name) })
   }
 
   for (const transistor of components.filter(c => c.name === 'Q_NMOS' || c.name === 'Q_NPN')) {
