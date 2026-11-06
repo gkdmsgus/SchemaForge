@@ -23,7 +23,6 @@ import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
 } from './erc_repair'
-import { tavily } from '@tavily/core'
 import axios from 'axios'
 import { createClient, isAuthRetryableFetchError, type AuthError, type Session } from '@supabase/supabase-js'
 
@@ -1024,7 +1023,6 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
   try {
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', '🔍 Analysing circuit requirements...'))
-    const sourceUrls: string[] = []
 
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', `🤖 ${modelLabel(MODEL)} is analysing and generating the circuit...`))
@@ -1166,7 +1164,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     const ercDone: GenerateErc = erc.ok
       ? { findings: erc.findings, repair }
       : { findings: null, reason: erc.reason, repair }
-    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, sources: sourceUrls, graph, erc: ercDone })))
+    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, graph, erc: ercDone })))
   } catch (e) {
     if (!clientClosed) {
       const msg = abort.signal.aborted

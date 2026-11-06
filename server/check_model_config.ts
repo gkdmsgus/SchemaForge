@@ -198,7 +198,7 @@ async function main() {
     const events = await gen.text()
     const done = /event: done/.test(events)
     check('L3 circuit code: SF_MODEL at the base URL (was api.openai.com by name), and the circuit is built',
-      done && asked(at(n), 'grok-4.3', s => !s.stream && !s.json) && events.includes('Grok 4.3 is analysing'),
+      done && asked(at(n), 'grok-4.3', s => !s.stream && !s.json) && events.includes('Grok 4.3 is analysing') && !events.includes('"sources"'),
       `${at(n).length} call(s) ${JSON.stringify(at(n).map(s => [s.model, s.effort]))} done=${done}`)
 
     // L3b. the approved plan reaches the circuit request (it was approved on screen and never sent); none without one

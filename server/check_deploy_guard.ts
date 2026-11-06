@@ -69,7 +69,7 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
 //      plan is free, the health check is a route the server has, and PORT is the one Render routes to
 {
   const yaml = readFileSync(join(process.cwd(), '..', 'render.yaml'), 'utf8')
-  const SECRETS = ['OPENAI_API_KEY', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'ALLOWED_EMAILS', 'MOUSER_API_KEY', 'TAVILY_API_KEY']
+  const SECRETS = ['OPENAI_API_KEY', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'ALLOWED_EMAILS', 'MOUSER_API_KEY']
   const entries = yaml.split(/\n\s*- key: /).slice(1).map(e => ({ key: e.split(/[\s#]/)[0], body: e.split('\n').slice(1).map(l => l.replace(/#.*/, '').trim()).filter(Boolean).filter(l => !l.startsWith('- ')) }))
   const secret = entries.filter(e => SECRETS.includes(e.key))
   const bad = secret.filter(e => !(e.body.length === 1 && e.body[0] === 'sync: false')).map(e => e.key)
@@ -78,6 +78,11 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
   check('D10 render.yaml', secret.length === SECRETS.length && !bad.length && /^\s*plan:\s*free\b/m.test(yaml)
     && !!health && src.includes(`app.get('${health}'`) && port === 'value: "10000"',
     `${secret.length}/${SECRETS.length} secrets${bad.length ? `, not sync:false only: ${bad.join(', ')}` : ''}, health ${health}, ${port}`)
+
+  // D10b. no web search left: nothing has called it since 2026-06, and every deploy guide still asked for a key
+  const places = { 'index.ts': src, 'render.yaml': yaml, '.env.example': readFileSync('.env.example', 'utf8'), 'DEPLOY.md': readFileSync(join('..', 'DEPLOY.md'), 'utf8') }
+  const left = Object.entries(places).filter(([, text]) => /tavily/i.test(text)).map(([f]) => f)
+  check('D10b no web search left', !left.length && !src.includes('sourceUrls'), left.length ? `still in ${left.join(', ')}` : '')
 }
 
 // D9. the real server in production mode, no Supabase (an empty value is kept: dotenv never overrides one)
