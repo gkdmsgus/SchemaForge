@@ -332,8 +332,6 @@ function baseIndex(c: OpCircuit, open: ReadonlySet<string> = new Set()) {
     /** a relay's COM–NO contact taken as closed (the circuit judged switched on, the relay pulled in);
      *  a coil with a pin left open or both pins on one net never pulls in */
     closedRelay: (ref: string) => { const a = net(ref, 1), z = net(ref, 2); return !open.has(ref) && !!a && !!z && a !== z },
-    /** a relay not pulled in: its COM–NC contact is closed */
-    releasedRelay: (ref: string) => { const a = net(ref, 1), z = net(ref, 2); return !(!open.has(ref) && !!a && !!z && a !== z) },
     parts: () => parts,
     nets: () => nets,
     net,
