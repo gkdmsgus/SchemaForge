@@ -1,6 +1,6 @@
-// Checks E1-E21: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E23: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
-// behind (E12-E13, E18), the /generate and /test_code wiring read as text (E15-E16), the pin names
+// behind (E12-E13, E18, E22-E23), the /generate and /test_code wiring read as text (E15-E16), the pin names
 // erc.py shares with the front end (E19), where findings point on the board (E20), and the prompt's
 // ref= rule run in skidl (E21).
 // No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
@@ -10,7 +10,7 @@ import { execFileSync } from 'child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { childEnv, runSkidl } from './skidl_run'
+import { childEnv, runSkidl, STDERR_KEPT } from './skidl_run'
 import {
   ercFeedback, errorKeys, fixableErrors, judgeRepair, repairErc, runErc, stubErcFix,
   type ErcFinding, type ErcOk, type ErcRun, type RepairDeps,
@@ -260,6 +260,25 @@ const left: string[] = []
 for (const d of dirs) if (!d || !(await gone(d))) left.push(d || '(no folder recorded)')
 check('E13 temp folder removed (ok / error / timeout)', okRun && failRun && /timed out/.test(slowRun) && !left.length,
   `ran=${okRun} error=${failRun} timeout="${slowRun}" left=[${left.join(', ')}]`)
+
+// E22. what the code prints goes nowhere: 1 MB on stdout filled a pipe nobody read, and a circuit that works was
+//      reported as timed out after 90 s (review of 2026-11-06). The time limit is its own, far above a normal run
+const chatty = withPrelude(blink, "import sys\nsys.stdout.write('x' * (1 << 20)); sys.stdout.flush()\n")
+let e22 = ''
+try { await runSkidl(chatty, out, 30000); e22 = 'netlist written' } catch (e) { e22 = `FAIL ${errText(e).trim().split('\n').pop()}` }
+check('E22 1 MB on stdout does not stall the code', e22 === 'netlist written', e22)
+
+// E23. stderr is kept to its last 64 KB. Without a limit, code that writes to it forever took the whole server down in
+//      about 2 s (RangeError: Invalid string length in the data handler, 800 MB); and the Code tab reads the line
+//      number out of the traceback's end, so that end stays
+let tail = ''
+try { await runSkidl(withPrelude(blink, "import sys\nsys.stderr.write('x' * (1 << 20) + '\\n'); sys.stderr.flush()\nraise NameError('the last line')\n"), out, 30000) } catch (e) { tail = errText(e) }
+const rss0 = process.memoryUsage().rss
+let flood = ''
+try { await runSkidl("import sys\nwhile True: sys.stderr.write('x' * 65536)\n", out, 4000) } catch (e) { flood = errText(e) }
+const grew = Math.round((process.memoryUsage().rss - rss0) / 1048576)
+check('E23 stderr capped, its end kept', /NameError: the last line/.test(tail) && tail.length <= STDERR_KEPT && /timed out/.test(flood) && grew < 300,
+  `traceback end kept=${/NameError: the last line/.test(tail)} ${tail.length} chars; endless stderr: "${flood.slice(0, 60)}", RSS +${grew} MB`)
 
 try { rmSync(work, { recursive: true, force: true }) } catch { /* leave it */ }
 console.log(ok ? '\nALL PASS' : '\nSOME CHECKS FAILED')
