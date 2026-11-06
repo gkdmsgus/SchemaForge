@@ -129,6 +129,10 @@ export default function ResultPanel({
   const [gerberError, setGerberError] = useState('')
   // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
   const gerberReq = useRef(0)
+  // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
+  // AI rounds, once the connection closes; left open, a board nobody would see went on to the end (review of 2026-11-06)
+  const pcbAbort = useRef<AbortController | null>(null)
+  useEffect(() => () => pcbAbort.current?.abort(), [])
   const [activeTab, setActiveTab] = useState('Netlist')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
@@ -342,17 +346,23 @@ export default function ResultPanel({
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
+    pcbAbort.current?.abort()
+    const abort = new AbortController()
+    pcbAbort.current = abort
     try {
       const res = await authFetch(`${API}/generate_pcb_stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abort.signal,
       })
       if (ai && (res.status === 401 || res.status === 403)) {
         // a deployed server keeps the AI rounds for listed accounts: say why, and build the board without them
         // (401: no login, or it ran out and could not be renewed, so the app also asks for the login)
         const login = res.status === 401
-        setAiNote({ text: await errorText(res), login })
+        const why = await errorText(res)
+        if (abort.signal.aborted) return
+        setAiNote({ text: why, login })
         if (login) onAuthExpired?.()
         return generatePCB({ style, ai: false })
       }
@@ -389,6 +399,7 @@ export default function ResultPanel({
       }
       if (!done) throw new Error('stream ended without a result')
     } catch (e) {
+      if ((e as Error).name === 'AbortError') return
       setBoard(b => b && { ...b, status: 'error' })
       setPcbStatus('error')
       console.error('PCB generation failed:', e)

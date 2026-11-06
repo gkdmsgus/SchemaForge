@@ -4,7 +4,10 @@
 // tour, 2026-10-30), V3 a circuit opened from the history during a generation stops it and stays, and a PCB request
 // is that circuit under its own name (the generation's answer took the screen back: the opened circuit's parts went to
 // the PCB under the generation's file name, review of 2026-11-06), V4 with the stop not reaching the stream in time,
-// its late answer is only kept for later, V5 the logo during a generation stops it and goes home for good.
+// its late answer is only kept for later, V5 the logo during a generation stops it and goes home for good, V6-V8 a
+// PCB stream stops when its result screen goes: on ↺ and the logo, after an AI refusal rebuilt it without the AI rounds,
+// and a real stream cut in the middle says nothing (it ran on unseen: python, DRC and the paid AI rounds, and a new PCB
+// overlapped it on a 4 CPU server: review of 2026-11-06).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -145,6 +148,69 @@ try {
   const result5 = await v5.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().isVisible().catch(() => false)
   check('V5 the logo during a generation stops it and goes home for good', v5.held.stopped === 1 && home && stillHome && !result5,
     `stopped ${v5.held.stopped}, home ${home}, still home ${stillHome}, result screen ${result5}`)
+
+  // V6-V7: a generated circuit on screen whose PCB stream never answers
+  const onResult = async answerPcb => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    await ctx.addInitScript(() => {
+      localStorage.setItem('sf_token', 'fake-token')
+      localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+      localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+    })
+    const p = await ctx.newPage()
+    const pcb = { sent: [], stopped: 0, complained: 0 }
+    p.on('requestfailed', r => { if (/\/generate_pcb_stream$/.test(r.url())) pcb.stopped++ })
+    p.on('console', m => { if (/PCB generation failed/.test(m.text())) pcb.complained++ })
+    await p.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+    await p.route(/\/(favorites|sessions)(\/.*)?$/, r => json(r, { favorites: [], sessions: [], messages: [], id: 's1' }))
+    await p.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(answers[0])}\n\n` }))
+    await p.route(/\/generate_pcb_stream$/, r => { pcb.sent.push(r.request().postDataJSON()); return answerPcb(r, pcb.sent.length) })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    await p.locator('.sf-home-input textarea').fill('PCB를 기다리는 LED 회로')
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 20000 })
+    return { p, pcb }
+  }
+  const sentPcb = async ({ p, pcb }, n) => {
+    await p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+    for (let i = 0; i < 40 && pcb.sent.length < n; i++) await p.waitForTimeout(100)
+  }
+  const never = () => new Promise(() => {})
+
+  const v6a = await onResult(never)
+  await sentPcb(v6a, 1)
+  await v6a.p.locator("button[title='재생성 (저장된 결과 대신 새로 생성)']").click()
+  await v6a.p.getByRole('button', { name: 'v2', exact: true }).waitFor({ timeout: 20000 })
+  await v6a.p.waitForTimeout(200)
+  const v6b = await onResult(never)
+  await sentPcb(v6b, 1)
+  await v6b.p.getByText(/^v0\.4 · /).first().click()
+  await v6b.p.waitForTimeout(300)
+  check('V6 a PCB stream stops when its result screen goes (↺, the logo), and that is no failure', v6a.pcb.stopped === 1 && v6b.pcb.stopped === 1
+    && v6a.pcb.complained + v6b.pcb.complained === 0, `↺ stopped ${v6a.pcb.stopped}, logo stopped ${v6b.pcb.stopped}, failures logged ${v6a.pcb.complained + v6b.pcb.complained}`)
+
+  // the AI rounds refused: the board is built without them, by a second request, which stops the same way
+  const v7 = await onResult((r, n) => (n === 1 ? r.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"check"}' }) : never()))
+  await v7.p.getByRole('button', { name: /AI 다듬기 OFF/ }).click()
+  await sentPcb(v7, 2)
+  await v7.p.getByText(/^v0\.4 · /).first().click()
+  await v7.p.waitForTimeout(300)
+  check('V7 the rebuild after an AI refusal stops the same way', v7.pcb.sent.length === 2 && v7.pcb.sent[0].ai === true && v7.pcb.sent[1].ai === false && v7.pcb.stopped === 1,
+    `${v7.pcb.sent.length} sent, stopped ${v7.pcb.stopped}`)
+
+  // V8: the real stream, cut once it has answered
+  const v8 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  let cutOff = 0, complained = 0
+  v8.on('requestfailed', r => { if (/\/generate_pcb_stream$/.test(r.url())) cutOff++ })
+  v8.on('console', m => { if (/PCB generation failed/.test(m.text())) complained++ })
+  await v8.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  const streaming = v8.waitForResponse(/\/generate_pcb_stream$/, { timeout: 60000 })
+  await v8.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+  await streaming
+  await v8.getByText(/^v0\.4 · /).first().click()
+  await v8.waitForTimeout(500)
+  check('V8 a real PCB stream cut in the middle says nothing, and the home screen stays', cutOff === 1 && complained === 0 && await v8.locator('.sf-home-input textarea').isVisible(),
+    `cut ${cutOff}, failures logged ${complained}`)
 } finally {
   await browser.close()
 }
