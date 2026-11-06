@@ -20,6 +20,7 @@ import type {
   ClarifyApiResponse, SavedSession,
 } from './types'
 import { useModelName } from './lib/modelName'
+import { savedGraph } from './lib/graphEdit'
 import ErrorBoundary from './components/ErrorBoundary'
 import './styles/main.scss'
 
@@ -671,7 +672,7 @@ export default function App() {
               const { prompt, cached } = pendingCached
               lastPrompt.current = prompt
               setResult(cached.result ?? null)
-              setInitialChatSession({ messages: cached.messages || [], graph: cached.result?.graph || null })
+              setInitialChatSession({ messages: cached.messages || [], graph: savedGraph(cached) ?? null })
               setResultKey(k => k + 1)
               setPendingCached(null)
             }}>불러오기</Button>

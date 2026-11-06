@@ -309,6 +309,7 @@ export default function ResultPanel({
     if (!restored) return
     setGraphHistory(prev => prev.slice(0, -1))
     setLocalGraph(restored)
+    updateSavedResultChat(lastPrompt, chatMessages, restored)
     saveToSession({ graph: restored })
   }
 
@@ -318,7 +319,10 @@ export default function ResultPanel({
     const changed = effectiveGraph !== back
     setLocalGraph(savedEdit)
     setGraphHistory([])
-    if (changed && back) saveToSession({ graph: back })
+    if (changed && back) {
+      updateSavedResultChat(lastPrompt, chatMessages, back)
+      saveToSession({ graph: back })
+    }
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
