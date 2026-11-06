@@ -20,6 +20,7 @@ PART_GAP = 2.0        # mm between courtyards in the shelf layout
 BOARD_MARGIN = 1.0    # mm from outermost courtyard to board edge
 HOLE_RING = 3.4       # mm of board added around the parts so M3 holes fit in the corners
 MAX_TEST_POINTS = 4   # probe pads added for the supply nets
+MAX_PLACEHOLDER_PINS = 256  # pads on the stand-in for an unknown part; the pins past it are reported as having no pad
 ORIGIN = (100.0, 100.0)
 
 
@@ -328,7 +329,9 @@ def build_board(components, nets, style='smd'):
         else:
             reason = KNOWN_UNMAPPED.get(part, 'no footprint mapping')
             unmapped.append({'ref': ref, 'part': part, 'reason': reason})
-            n = max(2, max_pin.get(ref, 2))
+            # a pin number is whatever the netlist says: pin "999999999" in a 150-byte /erc_graph request (no login)
+            # took python to 2 GB in 4 s, before any time limit (2026-11-06)
+            n = min(max(2, max_pin.get(ref, 2)), MAX_PLACEHOLDER_PINS)
             fp = placeholder_footprint(part, n)
             pin_map = {i: str(i) for i in range(1, n + 1)}
             fp_id = str(fp[1])
