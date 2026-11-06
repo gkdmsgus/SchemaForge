@@ -187,7 +187,19 @@ export default function App() {
     if (pendingCached) cachedOfferRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [pendingCached])
 
+  /**
+   * Another screen takes over: the generation on its way stops (the server stops the model call when the connection
+   * closes). Left running behind a circuit opened from the history, its answer took the screen back and the two
+   * circuits mixed; the logo did nothing while it ran (review of 2026-11-06).
+   */
+  function stopGeneration() {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+  }
+
   function goHome() {
+    stopGeneration()
     setResult(null)
     setError(null)
     setProgress(null)
@@ -205,6 +217,9 @@ export default function App() {
   async function handleLoadSession(session: SavedSession) {
     const resultObj: GenerateResult | null = session.result || (session.graph ? { graph: session.graph, filename: session.circuitName || '' } : null)
     if (!resultObj) return
+    stopGeneration()
+    setProgress(null)
+    setLogLines([])
     const seq = ++loadSeq.current
     let messages = session.messages || []
     let aiEdited = false
@@ -290,13 +305,6 @@ export default function App() {
     }
   }
 
-  function handleCancel() {
-    abortRef.current?.abort()
-    abortRef.current = null
-    goHome()
-    setLoading(false)
-  }
-
   async function runGenerate(p: string, typeKey?: string, skipCache = false) {
     if (!p.trim() || loading) return
 
@@ -375,7 +383,7 @@ export default function App() {
     // and is not the session the favourite button points at until it is saved
     setInitialChatSession(null)
     setCurrentSessionId(null)
-    loadSeq.current++
+    const seq = ++loadSeq.current
     lastPrompt.current = p
     setLoading(true)
     // the steps start at the top: a plan approved further down the page left the steps' header "회로 만드는 중" out of
@@ -429,7 +437,7 @@ export default function App() {
               if (!evtM || !dataM) continue
               const evt = evtM[1].trim()
               const raw = dataM[1].trim()
-              if (evt === 'error') {
+              if (evt === 'error' && seq === loadSeq.current) {
                 let msg = raw
                 try { msg = JSON.parse(raw).message || raw } catch (_) {}
                 setError({ text: msg }); setProgress(null); setLoading(false)
@@ -450,6 +458,12 @@ export default function App() {
           if (!evtM || !dataM) continue
           const evt = evtM[1].trim()
           const raw = dataM[1].trim()
+
+          // another circuit took the screen since the stop: nothing here is for it; the answer is kept for 불러오기
+          if (seq !== loadSeq.current) {
+            if (evt === 'done') saveResultToLocal(JSON.parse(raw), p)
+            continue
+          }
 
           if (evt === 'status') {
             const step = detectStep(raw)
@@ -481,13 +495,12 @@ export default function App() {
               label: p.slice(0, 60),
             }
             if (authRef.current) {
-              const shown = loadSeq.current
               saveSession({ prompt: p, code: d.code, guide: d.guide, graph: d.graph, filename: d.filename })
                 .then(id => {
                   // the version keeps its session, so picking it again in the strip points the saves back at it
                   setVersions(prev => prev.map(v => (v.id === newVersion.id ? { ...v, sessionId: id } : v)))
                   // the screen still shows this circuit (no history open, version pick or new generation since)
-                  if (shown === loadSeq.current) setCurrentSessionId(id)
+                  if (seq === loadSeq.current) setCurrentSessionId(id)
                 })
                 .catch(() => {})
             }
@@ -506,17 +519,20 @@ export default function App() {
           }
         }
       }
-      if (!gotResult && !abort.signal.aborted) {
+      if (!gotResult && !abort.signal.aborted && seq === loadSeq.current) {
         setError({ text: '회로 생성 중 연결이 끊겼습니다. 잠시 후 다시 시도해주세요.' })
         setProgress(null)
       }
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return
+      if ((e as Error).name === 'AbortError' || seq !== loadSeq.current) return
       setError({ text: `네트워크 오류: ${(e as Error).message}` })
       setProgress(null)
     } finally {
-      setLoading(false)
-      abortRef.current = null
+      // stopped: `loading` and the controller are no longer this generation's
+      if (abortRef.current === abort) {
+        setLoading(false)
+        abortRef.current = null
+      }
     }
   }
 
@@ -673,7 +689,7 @@ export default function App() {
           initialPrompt=""
           currentPrompt={lastPrompt.current}
           onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
-          onCancel={handleCancel}
+          onCancel={goHome}
           logLines={logLines}
           tokensUsed={Math.min(4096, logLines.length * 200)}
           tokenBudget={4096}

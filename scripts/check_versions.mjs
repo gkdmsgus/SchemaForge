@@ -1,7 +1,10 @@
 // Browser checks for result versions, with the login and the API faked by page.route (generation answers with
 // two demo circuits in turn): V1 ↺ makes a second version and v1/v2 switch the circuit on screen, V2 after v1 is
 // applied, the saved result of the same description opens v1 (it opened the v2 just dropped: frame review of the
-// tour, 2026-10-30).
+// tour, 2026-10-30), V3 a circuit opened from the history during a generation stops it and stays, and a PCB request
+// is that circuit under its own name (the generation's answer took the screen back: the opened circuit's parts went to
+// the PCB under the generation's file name, review of 2026-11-06), V4 with the stop not reaching the stream in time,
+// its late answer is only kept for later, V5 the logo during a generation stops it and goes home for good.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -62,6 +65,86 @@ try {
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 10000 })
   const opened = await shown()
   check('V2 after v1 is applied, the saved result opens v1', opened === 'version-one.net' && made === 2, `opened ${opened}, generations ${made}`)
+
+  // V3-V5: a generation held open, one circuit in the server's history, the PCB request kept
+  const session = { id: '22222222-2222-2222-2222-222222222222', prompt: '기록에 있던 모터 회로', name: null, graph: answers[1].graph,
+    filename: 'session-b.net', code: null, guide: null, created_at: new Date().toISOString() }
+  const lateAnswer = { ...answers[0], filename: 'late-answer.net' }
+  const whileGenerating = async ({ abortDoesNothing = false } = {}) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    await ctx.addInitScript(off => {
+      localStorage.setItem('sf_token', 'fake-token')
+      localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+      localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+      if (off) AbortController.prototype.abort = function () {}
+    }, abortDoesNothing)
+    const p = await ctx.newPage()
+    const held = { stopped: 0, pcb: null, release: () => {} }
+    const released = new Promise(r => { held.release = r })
+    p.on('requestfailed', r => { if (/\/generate$/.test(r.url())) held.stopped++ })
+    await p.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+    await p.route(/\/favorites$/, r => json(r, { favorites: [] }))
+    await p.route(/\/sessions\/[^/]+\/messages$/, r => json(r, { messages: [] }))
+    await p.route(/\/sessions$/, r => json(r, r.request().method() === 'POST' ? { id: 's9' } : { sessions: [session] }))
+    await p.route(/\/netlist\/restore$/, r => json(r, { ok: true }))
+    await p.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+    await p.route(/\/generate$/, async r => {
+      await released
+      await r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(lateAnswer)}\n\n` }).catch(() => {})
+    })
+    await p.route(/\/generate_pcb_stream$/, r => {
+      held.pcb = r.request().postDataJSON()
+      return r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: error\ndata: {"error":"check"}\n\n' })
+    })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    await p.locator('.sf-home-input textarea').fill('아직 만드는 중인 LED 회로')
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 10000 })
+    return { p, held }
+  }
+  const openSession = async p => {
+    await p.locator("button[aria-label='메뉴']").click()
+    await p.getByText(session.prompt).first().click()
+    await p.getByText('session-b.net').first().waitFor({ timeout: 10000 })
+  }
+  const pcbOf = async ({ p, held }) => {
+    await p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+    for (let i = 0; i < 40 && !held.pcb; i++) await p.waitForTimeout(100)
+    return held.pcb
+  }
+  const isSession = pcb => pcb?.baseName === 'session-b'
+    && JSON.stringify((pcb.graph?.components ?? []).map(c => c.ref)) === JSON.stringify(session.graph.components.map(c => c.ref))
+
+  const v3 = await whileGenerating()
+  await openSession(v3.p)
+  await v3.p.waitForTimeout(300)
+  v3.held.release()
+  await v3.p.waitForTimeout(600)
+  const onScreen3 = await v3.p.locator('body').innerText().then(t => /session-b\.net/.test(t) && !/late-answer\.net/.test(t))
+  const pcb3 = await pcbOf(v3)
+  check('V3 a circuit opened during a generation stops it and stays; its PCB is that circuit under its own name',
+    v3.held.stopped === 1 && onScreen3 && isSession(pcb3), `stopped ${v3.held.stopped}, on screen ${onScreen3}, PCB ${pcb3?.baseName ?? pcb3?.filename ?? 'none'}`)
+
+  const v4 = await whileGenerating({ abortDoesNothing: true })
+  await openSession(v4.p)
+  await v4.p.waitForTimeout(300)
+  v4.held.release()
+  await v4.p.waitForTimeout(800)
+  const onScreen4 = await v4.p.locator('body').innerText().then(t => /session-b\.net/.test(t) && !/late-answer\.net/.test(t))
+  const kept = await v4.p.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]').map(s => s.result?.filename))
+  const pcb4 = await pcbOf(v4)
+  check('V4 a generation\'s late answer leaves the opened circuit on screen and is only kept for later',
+    onScreen4 && isSession(pcb4) && kept.includes('late-answer.net'), `on screen ${onScreen4}, PCB ${pcb4?.baseName ?? 'none'}, kept [${kept}]`)
+
+  const v5 = await whileGenerating()
+  await v5.p.getByText(/^v0\.4 · /).first().click()
+  const home = await v5.p.locator('.sf-home-input textarea').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  v5.held.release()
+  await v5.p.waitForTimeout(800)
+  const stillHome = await v5.p.locator('.sf-home-input textarea').isVisible().catch(() => false)
+  const result5 = await v5.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().isVisible().catch(() => false)
+  check('V5 the logo during a generation stops it and goes home for good', v5.held.stopped === 1 && home && stillHome && !result5,
+    `stopped ${v5.held.stopped}, home ${home}, still home ${stillHome}, result screen ${result5}`)
 } finally {
   await browser.close()
 }
