@@ -24,7 +24,12 @@ const outDir = path.join('server', 'outputs')
 const boards = fs.readdirSync(outDir).filter(f => f.endsWith('.board.json'))
   .map(f => ({ f, b: JSON.parse(fs.readFileSync(path.join(outDir, f), 'utf-8')) as BoardModel }))
 const routed = boards.filter(x => x.b.tracks && x.b.erc)
-const sample = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted || []).length)!.b
+const clean0 = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted || []).length)
+if (!clean0) {
+  console.log(`FAIL a clean routed board in ${outDir}  none of ${boards.length} boards (npx tsx scripts/make_check_boards.ts makes them)`)
+  process.exit(1)
+}
+const sample = clean0.b
 
 // 1. nothing has arrived yet: every row waits, nothing claims a pass
 {
@@ -123,9 +128,18 @@ const sample = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted |
   }
   check('7 real boards: findings covered once, counts match', bad.length === 0,
     `${routed.length} boards${bad.length ? ' bad ' + bad.slice(0, 5).join(', ') : ''}`)
-  const broken = routed.filter(x => (x.b.erc || []).some(e => e.severity === 'error'))
-  check('7b a broken board fails', broken.length > 0
-    && broken.every(x => overall(summarize(checkRows(clean, x.b))).tone === 'bad'), `${broken.length} broken boards`)
+  // the sample with one error of each netlist rule, and every real board that has one. The check boards a fresh clone
+  // makes have no error, so this read "0 broken boards" and failed there (2026-11-07)
+  const part = sample.parts.find(p => p.pads?.length)!
+  const made = ERC_RULES.map(([rule]) => ({ f: `sample+${rule}`, rule, b: { ...sample, erc: [{ rule, severity: 'error' as const,
+    message: rule, refs: [{ ref: part.ref, pin: part.pads[0].num }], net: null }] } as BoardModel }))
+  const real = routed.filter(x => (x.b.erc || []).some(e => e.severity === 'error')).map(x => ({ ...x, rule: '' }))
+  const missed = [...made, ...real].filter(({ b, rule }) => {
+    const rows = checkRows(clean, b)
+    return overall(summarize(rows)).tone !== 'bad' || (rule && byId(rows)[rule].state !== 'error')
+  })
+  check('7b a broken board fails', missed.length === 0,
+    `${made.length} made, ${real.length} real broken boards${missed.length ? ' · passed ' + missed.map(x => x.f).join(', ') : ''}`)
 }
 
 // 8. status colours stay readable (>= 4.5:1) on white panels, the board sheet and the beige app
