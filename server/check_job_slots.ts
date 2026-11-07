@@ -1,7 +1,14 @@
-// Checks J1-J7: how many heavy jobs run at once and who waits (job_slots.ts). Nothing capped them: 16 demo boards at once
-// took about 2 GB on the development PC, the Jetson container's whole memory cap (review of 2026-11-08).
-// J1-J7 the rules, with no server.
+// Checks J1-J7 and S1-S5: how many heavy jobs run at once and who waits (job_slots.ts). Nothing capped them: 16 demo
+// boards at once took about 2 GB on the development PC, the Jetson container's whole memory cap (review of 2026-11-08).
+// J1-J7 the rules, with no server. S1-S5 a real server in production mode with SF_JOB_SLOTS=3, read through /health:
+// at most 3 jobs run, the rest wait in line, a full line is told at once in Korean with Retry-After, a board request
+// writes its netlist only once it has its slot, and one replaced while it waits leaves the line.
+// No model; S needs python, skidl and KiCad (a demo board and its 3D export).
 // Usage (from server/): npx tsx check_job_slots.ts   → exit 0 only if all pass
+import { spawn } from 'child_process'
+import { existsSync, readdirSync, rmSync } from 'fs'
+import { createServer } from 'net'
+import { join } from 'path'
 import { Slots, clientKey, refused, type Answer, type Slot } from './job_slots'
 
 let ok = true
@@ -94,8 +101,173 @@ async function rules() {
     && keys.v6b === keys.v6a && keys.v6c !== keys.v6a && keys.loop6 === '0:0:0:0::/64' && keys.none === 'unknown', JSON.stringify(keys))
 }
 
+/** a port the system says is free (a fixed one can sit in a range Windows reserves) */
+const freePort = () => new Promise<number>((resolve, reject) => {
+  const s = createServer().once('error', reject).listen(0, '127.0.0.1', () => {
+    const { port } = s.address() as { port: number }
+    s.close(() => resolve(port))
+  })
+})
+
+type Jobs = { running: number; waiting: number; slots: number }
+type Got = { status: number; retry: string | null; body: Buffer }
+const SLOTS = 3
+const idleJobs = JSON.stringify({ running: 0, waiting: 0, slots: SLOTS })
+
+async function server() {
+  const port = await freePort()
+  const base = `http://127.0.0.1:${port}`
+  // node --import tsx: one process to stop (the tsx command leaves its child running on Windows). Every setting named,
+  // so no login, model or sweep comes from the environment
+  const proc = spawn(process.execPath, ['--import', 'tsx', 'index.ts'], {
+    env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SF_JOB_SLOTS: String(SLOTS), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '',
+           ALLOWED_EMAILS: '', OPENAI_API_KEY: '', MOUSER_API_KEY: '', SF_OUTPUTS_SWEEP: '', SF_AI_STUB: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let log = ''
+  proc.stdout!.on('data', (d: Buffer) => { log += d.toString() })
+  proc.stderr!.on('data', (d: Buffer) => { log += d.toString() })
+  /** a request from a visitor at this address, as the reverse proxy in front of the server names it */
+  const from = (ip: string) => ({ 'X-Forwarded-For': ip })
+  const read = async (r: Response): Promise<Got> => ({ status: r.status, retry: r.headers.get('retry-after'), body: Buffer.from(await r.arrayBuffer()) })
+  const post = (path: string, body: unknown, ip = '192.0.2.1') => fetch(base + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...from(ip) }, body: JSON.stringify(body) })
+  const jobs = async () => ((await (await fetch(base + '/health')).json()) as { jobs?: Jobs }).jobs
+  /** /health every 50 ms until stopped: the most running and waiting seen */
+  const watch = () => {
+    const seen = { running: 0, waiting: 0, reads: 0, missing: 0 }
+    let on = true
+    const done = (async () => {
+      while (on) {
+        const j = await jobs().catch(() => undefined)
+        seen.reads++
+        if (!j) seen.missing++
+        else { seen.running = Math.max(seen.running, j.running); seen.waiting = Math.max(seen.waiting, j.waiting) }
+        await sleep(50)
+      }
+    })()
+    return { seen, stop: async () => { on = false; await done } }
+  }
+  /** the jobs once nothing runs or waits (10 s at most) */
+  const settle = async () => {
+    for (let i = 0; i < 100; i++) {
+      const j = await jobs()
+      if (j && !j.running && !j.waiting) return JSON.stringify(j)
+      await sleep(100)
+    }
+    return JSON.stringify(await jobs())
+  }
+  const made = (prefix: string) => readdirSync('outputs').filter(f => f.startsWith(prefix))
+  const model = (pcb: string, ip: string) => fetch(`${base}/board_model?pcb=${encodeURIComponent(pcb)}`, { headers: from(ip) }).then(read)
+  const said = (body: Buffer) => { try { return JSON.parse(body.toString()) as { error?: string; code?: string } } catch { return {} } }
+  /** a 503 as the screen reads it: busy, a Korean sentence, and when to ask again */
+  const busy = (a: Got) => a.status === 503 && a.retry === '15' && said(a.body).code === 'busy' && /[가-힣]/.test(said(a.body).error ?? '')
+  const stems: string[] = []
+  try {
+    let up = false
+    for (const t0 = Date.now(); !up && Date.now() - t0 < 60000 && proc.exitCode === null; await sleep(300)) {
+      up = await fetch(base + '/health').then(r => r.ok, () => false)
+    }
+    if (!up) return check('S server', false, `did not start in 60 s on port ${port}: ${log.trim().slice(-300)}`)
+
+    // S1. /health says the slots and what runs and waits
+    const idle = await jobs()
+    check('S1 /health: jobs running, waiting and the slots', JSON.stringify(idle) === idleJobs, JSON.stringify(idle))
+
+    // a board to export: the LED demo's circuit, as a visitor builds it
+    const demo = await (await fetch(base + '/demo_result/led')).json() as { filename: string; graph: unknown }
+    stems.push(demo.filename.replace(/\.net$/, ''))
+    const text = await (await post('/generate_pcb_stream', { graph: demo.graph, baseName: 'slotcheck' })).text()
+    const doneLine = /event: done\ndata: (.+)/.exec(text)?.[1]
+    const pcb = doneLine ? (JSON.parse(doneLine) as { pcbFilename: string }).pcbFilename : undefined
+    if (!pcb) return check('S board', false, `no board: ${text.slice(-200)}`)
+
+    // S2. six 3D exports from six visitors: three run, three wait, all six come back whole
+    // S3. a board request behind them waits in line, and its netlist is not written while it waits
+    {
+      const w = watch()
+      const six = Array.from({ length: 6 }, (_, i) => model(pcb, `198.51.100.${i + 1}`))
+      await sleep(300)
+      const sent = Date.now()
+      let answered = 0
+      const board = post('/generate_pcb_stream', { graph: demo.graph, baseName: 'slotwait' }, '198.51.100.7')
+        .then(async r => { answered = Date.now(); return r.text() })
+      let looks = 0, early = 0
+      while (!answered && Date.now() - sent < 30000) {
+        looks++
+        if (made('slotwait_').length) early++
+        await sleep(50)
+      }
+      const answers = await Promise.all(six)
+      const boardText = await board
+      await w.stop()
+      const after = await settle()
+      const whole = answers.filter(a => a.status === 200 && a.body.subarray(0, 4).toString() === 'glTF').length
+      check('S2 six 3D exports at once: at most 3 run, the rest wait, all six whole', w.seen.missing === 0 && w.seen.running <= SLOTS
+        && w.seen.running >= 2 && w.seen.waiting >= 1 && whole === 6 && after === idleJobs,
+        `most running ${w.seen.running}, waiting ${w.seen.waiting} (${w.seen.reads} reads, ${w.seen.missing} without jobs); ${whole}/6 whole; after ${after}`)
+      const waited = answered - sent
+      check('S3 a board request waits in line and writes its netlist only once it has its slot', waited >= 500 && early === 0
+        && /event: done/.test(boardText), `waited ${waited} ms; its netlist there in ${early} of ${looks} looks while it waited; ${/event: done/.test(boardText) ? 'done' : boardText.slice(-120)}`)
+    }
+
+    // S4. a full line, 3 running and 16 waiting: the next request is told at once, in Korean, with Retry-After, and a
+    //     board request refused so writes no netlist
+    {
+      const running = Array.from({ length: 3 }, (_, i) => model(pcb, `203.0.113.${i + 1}`))
+      await sleep(200)
+      const waiting = Array.from({ length: 16 }, (_, i) => post('/erc_graph', { graph: demo.graph }, `203.0.113.${i + 10}`).then(read))
+      await sleep(300)
+      const full = JSON.stringify(await jobs())
+      const t0 = Date.now()
+      const answer = await read(await post('/generate_pcb_stream', { graph: demo.graph, baseName: 'slotfull' }, '203.0.113.99'))
+      const refusedIn = Date.now() - t0
+      const left = made('slotfull_')
+      const rest = await Promise.all([...running, ...waiting])
+      const after = await settle()
+      check('S4 a full line: refused at once in Korean with Retry-After, no netlist written; the line all done after',
+        full === JSON.stringify({ running: SLOTS, waiting: 16, slots: SLOTS }) && busy(answer) && refusedIn < 1000 && !left.length
+        && rest.every(a => a.status === 200) && after === idleJobs,
+        `line ${full}; refused in ${refusedIn} ms: ${answer.status} retry ${answer.retry} ${answer.body.toString().slice(0, 120)}; files ${left.join(',') || 'none'}; the rest ${rest.map(a => a.status).join(',')}`)
+    }
+
+    // S5. a request replaced while it waits (a retry from another tab) leaves the line and says why; the retry gets the board
+    {
+      const ahead = Array.from({ length: 6 }, (_, i) => model(pcb, `198.51.100.${i + 20}`))
+      await sleep(300)
+      const body = { filename: demo.filename, style: 'smd' }
+      const first = post('/generate_pcb_stream', body, '198.51.100.30').then(async r => ({ status: r.status, at: Date.now(), text: await r.text() }))
+      let inLine = false
+      for (let i = 0; i < 40 && !inLine; i++) {
+        inLine = (await jobs())?.waiting === 4
+        if (!inLine) await sleep(25)
+      }
+      const second = post('/generate_pcb_stream', body, '198.51.100.31').then(async r => ({ status: r.status, at: Date.now(), text: await r.text() }))
+      const [a, b] = await Promise.all([first, second])
+      await Promise.all(ahead)
+      const after = await settle()
+      const firstSaid = said(Buffer.from(a.text))
+      check('S5 a request replaced while it waits leaves the line and says why; the retry gets the board', inLine
+        && a.status === 409 && firstSaid.code === 'replaced' && /[가-힣]/.test(firstSaid.error ?? '') && a.at < b.at
+        && b.status === 200 && /event: done/.test(b.text) && !/event: error/.test(b.text) && after === idleJobs,
+        `in line: ${inLine}; first ${a.status} ${a.text.slice(0, 100)}; retry ${b.status} ${/event: done/.test(b.text) ? 'done' : b.text.slice(-120)}; after ${after}`)
+    }
+  } finally {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const gone = new Promise(r => proc.once('exit', r))
+      proc.kill()
+      await gone
+    }
+    // what these requests wrote: the boards and netlists named slot..., and the demo's netlist with its board
+    for (const f of existsSync('outputs') ? readdirSync('outputs') : []) {
+      if (/^slot(check|wait|full)_/.test(f) || stems.some(s => f.startsWith(`${s}.`))) rmSync(join('outputs', f), { recursive: true, force: true })
+    }
+  }
+}
+
 // exitCode, not process.exit(): exiting with fetch's sockets still open crashed Node on Windows (0xC0000409)
 rules().catch(e => check('J rules', false, (e as Error).stack ?? String(e)))
+  .then(server).catch(e => check('S server', false, (e as Error).stack ?? String(e)))
   .finally(() => {
     console.log(ok ? 'ALL PASS' : 'SOME CHECKS FAILED')
     process.exitCode = ok ? 0 : 1

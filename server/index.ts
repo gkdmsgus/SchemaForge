@@ -18,6 +18,7 @@ import { runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
+import { Slots, clientKey, refused, type Answer, type Slot } from './job_slots'
 import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
@@ -1190,6 +1191,36 @@ app.post('/test_code', requireAuth as any, requireMember as any, async (req: Aut
   res.json(erc.ok ? { filename, graph, erc: erc.findings } : { filename, graph, erc: null, ercError: erc.reason })
 })
 
+// ── Heavy jobs: how many run at once ───────────────────────────────
+// A board's python and its first DRC, an AI round's reroute and DRC, a 3D export, the gerbers and the netlist check each
+// hold a slot while they run (job_slots.ts), and the rest wait in line. Nothing capped them: 16 demo boards at once took
+// about 2 GB on the development PC, the Jetson container's whole memory cap (review of 2026-11-08). 4 suits its 4 cores,
+// about 1 GB at the worst (four 3D exports); SF_JOB_SLOTS sets another number. A slot is taken once per job, never
+// again inside it: boards holding all four would each wait for a DRC slot.
+
+const JOB_SLOTS = Math.floor(Number(process.env.SF_JOB_SLOTS))
+const SLOTS = new Slots(JOB_SLOTS >= 1 ? JOB_SLOTS : 4, 16, 60000)
+/** whose job this is */
+const jobKey = (req: Request) => clientKey(req.ip)
+/** when a visitor told the server is busy is asked to try again (Retry-After, seconds) */
+const BUSY_RETRY_S = 15
+
+/** no slot came for this job: 503 with the reason the screen shows (PCB_SAYS.busy), and when to ask again */
+function sayBusy(res: Response) {
+  res.setHeader('Retry-After', String(BUSY_RETRY_S))
+  return res.status(503).json({ code: 'busy', error: PCB_SAYS.busy })
+}
+
+/** a job's slot, waited for until the visitor leaves (null: they left, nothing to answer) or refused (answered busy) */
+async function slotFor(req: Request, res: Response): Promise<Slot | null> {
+  const stop = new AbortController()
+  res.on('close', () => { if (!res.writableEnded) stop.abort() })
+  const got = await SLOTS.acquire(jobKey(req), stop.signal)
+  if (!refused(got)) return got
+  if (got.busy !== 'gone') sayBusy(res)
+  return null
+}
+
 // ── POST /erc_graph ────────────────────────────────────────────────
 // The netlist check on a circuit the AI editor changed (the schematic graph, not code): the same
 // check /generate and /test_code run, so a fix made by chat shows whether it fixed anything.
@@ -1214,6 +1245,9 @@ app.post('/erc_graph', async (req: Request, res: Response) => {
   const { graph, style } = req.body || {}
   const clean = cleanGraph(graph)
   if (!clean) return res.status(400).json({ error: 'graph with components and nets required' })
+  // python runs the check: it waits for a slot as a board does
+  const slot = await slotFor(req, res)
+  if (!slot) return
   const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
   try {
     writeFileSync(netPath, graphToNetlist(clean), 'utf8')
@@ -1221,6 +1255,7 @@ app.post('/erc_graph', async (req: Request, res: Response) => {
     const erc = await runErc(netPath, process.cwd(), undefined, pcbStyle(style))
     res.json(erc.ok ? { erc: erc.findings } : { erc: null, ercError: erc.reason })
   } finally {
+    slot.release()
     try { unlinkSync(netPath) } catch { /* already gone */ }
   }
 })
@@ -1311,7 +1346,7 @@ async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult>
 async function runAiLoop(
   netPath: string, pcbPath: string, style: PcbStyle,
   doneEvent: Record<string, unknown>, drc: DrcResult,
-  emit: (r: AiRound) => void, signal: AbortSignal,
+  emit: (r: AiRound) => void, signal: AbortSignal, slot: () => Promise<Answer>,
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
   const summary = (doneEvent.summary || {}) as Record<string, unknown>
@@ -1322,13 +1357,20 @@ async function runAiLoop(
   let bestDone = doneEvent
   let kept = false
   let round = 0
+  /** no slot came for a reroute: the rounds stop there with what was kept */
+  let busy = false
   // round 0 is what the screen reads as "AI 다듬기 건너뜀", so not once a round was kept: a stop in its round
   const stopHere = (why: string) => emit(kept
     ? { round, reason: `AI 다듬기를 여기서 멈추고 지금까지 채택한 기판을 씁니다: ${why}`, actions: { stop: true }, before: best, kept: false }
     : { round: 0, reason: `AI 다듬기를 건너뜁니다: ${why}`, actions: {}, before: best, kept: false })
   try {
     // Every round is judged on DRC errors, so an unavailable DRC must not read as "0 errors".
-    if (!drc.available) drc = await runDrc(pcbPath, signal)
+    if (!drc.available) {
+      // a reroute or a DRC holds a slot while it runs, a model call none: the board's own slot went with its first DRC
+      const got = await slot()
+      if (refused(got)) throw new Error(signal.aborted ? 'stopped' : AI_BUSY)
+      try { drc = await runDrc(pcbPath, signal) } finally { got.release() }
+    }
     if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
     best = metricsOf(summary, drc.errors ?? 0, board)
@@ -1340,7 +1382,7 @@ async function runAiLoop(
     const history: string[] = []
     const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
 
-    while (round < MAX_ROUNDS && !signal.aborted) {
+    while (round < MAX_ROUNDS && !signal.aborted && !busy) {
       round++
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
       const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history, signal)
@@ -1367,6 +1409,11 @@ async function runAiLoop(
                  note: [...notes, precheckNote(label, problems)].join(', ') })
           continue
         }
+        const got = await slot()
+        if (refused(got)) {
+          busy = !signal.aborted
+          break
+        }
         const { restore, drop } = backup([pcbPath, jsonPath])
         let after: Metrics | undefined
         let note = notes.join(', ')
@@ -1392,6 +1439,8 @@ async function runAiLoop(
           note = note ? `${note} · 개선 없음` : '개선 없음'
         } catch (e) {
           note = `적용 실패: ${(e as Error).message}`
+        } finally {
+          got.release()
         }
         restore()                                   // put the previous board back
         if (signal.aborted) break                   // cut short, not judged: no row for it
@@ -1403,9 +1452,13 @@ async function runAiLoop(
     // a model call the signal cut is not a failed one
     if (!signal.aborted) stopHere(modelFailure(e)?.text ?? (e as Error).message)
   }
+  if (busy) stopHere(AI_BUSY)
   if (signal.reason === 'budget') stopHere('정해진 시간 안에 끝나지 않았습니다.')
   return kept ? { done: bestDone, drc: bestDrc } : null
 }
+
+/** an AI round that got no slot for its reroute (the line was full or it waited too long) */
+const AI_BUSY = '서버에 기판을 만드는 사람이 많아 차례가 오지 않았습니다.'
 
 // ── GET /board_model ───────────────────────────────────────────────
 // KiCad's real board geometry and component models as binary glTF. The browser
@@ -1415,6 +1468,8 @@ app.get('/board_model', async (req: Request, res: Response) => {
   if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
   const pcbPath = join(OUTPUTS_DIR, file)
   if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
+  const slot = await slotFor(req, res)
+  if (!slot) return
   // a folder of its own: kicad-cli writes '$tempfile$.glb' and '$tempfile$.bin.tmp' beside the output, so exports at
   // the same time in one folder overwrote each other (8 at once: 2 failed, 1 came back cut short, review of 2026-11-03)
   const dir = mkdtempSync(join(tmpdir(), 'sf_model_'))
@@ -1429,6 +1484,7 @@ app.get('/board_model', async (req: Request, res: Response) => {
   } catch (e) {
     res.status(503).json({ error: (e as Error).message })
   } finally {
+    slot.release()
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* already gone */ }
   }
 })
@@ -1463,6 +1519,7 @@ const PCB_SAYS = {
   noResult: '기판을 만드는 프로그램이 결과 없이 끝났습니다. 재시도를 눌러 다시 만들어 주세요.',
   noPython: '서버에서 기판을 만드는 프로그램을 실행하지 못했습니다. 운영자가 서버 설치(python)를 확인해야 합니다.',
   checkFailed: '완성된 기판을 검사하다가 서버 오류가 나서 멈췄습니다. 재시도를 눌러 다시 만들어 주세요.',
+  busy: '지금 서버에서 기판을 만드는 사람이 많아 시작하지 못했습니다. 잠시 뒤에 다시 눌러 주세요.',
 }
 
 app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {
@@ -1482,10 +1539,11 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   if (clean && !clean.components.length) return res.status(400).json({ error: '부품이 하나도 없는 회로라 기판을 만들 수 없습니다.' })
   let netPath: string
   let pcbFilename: string
+  let netText: string | null = null      // written once this request has its slot
   if (graph) {
     const netFilename = `${fileStem(baseName)}_${randomUUID().slice(0, 8)}.net`
     netPath = join(OUTPUTS_DIR, netFilename)
-    writeFileSync(netPath, graphToNetlist(clean!), 'utf8')
+    netText = graphToNetlist(clean!)
     pcbFilename = netFilename.replace('.net', '.kicad_pcb')
   } else if (filename) {
     netPath = join(OUTPUTS_DIR, basename(filename as string))
@@ -1496,25 +1554,25 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   }
   const pcbPath = join(OUTPUTS_DIR, pcbFilename)
 
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-cache, no-transform')
-  res.setHeader('X-Accel-Buffering', 'no')
-  res.setHeader('Connection', 'keep-alive')
-  res.flushHeaders()
-  if (res.socket) res.socket.setNoDelay(true)
-
+  // The order (review of 2026-11-08): this request takes the board over and waits for the run before it to end, then
+  // waits in line for a slot, and only then writes its netlist and starts the stream. A request replaced while it
+  // waits leaves the line, so it never stops the retry after it; one refused or still waiting has written no file.
   const abort = new AbortController()
   let release = () => {}
   const run = { abort, ended: new Promise<void>(r => { release = r }) }
   const previous = boardRuns.get(pcbPath)
   boardRuns.set(pcbPath, run)
+  /** the slot holds python and the first DRC; each AI round takes its own for its reroute and DRC */
+  let slot: Slot | null = null
   const leave = () => {
+    slot?.release()
     if (boardRuns.get(pcbPath) === run) boardRuns.delete(pcbPath)
     release()
   }
 
   let buf = ''
   let stderr = ''
+  let streaming = false
   let finished = false
   let awaitingDrc = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1528,12 +1586,34 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   }
   res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); abort.abort('closed') } })
   abort.signal.addEventListener('abort', () => {
-    if (abort.signal.reason === 'replaced') end('error', { error: PCB_SAYS.replaced })
+    if (abort.signal.reason === 'replaced' && streaming) end('error', { error: PCB_SAYS.replaced })
   })
+  /** stopped before the stream began: taken over (said as the stream says it), refused a slot, or the visitor left */
+  const notStarted = (busy?: boolean) => {
+    if (!finished) {
+      finished = true
+      if (abort.signal.reason === 'replaced') res.status(409).json({ code: 'replaced', error: PCB_SAYS.replaced })
+      else if (busy) sayBusy(res)
+    }
+    leave()
+  }
 
   previous?.abort.abort('replaced')
   await previous?.ended
-  if (abort.signal.aborted) return leave()
+  if (abort.signal.aborted) return notStarted()
+  const got = await SLOTS.acquire(jobKey(req), abort.signal)
+  if (refused(got)) return notStarted(got.busy !== 'gone')
+  slot = got
+  if (abort.signal.aborted) return notStarted()
+
+  if (netText !== null) writeFileSync(netPath, netText, 'utf8')
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+  if (res.socket) res.socket.setNoDelay(true)
+  streaming = true
 
   const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
     '--style', pcbStyle(style), '--stream'])
@@ -1565,12 +1645,14 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
             if (!useAi) end('error', { error: PCB_SAYS.drcSlow })
           }, useAi ? AI_BUDGET_MS : 120000)
           checked = runDrc(pcbPath, abort.signal).then(async drc => {
+            slot?.release()
             if (finished) return
             send('drc', drc)
             let final = ev as Record<string, unknown>
             let lastDrc = drc
             if (useAi) {
-              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal)
+              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal,
+                () => SLOTS.acquire(jobKey(req), abort.signal))
               if (out) {
                 final = out.done
                 lastDrc = out.drc
@@ -1743,10 +1825,15 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
   // fab_export.py empties the folder first, so a second request for the same board waits for the running one
   let job = gerberJobs.get(gerberDir)
   if (!job) {
-    job = exportFab(pcbPath, gerberDir).finally(() => gerberJobs.delete(gerberDir))
+    // one slot for the export, which the requests for the same board share
+    job = SLOTS.acquire(jobKey(req)).then(async got => {
+      if (refused(got)) return { status: 503, body: { code: 'busy', error: PCB_SAYS.busy } }
+      try { return await exportFab(pcbPath, gerberDir) } finally { got.release() }
+    }).finally(() => gerberJobs.delete(gerberDir))
     gerberJobs.set(gerberDir, job)
   }
   const r = await job
+  if (r.body.code === 'busy') return sayBusy(res)
   res.status(r.status).json(r.body)
 })
 
@@ -1825,8 +1912,9 @@ let kicadVersion: string | null = null
 
 app.get('/health', (_req: Request, res: Response) => {
   // model: the circuit model's name for the screen (never the key), provider: who runs it
+  // jobs: the heavy jobs running and waiting, and the slots there are (never whose)
   res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
-    model: modelLabel(MODEL), provider: modelProvider() })
+    model: modelLabel(MODEL), provider: modelProvider(), jobs: SLOTS.counts() })
 })
 
 // ── SPA fallback ───────────────────────────────────────────────────
