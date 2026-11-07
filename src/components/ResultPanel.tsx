@@ -40,12 +40,19 @@ export function getSavedResults(): StoredEntry[] {
   try { return JSON.parse(localStorage.getItem('sf_saved_results') || '[]') } catch { return [] }
 }
 
-function updateSavedResultChat(prompt: string, messages: ChatMessage[], graph: NetGraph | null) {
-  const saved = getSavedResults()
-  const idx = saved.findIndex(s => s.prompt === prompt)
-  if (idx < 0) return
-  saved[idx] = { ...saved[idx], messages, graph: graph || saved[idx].graph }
-  localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+/**
+ * The saved entry of this description follows the chat and the circuit, while it holds this circuit: ↺ leaves it with the
+ * newest version, and an edit of an older one opened as the newest one's file with the older one's parts (2026-11-07).
+ * An answer still coming stays out: opened again, its cursor would blink on.
+ */
+function updateSavedResultChat(prompt: string, filename: string | undefined, messages: ChatMessage[], graph: NetGraph | null) {
+  try {
+    const saved = getSavedResults()
+    const idx = saved.findIndex(s => s.prompt === prompt && s.result?.filename === filename)
+    if (idx < 0) return
+    saved[idx] = { ...saved[idx], messages: messages.filter(m => !m._streaming), graph: graph || saved[idx].graph }
+    localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+  } catch { /* storage full or blocked: the edit stays in memory */ }
 }
 
 /** After a code run: the saved entry keeps the edited code and its circuit (the chat graph is replaced). */
@@ -330,7 +337,7 @@ export default function ResultPanel({
     if (effectiveGraph) pushGraphHistory(effectiveGraph)
     setLocalGraph(next)
     saveToSession({ graph: next })
-    updateSavedResultChat(lastPrompt, chatMessages, next)
+    updateSavedResultChat(lastPrompt, result?.filename, chatMessages, next)
   }
 
   function undoGraph() {
@@ -339,7 +346,7 @@ export default function ResultPanel({
     setGraphHistory(prev => prev.slice(0, -1))
     setLocalGraph(restored)
     saveToSession({ graph: restored })
-    updateSavedResultChat(lastPrompt, chatMessages, restored)
+    updateSavedResultChat(lastPrompt, result?.filename, chatMessages, restored)
   }
 
   /** 초기화: back to the circuit as generated (or as last saved, for a session opened from history; a saved AI edit stays one) */
@@ -350,7 +357,7 @@ export default function ResultPanel({
     setGraphHistory([])
     if (changed && back) {
       saveToSession({ graph: back })
-      updateSavedResultChat(lastPrompt, chatMessages, back)
+      updateSavedResultChat(lastPrompt, result?.filename, chatMessages, back)
     }
   }
 
@@ -590,7 +597,7 @@ export default function ResultPanel({
             const assistantMsg: ChatMessage = { role: 'assistant', content: `${reply as string}${note}`, actions: actions || [] }
             setChatMessages(prev => {
               const next = [...prev.slice(0, -1), assistantMsg]
-              updateSavedResultChat(lastPrompt, next, newGraph)
+              updateSavedResultChat(lastPrompt, result?.filename, next, newGraph)
               return next
             })
             saveChat(msg, assistantMsg)

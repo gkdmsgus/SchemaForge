@@ -10,7 +10,10 @@
 // overlapped it on a 4 CPU server: review of 2026-11-06), V9 an AI editor stream that ends with no result says the
 // connection was lost, and its half answer does not go to the model with the next request (the cursor blinked on: 2026-11-06),
 // V10 the BOM's Mouser lookup goes with the login, and a refusal says it needs one, not that the server has no key,
-// V11 the drawer has no Sources tab (web search is gone since 2026-06-12, so it was always grey).
+// V11 the drawer has no Sources tab (web search is gone since 2026-06-12, so it was always grey), V12 an edit of an older
+// version stays out of the description's saved result, which holds the newest (opened, it was the newest version's file
+// with the older one's parts, and its PCB went by that name), V13 a storage that refuses the record costs a hand edit nothing
+// (no thrown error, its toast there), an answer still coming is not kept in the record (opened again, its cursor blinks on).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -255,6 +258,80 @@ try {
   // V11
   const tabNames = (await v10.p.locator('button.sf-drawer-tab').allTextContents()).map(t => t.trim()).join()
   check('V11 the drawer has no Sources tab', tabNames === 'Netlist,Guide,BOM,Code', tabNames)
+
+  // V12: v1 and v2 of one description, v1 picked and its value edited, then the description's saved result opened
+  const v12 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  await v12.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+  })
+  let turn12 = 0, pcb12 = null
+  await v12.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await v12.route(/\/(favorites|sessions)(\/.*)?$/, r => json(r, { favorites: [], sessions: [], messages: [], id: 's1' }))
+  await v12.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await v12.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(answers[Math.min(turn12++, 1)])}\n\n` }))
+  await v12.route(/\/generate_pcb_stream$/, r => { pcb12 = r.request().postDataJSON(); return r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: error\ndata: {"error":"check"}\n\n' }) })
+  await v12.goto(BASE, { waitUntil: 'networkidle' })
+  await v12.locator('.sf-home-input textarea').fill(PROMPT)
+  await v12.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await v12.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 20000 })
+  await v12.locator("button[title='재생성 (저장된 결과 대신 새로 생성)']").click()
+  await v12.getByRole('button', { name: 'v2', exact: true }).waitFor({ timeout: 20000 })
+  await v12.getByRole('button', { name: 'v1', exact: true }).click()
+  await v12.getByText('version-one.net').first().waitFor({ timeout: 5000 })
+  await v12.waitForTimeout(500)
+  const edit12 = async (p, ref, value) => {
+    const b = await p.locator(`g[data-comp='${ref}']`).boundingBox()
+    await p.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)
+    await p.locator('svg foreignObject input').first().fill(value)
+    await p.keyboard.press('Enter')
+    await p.waitForTimeout(500)
+  }
+  await edit12(v12, 'R1', '4k7')
+  await v12.getByText(/^v0\.4 · /).first().click()
+  await v12.locator('.sf-home-input textarea').fill(PROMPT)
+  await v12.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await v12.getByRole('button', { name: '불러오기', exact: true }).click({ timeout: 5000 })
+  await v12.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click({ timeout: 10000 })
+  for (let i = 0; i < 30 && !pcb12; i++) await v12.waitForTimeout(100)
+  const parts12 = g => (g?.components ?? []).map(c => c.ref).join()
+  check('V12 an edit of an older version stays out of the saved result of the newest', pcb12?.baseName === 'version-two' && parts12(pcb12.graph) === parts12(answers[1].graph),
+    `PCB under ${pcb12?.baseName}: ${parts12(pcb12?.graph)}`)
+
+  // V13: an entry for this result whose writes then fail, and a stream that stays open
+  const v13 = await onResult(never)
+  const chat13 = (() => { let go; const until = new Promise(r => { go = r }); return { until, go } })()
+  await v13.p.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await v13.p.route(/\/chat_edit$/, async r => { await chat13.until; await r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: text\ndata: "답하는 중"\n\n' }).catch(() => {}) })
+  await v13.p.getByTestId('chat-input').fill('R1 값을 바꿔줘')
+  await v13.p.getByTestId('chat-input').press('Enter')
+  await v13.p.waitForTimeout(200)
+  await edit12(v13.p, 'R1', '4k7')
+  const kept13 = await v13.p.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]?.messages ?? [])
+  chat13.go()
+  await v13.p.waitForTimeout(300)
+  const thrown = []
+  v13.p.on('pageerror', e => thrown.push(String(e)))
+  await v13.p.evaluate(() => { Storage.prototype.setItem = function () { throw new DOMException('full', 'QuotaExceededError') } })
+  await edit12(v13.p, 'R1', '6k8')
+  const value13 = await v13.p.locator("g[data-comp='R1']").textContent()
+  const wire13 = await v13.p.evaluate(() => {
+    for (const w of document.querySelectorAll("g[data-net] path[stroke='transparent']")) {
+      const L = w.getTotalLength()
+      if (L < 40) continue
+      const m = w.getPointAtLength(L / 2), c = w.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    }
+    return null
+  })
+  await v13.p.mouse.click(wire13.x, wire13.y)
+  await v13.p.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+  await v13.p.waitForTimeout(400)
+  const toast13 = await v13.p.getByText('삭제됨').isVisible()
+  check('V13 an answer still coming stays out of the record, and a storage that refuses it costs a hand edit nothing',
+    kept13.length > 0 && !kept13.some(m => m._streaming) && !thrown.length && /6k8/.test(value13) && toast13,
+    `kept ${JSON.stringify(kept13.map(m => m._streaming ? 'streaming' : m.role))}, thrown ${thrown.length}, R1 "${value13}", toast ${toast13}`)
 } finally {
   await browser.close()
 }
