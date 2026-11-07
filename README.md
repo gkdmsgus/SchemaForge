@@ -214,7 +214,7 @@ npx tsx scripts/check_pins.ts
 ```bash
 npx tsx scripts/check_styles.ts
 ```
-스타일시트 3항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다).
+스타일시트 7항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다). 고정폭 글꼴 묶음이 시스템 글꼴보다 앞에 페이지가 불러오는 한글 웹 글꼴을 두는지도 본다(없으면 Windows가 고정폭 줄의 한글을 굴림체로 채운다). 글자 토큰(`fg`·`fg-muted`·`fg-dim`·`amber-deep`·`cyan-deep`·`violet`)이 다섯 면(`bg`~`bg-4`) 모두에서, 공용 버튼·칩·헤더 로그인·옆 서랍 기록 항목의 글자가 제 배경에서 대비 4.5:1 이상인지도 본다. `fg-faint`·`amber`·`cyan`은 선·채움·표시용이라 표에 넣지 않고, `danger`는 `bg-1`에서 4.24:1이라 색을 정할 때까지 빠져 있다. 브라우저 탭 아이콘(`public/favicon.svg`)이 헤더 로고(`Logo.tsx`)와 같은 칩 도형·같은 토큰 색인지(16 px에서 보이게 선을 굵게, 핀을 변마다 2개로 줄인 것은 허용), 옆 서랍도 그 로고를 쓰는지 본다. Google Fonts는 `index.html`의 `<link>` 한 번으로만 부르고(스타일시트의 `@import` 없음), 그 링크가 글꼴 묶음이 시스템 글꼴 앞에 적은 웹 글꼴을 모두 불러오는지도 본다.
 
 ```bash
 npx tsx scripts/check_auth_modal.ts
@@ -260,6 +260,11 @@ node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
 node scripts/check_auth_dialog.mjs     # npm run dev 를 켠 채로
 ```
 로그인·가입 창 10항목 (로그인 API는 브라우저 안에서 흉내 낸다). 로그인과 가입 화면 각각에서 그라데이션·흐림·이모지·영어 제목이 없고 모서리가 8 px 이하인지, 크롬이 실제로 그린 글자가 모두 앱 글꼴(Space Grotesk, IBM Plex Sans KR)이고 글자 대비가 4.5:1 이상인지(큰 글자는 3:1) 본다. 창이 제목으로 이름 붙은 모달 대화상자 하나인지, 열면 메일 칸에 포커스가 가고 Tab·Shift+Tab 15번씩에도 창 밖으로 나가지 않는지(예전에는 세 번 만에 뒤 화면으로 나갔다), 버튼마다 이름이 있는지, 로그인 실패를 알림(alert)으로 읽어 주는지, Esc와 창 밖 클릭으로 닫히고 포커스가 헤더의 로그인 버튼으로 돌아오는지, 가입 화면에만 이용약관·개인정보 처리방침 링크가 새 탭으로 하나씩 있는지도 본다. 글꼴은 fonts.googleapis.com에서 받으므로 인터넷이 없으면 시스템 글꼴로 그려져 실패한다.
+
+```bash
+node scripts/check_settings.mjs     # npm run dev 를 켠 채로
+```
+설정 창 7항목 (로그인 없음). 헤더의 설정 단추 이름이 "설정"이고 누르면 "설정" 제목으로 이름 붙은 모달 창이 열려 초점을 받는지, 스위치 세 개가 각자 라벨 이름과 켜짐·꺼짐 상태(`role=switch`, `aria-checked`)를 가지는지, 누르면 상태와 저장된 설정이 바뀌고 다시 누르면 돌아오는지, 초점을 둔 스위치를 Space로도 바꿀 수 있는지, 창 안 한글이 자간을 벌린 대문자 고정폭이 아닌지, 뒤 화면을 흐리지 않고 "SETTINGS"·"GPT"·"plan"이 남아 있지 않은지, Esc로 닫히고 초점이 설정 단추로 돌아오며 화면을 다시 누를 수 있는지 확인한다.
 
 ```bash
 node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로

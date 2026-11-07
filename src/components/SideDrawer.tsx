@@ -6,12 +6,14 @@ import {
 } from '../api'
 import { savedGraph } from '../lib/graphEdit'
 import { getSavedResults, type StoredEntry } from '../lib/storage'
+import Logo from './Logo.tsx'
 
 /** a result saved in this browser, or a session on the server (_dbId) listed the same way */
 type DrawerEntry = StoredEntry & { _dbId?: string }
 
-const MONO = "'IBM Plex Mono','JetBrains Mono',monospace"
-const SANS = "'Space Grotesk','Inter',sans-serif"
+// the app's font stacks: the drawer's own ones had no Korean font, so its Korean came out in the system's
+const MONO = 'var(--sf-font-mono)'
+const SANS = 'var(--sf-font-sans)'
 
 function groupByDate(items: DrawerEntry[]): [string, DrawerEntry[]][] {
   const now = new Date()
@@ -207,11 +209,8 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
           borderBottom: `1px solid var(--sf-line)`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--sf-violet)', display: 'block' }} />
-              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--sf-violet)', fontWeight: 700, letterSpacing: '0.12em' }}>SCHEMAFORGE</span>
-            </div>
-            <button onClick={onClose} style={{
+            <Logo size={18} />
+            <button onClick={onClose} aria-label="서랍 닫기" style={{
               background: 'none', border: 'none', color: 'var(--sf-fg-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px',
             }}>×</button>
           </div>
@@ -282,7 +281,7 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
                 <div style={{
                   padding: '12px 16px 4px',
                   fontFamily: MONO, fontSize: 9, fontWeight: 700,
-                  color: 'var(--sf-fg-faint)', letterSpacing: '0.1em', textTransform: 'uppercase',
+                  color: 'var(--sf-fg-dim)', letterSpacing: '0.1em', textTransform: 'uppercase',
                 }}>{label}</div>
                 {items.map(s => (
                   <SessionItem
@@ -305,17 +304,17 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '10px 12px', borderTop: '1px solid #151821' }}>
+        <div style={{ padding: '10px 12px', borderTop: '1px solid var(--sf-line)' }}>
           <button
             onClick={deleteAll}
             style={{
               width: '100%', padding: '6px', borderRadius: 6,
-              border: '1px solid #1c2030', background: 'transparent',
-              color: '#2a3040', cursor: 'pointer', fontFamily: MONO, fontSize: 9,
+              border: '1px solid var(--sf-line-strong)', background: 'transparent',
+              color: 'var(--sf-fg-muted)', cursor: 'pointer', fontFamily: MONO, fontSize: 9,
               transition: 'color 0.1s',
             }}
-            onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
-            onMouseLeave={e => e.currentTarget.style.color = '#2a3040'}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--sf-danger)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--sf-fg-muted)'}
           >전체 삭제</button>
         </div>
       </div>
@@ -374,7 +373,7 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
         display: 'flex', alignItems: 'center',
         padding: '8px 12px 8px 16px',
         cursor: editing ? 'default' : 'pointer',
-        background: hovered ? '#0d1018' : 'transparent',
+        background: hovered ? 'var(--sf-bg-4)' : 'transparent',
         transition: 'background 0.1s',
         gap: 8,
       }}
@@ -391,22 +390,22 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
             maxLength={100}
             aria-label="기록 이름"
             style={{
-              width: '100%', background: '#0a0d14', border: '1px solid #2a3555',
-              borderRadius: 4, color: '#c0cce8', fontFamily: SANS, fontSize: 12,
+              width: '100%', background: 'var(--sf-bg-2)', border: '1px solid var(--sf-line-strong)',
+              borderRadius: 4, color: 'var(--sf-fg)', fontFamily: SANS, fontSize: 12,
               padding: '2px 6px', outline: 'none', boxSizing: 'border-box',
             }}
           />
         ) : (
           <div
             style={{
-              fontSize: 12, color: hovered ? '#c0cce8' : '#8090b0',
+              fontSize: 12, color: hovered ? 'var(--sf-fg)' : 'var(--sf-fg-muted)',
               fontFamily: SANS, lineHeight: 1.4,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               transition: 'color 0.1s',
             }}
           >{title}</div>
         )}
-        <div style={{ fontSize: 9, color: '#2a3040', fontFamily: MONO, marginTop: 2 }}>
+        <div style={{ fontSize: 9, color: 'var(--sf-fg-dim)', fontFamily: MONO, marginTop: 2 }}>
           {time}{msgCount > 0 ? ` · 대화 ${msgCount}개` : ''}
         </div>
       </div>
@@ -419,12 +418,12 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
           style={{
             flexShrink: 0,
             background: 'none', border: 'none', cursor: 'pointer',
-            color: hovered ? '#3a4055' : 'transparent',
+            color: hovered ? 'var(--sf-fg-dim)' : 'transparent',
             fontSize: 13, lineHeight: 1, padding: '2px 4px',
             borderRadius: 4, transition: 'color 0.1s, background 0.1s',
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#a78bfa'; e.currentTarget.style.background = '#15122a' }}
-          onMouseLeave={e => { e.currentTarget.style.color = hovered ? '#3a4055' : 'transparent'; e.currentTarget.style.background = 'none' }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--sf-violet)'; e.currentTarget.style.background = 'var(--sf-violet-soft)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = hovered ? 'var(--sf-fg-dim)' : 'transparent'; e.currentTarget.style.background = 'none' }}
         >✎</button>
       )}
       <button
@@ -432,12 +431,12 @@ function SessionItem({ title, time, msgCount, onClick, onDelete, onRename, dbId,
         style={{
           flexShrink: 0,
           background: 'none', border: 'none', cursor: 'pointer',
-          color: hovered ? '#3a4055' : 'transparent',
+          color: hovered ? 'var(--sf-fg-dim)' : 'transparent',
           fontSize: 13, lineHeight: 1, padding: '2px 4px',
           borderRadius: 4, transition: 'color 0.1s, background 0.1s',
         }}
-        onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.background = '#1a1015' }}
-        onMouseLeave={e => { e.currentTarget.style.color = hovered ? '#3a4055' : 'transparent'; e.currentTarget.style.background = 'none' }}
+        onMouseEnter={e => { e.currentTarget.style.color = 'var(--sf-danger)'; e.currentTarget.style.background = 'var(--sf-danger-soft)' }}
+        onMouseLeave={e => { e.currentTarget.style.color = hovered ? 'var(--sf-fg-dim)' : 'transparent'; e.currentTarget.style.background = 'none' }}
       >✕</button>
     </div>
   )

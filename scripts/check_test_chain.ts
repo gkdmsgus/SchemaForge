@@ -27,6 +27,7 @@ const OUT: Record<string, string> = {
   'scripts/check_saved_offer.mjs': BROWSER,
   'scripts/check_schematic_overlap.mjs': BROWSER,
   'scripts/check_schematic_wiring.mjs': BROWSER,
+  'scripts/check_settings.mjs': BROWSER,
   'scripts/check_versions.mjs': BROWSER,
   'server/check_skidl_tree.ts': 'Linux /proc inside the deploy image (check_deploy.py runs it there)',
   'server/pcb/check_deploy.py': 'Docker: it builds and runs the deploy image',

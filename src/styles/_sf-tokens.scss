@@ -26,11 +26,14 @@ $sf-bg-4:         #ede5d0;
 
 $sf-fg:           #1a1611;
 $sf-fg-muted:     #5c5444;
-$sf-fg-dim:       #8a8270;
+// text keeps 4.5:1 on every surface (check_styles S5): fg-dim was #8a8270, 2.93:1 on bg-1. fg-faint is for lines
+// and switched-off marks, not text; amber and cyan are for fills, lines and marks, their text is amber-deep, cyan-deep
+$sf-fg-dim:       #686255;
 $sf-fg-faint:     #b0a895;
 
 $sf-amber:        #c87515;
 $sf-amber-deep:   #a14a2c;
+$sf-amber-fill:   #a15e11;
 $sf-cyan:         #1d7a6a;
 $sf-cyan-deep:    #145e51;
 $sf-violet:       #6a4cb5;
@@ -44,10 +47,11 @@ $sf-line-trace:   #b0a484;
 $sf-danger:       #b04826;
 
 $sf-font-sans: 'Space Grotesk', 'IBM Plex Sans KR', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-$sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+// Plex Sans KR sets the Hangul in mono lines: after the system fonts, Windows filled it with GulimChe (check_styles S4)
+$sf-font-mono: 'IBM Plex Mono', 'IBM Plex Sans KR', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
 // ── Webfonts ────────────────────────────────────────────────────────────────
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap');
+// index.html's <link> loads them, once (check_styles S7): an @import here asked Google Fonts a second time.
 
 // ── CSS custom properties (consumed by JSX components) ──────────────────────
 :root {
@@ -75,6 +79,7 @@ $sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monosp
   // Accents
   --sf-amber:        #{$sf-amber};
   --sf-amber-deep:   #{$sf-amber-deep};
+  --sf-amber-fill:   #{$sf-amber-fill};   /* a button filled with amber: cream text on it keeps 4.5:1 */
   --sf-amber-soft:   rgba(200, 117, 21, 0.10);
   --sf-amber-line:   rgba(200, 117, 21, 0.36);
 

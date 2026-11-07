@@ -179,7 +179,7 @@ try {
   await tabOf('⭐ 즐겨찾기').click()
   await shared.getByText('A의 즐겨찾기').first().waitFor({ timeout: 5000 })
   await tabOf('히스토리').click()
-  await shared.getByRole('button', { name: '×' }).first().click()
+  await shared.getByRole('button', { name: '서랍 닫기', exact: true }).click()
   await shared.waitForTimeout(400)
   await shared.getByRole('button', { name: '로그아웃' }).click()
   await shared.getByRole('button', { name: '로그인', exact: true }).first().waitFor({ timeout: 5000 })

@@ -35,7 +35,7 @@ const BTN_SIZES: Record<BtnSize, CSSProperties> = {
 // border as separate width/style/colour: the hover styles change only borderColor, and React warns when
 // a shorthand and its longhand meet in one style object
 const BTN_VARIANTS: Record<BtnVariant, CSSProperties> = {
-  primary:   { background: 'var(--sf-amber)',   color: '#fff8ef',            borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-amber)' },
+  primary:   { background: 'var(--sf-amber-fill)', color: '#fff8ef',          borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-amber-fill)' },
   cyan:      { background: 'var(--sf-cyan)',    color: '#f4f7f2',            borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-cyan)' },
   secondary: { background: 'var(--sf-bg-3)',    color: 'var(--sf-fg)',       borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--sf-line-strong)' },
   ghost:     { background: 'transparent',       color: 'var(--sf-fg-muted)', borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent' },
@@ -45,7 +45,7 @@ const BTN_VARIANTS: Record<BtnVariant, CSSProperties> = {
 
 const BTN_HOVER: Record<BtnVariant, CSSProperties> = {
   primary:   { background: 'var(--sf-amber-deep)', borderColor: 'var(--sf-amber-deep)' },
-  cyan:      { background: '#5e948a' },
+  cyan:      { background: 'var(--sf-cyan-deep)' },
   secondary: { background: 'var(--sf-bg-4)', borderColor: 'var(--sf-fg-faint)' },
   ghost:     { background: 'var(--sf-bg-3)', color: 'var(--sf-fg)' },
   outline:   { background: 'var(--sf-bg-3)', borderColor: 'var(--sf-fg-faint)' },
@@ -117,10 +117,11 @@ interface ChipProps {
 export function Chip({ children, icon, active, onClick, variant = 'default', style }: ChipProps) {
   const [hover, setHover] = useState(false);
   const v = variant === 'cyan'
-    ? { bg: 'var(--sf-cyan-soft)',  fg: 'var(--sf-cyan)',  bd: 'var(--sf-cyan-line)',  bgHover: 'var(--sf-cyan-soft)' }
+    ? { bg: 'var(--sf-cyan-soft)',  fg: 'var(--sf-cyan-deep)',  bd: 'var(--sf-cyan-line)',  bgHover: 'var(--sf-cyan-soft)' }
     : {
         bg: active ? 'var(--sf-amber-soft)' : 'var(--sf-bg-3)',
-        fg: active ? 'var(--sf-amber)'      : 'var(--sf-fg-muted)',
+        // the amber edge and tint mark it chosen; amber text on the tint stayed under 4.5:1 (check_styles S5)
+        fg: active ? 'var(--sf-fg)'         : 'var(--sf-fg-muted)',
         bd: active ? 'var(--sf-amber-line)' : 'var(--sf-line-strong)',
         bgHover: 'var(--sf-bg-4)',
       };

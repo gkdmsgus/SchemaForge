@@ -4,6 +4,8 @@
 //   The glyph is an amber chip with pin "ticks" on all four sides plus a
 //   cyan trace flying off the upper-right corner — the same metaphor as
 //   Sparky's antenna and the trace background.
+//   public/favicon.svg is this chip for the browser tab, in the token colours written out (an icon file
+//   cannot read CSS variables): change the two together, check_styles S6 compares them.
 // ============================================================================
 
 import React from 'react';
