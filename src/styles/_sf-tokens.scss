@@ -51,7 +51,7 @@ $sf-font-sans: 'Space Grotesk', 'IBM Plex Sans KR', ui-sans-serif, system-ui, -a
 $sf-font-mono: 'IBM Plex Mono', 'IBM Plex Sans KR', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
 // ── Webfonts ────────────────────────────────────────────────────────────────
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap');
+// index.html's <link> loads them, once (check_styles S7): an @import here asked Google Fonts a second time.
 
 // ── CSS custom properties (consumed by JSX components) ──────────────────────
 :root {

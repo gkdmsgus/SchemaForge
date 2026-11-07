@@ -4,7 +4,8 @@
 // the part simply stops moving (the schematic's pop-up fade and the diff pulse lean on names from the sheets).
 // S4 the mono font stack sets Hangul with a Korean web font the page loads, not the system's GulimChe. S5 text keeps
 // 4.5:1 contrast: the text tokens on every surface, and the shared controls' text on its own colour. S6 the browser
-// tab's icon is the header's mark (Logo.tsx) in the token colours, and the drawer shows that mark too.
+// tab's icon is the header's mark (Logo.tsx) in the token colours, and the drawer shows that mark too. S7 Google Fonts
+// is asked once, by index.html, for every web font the stacks name.
 // Usage: npx tsx scripts/check_styles.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
@@ -170,6 +171,18 @@ const webFonts = new Set([...html.matchAll(/href="https:\/\/fonts\.googleapis\.c
   ]
   check('S6 the tab icon is the header\'s mark in the token colours, and the drawer shows that mark', !wrong.length,
     wrong.length ? wrong.join(' · ') : `${shapes(logo).length} shapes, colours ${[...iconColours].join(' ')}`)
+}
+
+// S7. Google Fonts is asked once, by index.html's <link>: the token sheet @imported the same address too, and the
+// build kept that @import at the top of its CSS (design sweep of 2026-11-08). The link loads every web font the stacks
+// name before their system fonts.
+{
+  const imports = (css.match(/fonts\.googleapis\.com/g) ?? []).length
+  const links = [...html.matchAll(/<link\b[^>]*fonts\.googleapis\.com\/css2[^>]*>/g)].length
+  const named = ['font-sans', 'font-mono'].flatMap(t => { const f = families(tokenOf(t)); const i = f.findIndex(x => /^(ui-|system-ui|-apple-system|sans-serif|monospace)/.test(x)); return f.slice(0, i < 0 ? f.length : i) })
+  const unloaded = [...new Set(named)].filter(f => !webFonts.has(f))
+  check('S7 Google Fonts is asked once, by index.html, for every web font the stacks name', imports === 0 && links === 1 && named.length > 0 && !unloaded.length,
+    `the style sheets ask ${imports} time(s), index.html ${links}${unloaded.length ? ` · not loaded: ${unloaded.join(', ')}` : ` · ${[...new Set(named)].join(', ')}`}`)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall style checks passed')
