@@ -5,7 +5,7 @@
 // Windows reserved (Windows only).
 // D12 the built app's cache headers, on a small dist/ of its own. D13 a build in any folder stays out of the image and lint.
 // D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
-// D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT).
+// D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT); D15b the Jetson image is given it.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -77,6 +77,21 @@ check('D7 names from requests', safeName('..') === null && safeName('.') === nul
   const said = [runningCommit({ SF_COMMIT: '0123456789abcdef', RENDER_GIT_COMMIT: 'fedcba9876543210' }),
     runningCommit({ RENDER_GIT_COMMIT: 'fedcba9876543210' }), runningCommit({ SF_COMMIT: ' ', RENDER_GIT_COMMIT: '' }), runningCommit({})]
   check('D15 the running commit: SF_COMMIT, else RENDER_GIT_COMMIT, else unknown', said.join() === '0123456,fedcba9,unknown,unknown', said.join(', '))
+}
+
+// D15b. the Jetson image is given SF_COMMIT (both read as text, nothing run): no image set it, so /health said 'unknown'
+//       there. Dockerfile.jetson's last stage takes the build argument into its environment; jetson_run.sh passes HEAD
+{
+  const root = join(process.cwd(), '..')
+  const docker = readFileSync(join(root, 'Dockerfile.jetson'), 'utf8').replace(/\r\n/g, '\n')
+  const last = docker.slice(docker.lastIndexOf('\nFROM '))
+  const run = readFileSync(join(root, 'scripts', 'jetson_run.sh'), 'utf8').replace(/\r\n/g, '\n')
+  const build = run.split('\n').find(l => /^\s*docker build /.test(l)) ?? ''
+  const wrong = [!/^ARG SF_COMMIT\b/m.test(last) && 'Dockerfile.jetson: no ARG SF_COMMIT in the last stage',
+    !/^ENV (?:[^\n]*\\\n)*\s*SF_COMMIT=\$SF_COMMIT\b/m.test(last) && 'Dockerfile.jetson: SF_COMMIT not in the environment',
+    !/^\s*commit=\$\(git rev-parse --short=7 HEAD\b/m.test(run) && 'jetson_run.sh: no commit from git',
+    !build.includes('--build-arg SF_COMMIT="$commit"') && 'jetson_run.sh: docker build without SF_COMMIT'].filter(Boolean)
+  check('D15b the Jetson image is built with its commit as SF_COMMIT', !wrong.length, wrong.join(' | '))
 }
 
 // D8. index.ts (read as text): each route that runs code or calls the model goes through the guard

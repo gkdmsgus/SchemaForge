@@ -22,7 +22,10 @@ MEMORY="${MEMORY:-2g}"
 CPUS="${CPUS:-4}"
 
 if [ "${1:-}" != "--no-build" ]; then
-  docker build -f Dockerfile.jetson -t "$IMAGE" .
+  # the commit it is built from, which /health then names (Dockerfile.jetson SF_COMMIT)
+  commit=$(git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
+  echo "building commit $commit"
+  docker build -f Dockerfile.jetson --build-arg SF_COMMIT="$commit" -t "$IMAGE" .
 fi
 
 env_args=()
