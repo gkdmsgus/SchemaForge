@@ -2,7 +2,9 @@
 // plain .css file sits in src unimported (three did, 3,600 lines, for months: sweep of 2026-11-07), S2 main.scss compiles,
 // S3 every animation named in a style sheet or in the screens' code has its @keyframes: a missing one gives no error and
 // the part simply stops moving (the schematic's pop-up fade and the diff pulse lean on names from the sheets).
-// S4 the mono font stack sets Hangul with a Korean web font the page loads, not the system's GulimChe.
+// S4 the mono font stack sets Hangul with a Korean web font the page loads, not the system's GulimChe. S5 text keeps
+// 4.5:1 contrast: the text tokens on every surface, and the shared controls' text on its own colour. S6 the browser
+// tab's icon is the header's mark (Logo.tsx) in the token colours, and the drawer shows that mark too.
 // Usage: npx tsx scripts/check_styles.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
@@ -137,6 +139,37 @@ const webFonts = new Set([...html.matchAll(/href="https:\/\/fonts\.googleapis\.c
   check('S5 text keeps 4.5:1 on its surface (tokens, buttons, chips, header, drawer items)', pairs.length > 40 && !short.length,
     short.length ? short.map(r => `${r.what}: ${r.worst ? `${r.fg} on ${r.bg} ${r.worst.toFixed(2)}:1` : `colour not found (${r.fg || '?'} on ${r.bg || '?'})`}`).join(' · ')
       : `${pairs.length} pairs, lowest ${Math.min(...results.map(r => r.worst)).toFixed(2)}:1`)
+}
+
+// S6. The browser tab shows the header's mark: from the first commit it was Vite's purple bolt (#863bff, blurred
+// ellipses), beside the amber chip in the header and a violet dot in the drawer (design sweep of 2026-11-08). The icon
+// is Logo.tsx's chip in the token colours; it may draw thicker lines and fewer pins, to read at 16 px.
+{
+  const comp = (f: string) => fs.readFileSync(path.join(ROOT, 'src', 'components', f), 'utf8')
+  const logo = comp('Logo.tsx')
+  const iconFile = path.join(ROOT, 'public', 'favicon.svg')
+  const icon = fs.existsSync(iconFile) ? fs.readFileSync(iconFile, 'utf8') : ''
+  const attrs = (tag: string) => Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]))
+  const tags = (svg: string, tag: string) => [...svg.matchAll(new RegExp(`<${tag}\\b[^>]*>`, 'g'))].map(m => attrs(m[0]))
+  const shapes = (svg: string) => [
+    ...tags(svg, 'rect').map(a => `rect ${['x', 'y', 'width', 'height', 'rx'].map(k => a[k]).join(' ')}`),
+    ...tags(svg, 'circle').map(a => `circle ${a.cx} ${a.cy}`),
+    ...tags(svg, 'path').filter(a => /cyan/.test(a.stroke ?? '') || a.stroke === tokenOf('cyan')).map(a => `trace ${a.d}`),
+    `viewBox ${tags(svg, 'svg')[0]?.viewBox}`,
+  ]
+  const colours = (svg: string) => new Set(['rect', 'circle', 'path'].flatMap(t => tags(svg, t)).flatMap(a => [a.fill, a.stroke])
+    .filter(c => c && c !== 'none').map(c => (/^var\(--sf-([\w-]+)\)$/.exec(c) ? tokenOf(/^var\(--sf-([\w-]+)\)$/.exec(c)![1]) : c).toLowerCase()))
+  const iconShapes = new Set(shapes(icon)), iconColours = colours(icon), logoColours = colours(logo)
+  const wrong = [
+    ...(/#863bff|<filter|feGaussianBlur/i.test(icon) || !icon ? ['the icon is not the mark (Vite bolt, blur or no file)'] : []),
+    ...shapes(logo).filter(s => !iconShapes.has(s)).map(s => `icon lacks ${s}`),
+    ...(logoColours.size && [...logoColours].every(c => iconColours.has(c)) && iconColours.size === logoColours.size ? []
+      : [`icon colours ${[...iconColours].join(' ')} vs the mark's ${[...logoColours].join(' ')}`]),
+    ...(/<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg"/.test(html) ? [] : ['index.html does not link /favicon.svg']),
+    ...['Header.tsx', 'SideDrawer.tsx'].filter(f => !/<Logo\b/.test(comp(f))).map(f => `${f} does not draw <Logo />`),
+  ]
+  check('S6 the tab icon is the header\'s mark in the token colours, and the drawer shows that mark', !wrong.length,
+    wrong.length ? wrong.join(' · ') : `${shapes(logo).length} shapes, colours ${[...iconColours].join(' ')}`)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall style checks passed')

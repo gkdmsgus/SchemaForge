@@ -6,6 +6,7 @@ import {
 } from '../api'
 import { savedGraph } from '../lib/graphEdit'
 import { getSavedResults, type StoredEntry } from '../lib/storage'
+import Logo from './Logo.tsx'
 
 /** a result saved in this browser, or a session on the server (_dbId) listed the same way */
 type DrawerEntry = StoredEntry & { _dbId?: string }
@@ -208,11 +209,8 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
           borderBottom: `1px solid var(--sf-line)`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--sf-violet)', display: 'block' }} />
-              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--sf-violet)', fontWeight: 700, letterSpacing: '0.12em' }}>SCHEMAFORGE</span>
-            </div>
-            <button onClick={onClose} style={{
+            <Logo size={18} />
+            <button onClick={onClose} aria-label="서랍 닫기" style={{
               background: 'none', border: 'none', color: 'var(--sf-fg-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px',
             }}>×</button>
           </div>

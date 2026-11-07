@@ -1482,7 +1482,7 @@ export async function run(rec) {
     if (await T('drawer-notice').count()) throw new Error('the server did not delete the record: ' + await T('drawer-notice').innerText())
     if (await rows.count() !== n - 1) throw new Error(`the record list did not lose one item (${n} → ${await rows.count()})`)
     // the side drawer's own × (closeDrawer() is for the bottom tab drawer of the result screen)
-    await rec.press(page.getByText('SCHEMAFORGE', { exact: true }).locator('xpath=../..').getByRole('button', { name: '×' }))
+    await rec.press(page.getByRole('button', { name: '서랍 닫기', exact: true }))
     await rec.pause(800)
   })
 }
