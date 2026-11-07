@@ -224,7 +224,7 @@ npx tsx scripts/check_test_chain.ts
 ```bash
 npx tsx scripts/check_jetson_run.ts
 ```
-젯슨 배포 스크립트 10항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지, `Dockerfile.jetson`의 `KICAD_EXPECT`(10.0.8)와 다른 KiCad로 뜬 새 이미지를 뜨지 않은 것으로 보는지, 이미지 빌드가 `kicad-cli version`이 그 값과 다르면 멈추는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다.
+젯슨 배포 스크립트 10항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). PATH에는 대역 폴더만 두므로(awk·sed 같은 글 도구 몇 개는 그 안에서 진짜를 부른다) 대역이 없는 명령(npm, 진짜 docker)은 실행되지 않고 그 실행이 실패로 남는다. `Dockerfile.jetson`은 글로만 읽는다. 스크립트가 명령을 전체 경로로 부르거나 PATH를 바꾸지 않는지도 본다. 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지, `Dockerfile.jetson`의 `KICAD_EXPECT`(10.0.8)와 다른 KiCad로 뜬 새 이미지를 뜨지 않은 것으로 보는지, `Dockerfile.jetson`의 그 줄 바로 뒤 RUN이 `kicad-cli version`이 그 값과 다르면 exit 1로 빌드를 멈추게 쓰였는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다. 2026-11-08에는 이 검사가 `Dockerfile.jetson`의 첫 RUN(`npm ci`)을 이 PC에서 실행해 작업 폴더들이 함께 쓰는 `node_modules`를 비웠다.
 
 ```bash
 cd server && npx tsx check_demo_cache.ts
