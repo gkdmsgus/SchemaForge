@@ -25,7 +25,9 @@
 // value went back, on screen and in the saved session), S22 a part's pins are kept for that part: a 3-pin regulator that took
 // the ref of a 555 has 3 (it had the 8 of the 555, 5 of them on nothing), and an undo brings the 555 back with its 8, S23 a value
 // being typed goes up on a press on the empty schematic or on a pin (those presses are cancelled, so the browser moved no focus:
-// the panel closed with the value on the part and nowhere else, no "● 수정됨", the BOM and the PCB without it).
+// the panel closed with the value on the part and nowhere else, no "● 수정됨", the BOM and the PCB without it), S24 an IC keeps
+// the pin of a deleted wire when that was its highest (S16 cannot tell: the demos' highest IC pins are on power nets, drawn with
+// no wire to pick, so here the supply has another name).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -655,7 +657,7 @@ try {
 
   // S21-S22: a saved session and the AI editor's answers faked
   const answered = []
-  const editorPage = async which => {
+  const editorPage = async (which, change = d => d) => {
     const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
     await c.addInitScript(() => {
       localStorage.setItem('sf_token', 'fake-token')
@@ -663,7 +665,7 @@ try {
       localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
     })
     const p = await c.newPage()
-    const d = await fetch(`${BASE}/demo_result/${which}`).then(r => r.json())
+    const d = change(await fetch(`${BASE}/demo_result/${which}`).then(r => r.json()))
     await p.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
     await p.route(/\/favorites$/, r => json(r, { favorites: [] }))
     await p.route(/\/sessions$/, r => json(r, { id: 's21', sessions: [] }))
@@ -766,6 +768,21 @@ try {
   await p23.waitForTimeout(800)
   const onPin23 = await listed('33k')
   check('S23 a value being typed goes up on a press on the empty schematic or on a pin', panel23 && inline23 && onPin23, `panel ${panel23}, in the part ${inline23}, press on a pin ${onPin23}`)
+
+  // S24
+  const p24 = await editorPage('ne555', d => ({ ...d, graph: { ...d.graph, nets: d.graph.nets.map(n => (n.name === 'VCC' ? { ...n, name: 'SUPPLY_A' } : n)) } }))
+  const pins24 = () => p24.locator("g[data-comp='U1'] g[style*='crosshair'] circle[r='8']").count()
+  const before24 = await pins24()
+  const wire24 = await p24.evaluate(() => {
+    const on = [...document.querySelectorAll('g[data-net]')].at(-1).querySelector("path[stroke='transparent']")
+    const m = on.getPointAtLength(on.getTotalLength() / 2), c = on.getScreenCTM()
+    return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+  })
+  await p24.mouse.click(wire24.x, wire24.y)
+  await p24.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+  await p24.waitForTimeout(600)
+  const gone24 = await p24.getByText("'SUPPLY_A' 삭제됨").isVisible(), after24 = await pins24()
+  check('S24 an IC keeps the pin of a deleted wire, its highest', before24 === 8 && gone24 && after24 === 8, `U1 ${before24}→${after24} pins, SUPPLY_A deleted ${gone24}`)
 } finally {
   await browser.close()
 }
