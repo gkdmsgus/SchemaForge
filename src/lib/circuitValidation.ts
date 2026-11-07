@@ -69,7 +69,12 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
   }
 
   for (const transistor of components.filter(c => c.name === 'Q_NMOS' || c.name === 'Q_NPN')) {
-    const controlNet = nets.find(n => n.nodes.some(node => node.ref === transistor.ref && String(node.pin) === '1'))
+    // the base or gate is template pin 1, also when an older edit saved it by name ('B', 'G'): read through the same table
+    // (2026-11-08: a base saved as 'B' read as floating and the PCB was refused). A name the table does not know is not
+    // guessed: it may be that pin, so this transistor is not judged here (the operating check says 판단 불가 for it)
+    const own = nets.flatMap(n => n.nodes.filter(node => node.ref === transistor.ref).map(node => ({ n, pin: pinNumber(transistor.name, String(node.pin)) })))
+    if (own.some(o => !/^\d+$/.test(o.pin))) continue
+    const controlNet = own.find(o => o.pin === '1')?.n
     if (!controlNet || controlNet.nodes.length < 2) add({ code: 'CIR102', severity: 'error', title: '트랜지스터 제어 핀이 떠 있습니다', message: `${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'} 핀에 유효한 제어 경로가 없습니다.`, suggestion: '제어 신호와 바이어스 저항 연결을 복구하세요.', chat: `${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'} 핀에 제어 신호가 없어. 제어 신호 커넥터나 출력 핀에서 저항을 거쳐 ${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'}로 이어줘.`, refs: [transistor.ref], nets: controlNet ? [controlNet.name] : [] })
   }
 
