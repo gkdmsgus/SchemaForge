@@ -1,4 +1,4 @@
-// Checks S1-S4 on the style sheets, with no browser. S1 every partial in src/styles is imported by main.scss, and no
+// Checks S1-S7 on the style sheets, with no browser. S1 every partial in src/styles is imported by main.scss, and no
 // plain .css file sits in src unimported (three did, 3,600 lines, for months: sweep of 2026-11-07), S2 main.scss compiles,
 // S3 every animation named in a style sheet or in the screens' code has its @keyframes: a missing one gives no error and
 // the part simply stops moving (the schematic's pop-up fade and the diff pulse lean on names from the sheets).
