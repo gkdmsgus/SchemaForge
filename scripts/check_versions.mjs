@@ -13,7 +13,9 @@
 // V11 the drawer has no Sources tab (web search is gone since 2026-06-12, so it was always grey), V12 an edit of an older
 // version stays out of the description's saved result, which holds the newest (opened, it was the newest version's file
 // with the older one's parts, and its PCB went by that name), V13 a storage that refuses the record costs a hand edit nothing
-// (no thrown error, its toast there), an answer still coming is not kept in the record (opened again, its cursor blinks on).
+// (no thrown error, its toast there), an answer still coming is not kept in the record (opened again, its cursor blinks on), V14 an AI editor request
+// stops when its result screen goes, on ↺ and on the logo (its model stream ran on, and its late answer was saved to the
+// session left behind: review of 2026-11-07).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_versions.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -332,6 +334,27 @@ try {
   check('V13 an answer still coming stays out of the record, and a storage that refuses it costs a hand edit nothing',
     kept13.length > 0 && !kept13.some(m => m._streaming) && !thrown.length && /6k8/.test(value13) && toast13,
     `kept ${JSON.stringify(kept13.map(m => m._streaming ? 'streaming' : m.role))}, thrown ${thrown.length}, R1 "${value13}", toast ${toast13}`)
+
+  // V14: an AI editor request on its way when the result screen goes (the logo, and v1 of two versions)
+  const v14 = await onResult(never)
+  const chat14 = { sent: 0, stopped: 0 }
+  v14.p.on('requestfailed', r => { if (/\/chat_edit$/.test(r.url())) chat14.stopped++ })
+  await v14.p.route(/\/chat_edit$/, r => { chat14.sent++; return never() })
+  const ask14 = async () => {
+    await v14.p.getByTestId('chat-input').fill('R1 값을 2k로 바꿔줘')
+    await v14.p.getByTestId('chat-input').press('Enter')
+    for (let i = 0; i < 30 && chat14.sent === chat14.stopped; i++) await v14.p.waitForTimeout(100)
+  }
+  await ask14()
+  await v14.p.locator("button[title='재생성 (저장된 결과 대신 새로 생성)']").click()
+  await v14.p.getByRole('button', { name: 'v2', exact: true }).waitFor({ timeout: 20000 })
+  await v14.p.waitForTimeout(300)
+  const byVersion = chat14.stopped
+  await ask14()
+  await v14.p.getByText(/^v0\.4 · /).first().click()
+  await v14.p.waitForTimeout(300)
+  check('V14 an AI editor request stops when its result screen goes (↺ to a new version, the logo)', chat14.sent === 2 && byVersion === 1 && chat14.stopped === 2,
+    `${chat14.sent} sent, stopped by the new version ${byVersion}, in all ${chat14.stopped}`)
 } finally {
   await browser.close()
 }

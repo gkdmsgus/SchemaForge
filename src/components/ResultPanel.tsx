@@ -110,7 +110,10 @@ export default function ResultPanel({
   // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
   // AI rounds, once the connection closes; left open, a board nobody would see went on to the end (review of 2026-11-06)
   const pcbAbort = useRef<AbortController | null>(null)
-  useEffect(() => () => pcbAbort.current?.abort(), [])
+  // the AI editor's request the same way: the server stops the model's stream once it closes, and left open its late
+  // answer was saved to the session that screen had left (review of 2026-11-07)
+  const chatAbort = useRef<AbortController | null>(null)
+  useEffect(() => () => { pcbAbort.current?.abort(); chatAbort.current?.abort() }, [])
   const [activeTab, setActiveTab] = useState('Netlist')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
@@ -504,6 +507,8 @@ export default function ResultPanel({
     // Add user msg + empty streaming assistant bubble
     setChatMessages(prev => [...prev, userMsg, { role: 'assistant' as const, content: '', _streaming: true, actions: [] }])
     setChatLoading(true)
+    const abort = new AbortController()
+    chatAbort.current = abort
 
     try {
       const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
@@ -511,6 +516,7 @@ export default function ResultPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ graph: effectiveGraph, message: msg, history }),
+        signal: abort.signal,
       })
       if (res.status === 401) {
         // no login, or it ran out: the app asks for it, and the request goes back in the box to send again
@@ -591,7 +597,11 @@ export default function ResultPanel({
       // streams report: the cursor blinked on and the half answer went to the model with the next request (2026-11-06)
       if (!finished) throw new Error('연결이 끊겼습니다. 다시 요청해 주세요.')
     } catch (e) {
+      // stopped because this screen went: nothing to say, and nobody to say it to
+      if (abort.signal.aborted) return
       setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${(e as Error).message}`, actions: [] }])
+    } finally {
+      if (chatAbort.current === abort) chatAbort.current = null
     }
     setChatLoading(false)
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
