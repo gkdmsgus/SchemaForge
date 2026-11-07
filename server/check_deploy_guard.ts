@@ -155,7 +155,7 @@ async function live() {
       if (!done) return `no done: ${text.slice(-160).trim()}`
       const d = JSON.parse(done[1]) as { pcbFilename: string; board: { parts: { ref: string; value: string }[] } }
       const stem = d.pcbFilename.replace('.kicad_pcb', '')
-      for (const end of ['.net', '.kicad_pcb', '.board.json']) rmSync(join('outputs', stem + end), { force: true })
+      for (const end of ['.net', '.kicad_pcb', '.board.json', '.kicad_prl']) rmSync(join('outputs', stem + end), { force: true })
       return d.board.parts.find(q => q.ref === resistor)?.value ?? '(no part)'
     }
     const values = await Promise.all(['0.1" pitch', '470\\', '"470"'].map(board))
