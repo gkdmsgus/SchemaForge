@@ -14,7 +14,7 @@ import { fromBoard, fromGraph, operatingChecks, operatingHeadline } from '../src
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { actionLabel, applyActions, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
+import { actionLabel, applyActions, asksBack, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import { boardNetlist, guideNote, netlistNote } from '../src/lib/drawerNotes.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
@@ -236,6 +236,44 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
     named && next && onePin && chip, JSON.stringify({ named, next, onePin, chip, f1: f1[0], o1: o1.nets }))
 }
 
+// G7b. an added part is saved under its template, by its value's unit with no name (2026-11-06 sweep: {value: '100nF'}
+// was a part named C2, 'capacitor' and 'relay' stayed as written: no footprint on the board, no part to the operating
+// check). A name that decides no one template stays as written, so the board reports it unmapped
+{
+  const g: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'U1', value: 'AMS1117-3.3', name: 'REG' }, { ref: 'C1', value: '100nF', name: 'C' }],
+    nets: [net('VIN', 'BT1.1', 'U1.3'), net('VOUT', 'U1.2', 'C1.1'), net('GND', 'BT1.2', 'U1.1', 'C1.2')] }
+  const added = (a: Omit<ChatAction, 'type'>) => applyActions(g, withRefs(g, [{ type: 'add_component', ...a }])).components.find(c => !g.components.some(x => x.ref === c.ref))
+  const table: [Omit<ChatAction, 'type'>, string, string][] = [
+    [{ value: '100nF' }, 'C', 'C2'], [{ value: '10uH' }, 'L', 'L1'], [{ value: '4.7k' }, 'R', 'R1'], [{ value: '4k7' }, 'R', 'R1'], [{ value: '470Ω' }, 'R', 'R1'], [{ value: '330R' }, 'R', 'R1'], [{ value: '4u7' }, 'C', 'C2'],
+    [{ name: 'capacitor', value: '10uF' }, 'C', 'C2'], [{ name: '커패시터' }, 'C', 'C2'], [{ name: 'CP', value: '22uF' }, 'CP', 'C2'], [{ name: 'cp' }, 'CP', 'C2'],
+    [{ name: '저항', value: '1k' }, 'R', 'R1'], [{ name: 'resistor' }, 'R', 'R1'], [{ name: 'inductor' }, 'L', 'L1'], [{ name: 'led', value: 'RED' }, 'LED', 'D1'], [{ name: 'diode' }, 'D', 'D1'],
+    [{ name: 'relay', value: '5V' }, 'Relay', 'K1'], [{ name: '릴레이' }, 'Relay', 'K1'], [{ name: 'buzzer' }, 'Buzzer', 'LS1'], [{ name: 'battery', value: '9V' }, 'Battery', 'BT2'], [{ name: 'crystal' }, 'Crystal', 'Y1'], [{ name: 'switch' }, 'SW', 'SW1'],
+    [{ name: 'q_npn' }, 'Q_NPN', 'Q1'], [{ name: 'Q_NMOS' }, 'Q_NMOS', 'Q1'], [{ name: 'reg', value: 'LM7805' }, 'REG', 'U2'], [{ name: 'ne555' }, 'NE555', 'U2'],
+    // a reference does not change it
+    [{ ref: 'C9', value: '1uF' }, 'C', 'C9'], [{ ref: 'R9', name: 'resistor', value: '1k' }, 'R', 'R9'],
+    // no one template: as written, reported unmapped
+    [{ ref: 'Q5', name: 'Q' }, 'Q', 'Q5'], [{ ref: 'U5', name: 'U' }, 'U', 'U5'], [{ ref: 'J5', name: 'conn' }, 'conn', 'J5'], [{ name: 'Conn_01x02' }, 'Conn_01x02', 'J1'], [{ ref: 'SW5', name: 'SW_SPDT' }, 'SW_SPDT', 'SW5'],
+    [{ ref: 'X1', name: 'Widget', value: '100nF' }, 'Widget', 'X1'], [{ ref: 'U7', value: 'LM358' }, 'U7', 'U7'], [{ ref: 'R5', name: '  ', value: 'x' }, 'R5', 'R5'],
+    // a part number that ends like a unit tells no kind
+    [{ ref: 'U8', value: 'LM7805F' }, 'U8', 'U8'], [{ ref: 'Q8', value: '2N3904H' }, 'Q8', 'Q8'],
+    // nor one that reads like 2n2 in lower case: a diode or a transistor on a capacitor's footprint, with no word of it
+    [{ ref: 'D5', value: '1n4148' }, 'D5', 'D5'], [{ ref: 'D6', value: '1n60' }, 'D6', 'D6'], [{ ref: 'Q6', value: '2n7000' }, 'Q6', 'Q6'], [{ ref: 'Q7', value: '2n2222' }, 'Q7', 'Q7'],
+  ]
+  const wrong = table.filter(([a, name, ref]) => { const c = added(a); return c?.name !== name || c?.ref !== ref }).map(([a]) => `${JSON.stringify(a)} -> ${JSON.stringify(added(a))}`)
+  // every template it names is one the footprint table has, in both styles
+  const footprints = fs.readFileSync(path.join('server', 'pcb', 'footprints_table.py'), 'utf8')
+  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'U8', 'Q8', 'R5', 'D5', 'D6', 'Q6', 'Q7', 'Conn_01x02'].includes(n))
+    .filter(n => !footprints.includes(`('${n}', 'smd')`) || !footprints.includes(`('${n}', 'tht')`))
+  // with no reference and no name either, a part number gets no reference from it: the chat says the part was not added
+  const guessed = ['1n4148', '1n60', '2n7000', '2n2222'].filter(value => withRefs(g, [{ type: 'add_component', value }])[0].ref)
+  wrong.push(...guessed.map(value => `{"value":"${value}"} was given a reference`))
+  // 22uF added with no name counts as the regulator's output capacitor
+  const edit = chatEdit(g, [{ type: 'add_component', value: '22uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: 'C2', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C2', pin: '2' }] }], '출력에 22uF를 추가해줘')
+  const reg = operatingChecks(fromGraph(edit.graph)).find(r => r.rule === 'op_reg' && r.ref === 'U1')
+  check('G7b an added part is saved under its template (by the unit with no name); a name that decides none stays; the operating check counts it',
+    !wrong.length && !missing.length && reg?.state === 'pass', [...wrong, ...missing, `${reg?.state}: ${reg?.summary}`].join(' | '))
+}
+
 // G8-G10. an AI edit does not move a pin of a part the request does not name (live, 2026-10-30 tour, the 555 LED
 // blinker): the move is held back and the chat says which parts kept their connections, in words with no pin
 // number or net name. The 555 circuit as it was then:
@@ -358,6 +396,25 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   check('G12 a reply that asks first leaves the circuit as it is and says so; one that says what it did applies; the chat passes the reply',
     held && noMark && applied && wired && answered, JSON.stringify({ held, noMark, applied, wired, answered, ask: ask.note, asked: asked.note, did: did.note }))
 
+  // G12d. an add_net with no pin changes nothing (2026-11-06 sweep: changed true, an empty NEW on the nets, an undo step and
+  // a stale PCB, no word of it): no nodes, or only a pin with no reference; beside a real edit it leaves no net and no chip
+  const noPin = [chatEdit(open, [{ type: 'add_net', name: 'NEW', nodes: [] }], msg, '완료했습니다.'), chatEdit(open, [{ type: 'add_net', name: 'NEW' }], msg, '완료했습니다.'),
+    chatEdit(open, [{ type: 'add_net', name: 'NEW', nodes: [{ ref: ' ', pin: '1' }] }], msg, '완료했습니다.')]
+  const nothing = noPin.every(e => !e.changed && !e.actions.length && JSON.stringify(e.graph) === JSON.stringify(open) && /^\n\n이 답으로 회로는 바뀌지 않았습니다\./.test(e.note))
+  const beside = chatEdit(open, [...join, { type: 'add_net', name: 'NEW', nodes: [] }], msg, 'C2의 1번 핀을 TRIG_THRES에 연결했습니다.')
+  const bare = applyActions(open, [{ type: 'add_net', name: 'NEW', nodes: [] }])
+  check('G12d an add_net with no pin leaves the circuit as it is and says so; beside a real edit it leaves no net and no chip',
+    nothing && beside.changed && !beside.graph.nets.some(n => n.name === 'NEW') && beside.actions.map(actionLabel).join() === '+TRIG_THRES' && JSON.stringify(bare.nets) === JSON.stringify(open.nets),
+    JSON.stringify({ nothing, notes: noPin.map(e => e.note), beside: beside.actions.map(actionLabel), nets: beside.graph.nets.map(n => n.name) }))
+
+  // G12c. 나요 as a verb is no question (2026-11-06 sweep: "이제 버저에서 소리가 나요." held back the edit it reported)
+  const said: [string, boolean][] = [['이제 버저에서 소리가 나요.', false], ['LED에 불이 나요', false], ['LED가 빛나요.', false], ['소리가 나요.', false], ['C2를 연결했습니다.', false],
+    ['켜지나요.', true], ['적용할까요.', true], ['이 연결이 맞습니까.', true], ['적용할까요', true], ['소리가 나요?', true], ['연결이 맞나요!', true]]
+  const asksWrong = said.filter(([t, want]) => asksBack(t) !== want).map(([t]) => t)
+  const verb = chatEdit(open, join, msg, '이제 C2가 이어져서 소리가 나요.')
+  check('G12c a sentence ending in the verb 나요 is no question and the edit applies; 켜지나요. and 적용할까요. still ask',
+    !asksWrong.length && verb.changed && !/아직/.test(verb.note), JSON.stringify({ asksWrong, note: verb.note }))
+
   // G12b. a reply that changed nothing says so first, whatever its words (2026-11-03 tour, 52 s: "완료했습니다." with no
   // edit, C1's pin still on its own): with parts held back, and after a question too (review of 2026-11-03: "연결했습니다.
   // 다른 수정이 필요하신가요?" with no edit, and a wrong part held, kept only the held note); not under an applied edit
@@ -392,6 +449,58 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const wired = /operatingHeadline\(opResults, circuitErrors\.length\)/.test(src) && /circuitErrors=\{circuitErrors\.length\}/.test(src)
   check('F10 circuit errors: the operating chip and panel say it cannot be judged, not passed; faults still show',
     blocked && clean && fault && shown && wired, JSON.stringify({ errors, head, blocked, clean, fault, shown, wired }))
+}
+
+// F11. CIR101 asks the string the operating check walks, not the nets beside the LED (2026-11-06 sweep: 9 V - 220 Ω - three
+// LEDs and R - switch - LED read '회로 오류 2' and could not get a PCB, while an LED straight on a rail with a base resistor
+// on that rail was not called out). Whatever the colour, and the two checks do not contradict each other
+{
+  const g = (parts: [string, string, string][], ...nets: ReturnType<typeof net>[]): NetGraph => ({ components: parts.map(([ref, name, value]) => ({ ref, name, value })), nets })
+  const cir101 = (c: NetGraph) => validateCircuit(c).filter(i => i.code === 'CIR101').map(i => i.refs.join())
+  const led = (c: NetGraph, ref = 'D1') => operatingChecks(fromGraph(c)).find(r => r.rule === 'op_led' && r.ref === ref)
+  const series = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED'], ['D3', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1'), net('B', 'D1.2', 'D2.1'), net('C', 'D2.2', 'D3.1'), net('GND', 'D3.2', 'BT1.2'))
+  const rSwLed = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('N1', 'R1.2', 'SW1.1'), net('N2', 'SW1.2', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  const shared = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1', 'D2.1'), net('GND', 'D1.2', 'D2.2', 'BT1.2'))
+  const sharedLow = g([['BT1', 'Battery', '9V'], ['R1', 'R', '220'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'D1.1', 'D2.1'), net('K', 'D1.2', 'D2.2', 'R1.1'), net('GND', 'R1.2', 'BT1.2'))
+  const bare = (colour: string) => g([['BT1', 'Battery', '9V'], ['D1', 'LED', colour]], net('VCC', 'BT1.1', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  const onQ = g([['BT1', 'Battery', '5V'], ['R1', 'R', '10k'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'D1.1'), net('BASE', 'R1.2', 'Q1.1'), net('COLL', 'D1.2', 'Q1.2'), net('GND', 'Q1.3', 'BT1.2'))
+  const noneInSeries = g([['BT1', 'Battery', '9V'], ['D1', 'LED', 'RED'], ['D2', 'LED', 'GREEN'], ['D3', 'LED', '']],
+    net('VCC', 'BT1.1', 'D1.1'), net('B', 'D1.2', 'D2.1'), net('C', 'D2.2', 'D3.1'), net('GND', 'D3.2', 'BT1.2'))
+  const green = g([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'GREEN']], net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
+  // the walk stops at three pins and at a relay's NC contact: a resistor there is still in the LED's path
+  const junction = g([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['C1', 'C', '10uF'], ['D1', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D1.1', 'C1.1'), net('GND', 'D1.2', 'C1.2', 'BT1.2'))
+  const shunt = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['R2', 'R', '10k'], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'R2.1'), net('COLL', 'R1.2', 'D1.1', 'Q1.2'), net('BASE', 'R2.2', 'Q1.1'), net('GND', 'D1.2', 'Q1.3', 'BT1.2'))
+  const relayNc = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['K1', 'Relay', '5V'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED'], ['D2', 'LED', 'RED']],
+    net('VCC', 'BT1.1', 'R1.1', 'K1.1'), net('COM', 'R1.2', 'K1.3'), net('NO', 'K1.4', 'D1.1'), net('NC', 'K1.5', 'D2.1'), net('COIL', 'K1.2', 'SW1.1'), net('GND', 'SW1.2', 'D1.2', 'D2.2', 'BT1.2'))
+  const button = g([['BT1', 'Battery', '5V'], ['R1', 'R', '10k'], ['R2', 'R', '1k'], ['SW1', 'SW', ''], ['D1', 'LED', 'RED'], ['Q1', 'Q_NPN', '2N3904']],
+    net('VCC', 'BT1.1', 'R1.1', 'Q1.2'), net('IN', 'R1.2', 'SW1.1', 'D1.1', 'R2.1'), net('BASE', 'R2.2', 'Q1.1'), net('GND', 'SW1.2', 'D1.2', 'Q1.3', 'BT1.2'))
+  // a resistor saved under a name of its own by an edit is one by its reference, as it was here
+  const named = { ...shared, components: shared.components.map(c => (c.ref === 'R1' ? { ...c, name: 'R1' } : c)) }
+  const refused = cir101(noneInSeries)
+  const chat = validateCircuit(noneInSeries).find(i => i.code === 'CIR101')?.chat ?? ''
+  const ok = {
+    series: !cir101(series).length && led(series)?.state === 'pass',
+    rSwLed: !cir101(rSwLed).length && led(rSwLed)?.state === 'pass',
+    shared: !cir101(shared).length && !cir101(sharedLow).length && led(shared)?.state === 'warn' && /나눠 씁니다/.test(led(shared)?.summary ?? ''),
+    bareRed: cir101(bare('RED')).join() === 'D1' && led(bare('RED'))?.state === 'error',
+    bareGreen: cir101(bare('GREEN')).join() === 'D1' && led(bare('GREEN'))?.state === 'unknown',
+    onQ: cir101(onQ).join() === 'D1' && led(onQ)?.state === 'error',
+    oneString: refused.join('|') === 'D1,D2,D3' && /전원과 D1의 A 핀 사이/.test(chat),
+    colourBlind: !cir101(green).length,
+    junction: !cir101(junction).length && !cir101(shunt).length,
+    relay: !cir101(relayNc).length,
+    button: !cir101(button).length,
+    named: !cir101(named).length,
+  }
+  check('F11 CIR101 follows the LED string: series, R-SW-LED and a shared resistor pass; no resistor stays an error in any colour, on one line for a string',
+    Object.values(ok).every(Boolean), JSON.stringify(ok))
 }
 
 // G13. a part an edit adds goes on a free spot and the parts there keep theirs (2026-11-02 tour, 325-329 s: C4 added to

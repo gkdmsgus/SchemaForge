@@ -36,6 +36,12 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     if (notice) setMode('login')
   }, [open, notice])
 
+  // the modal stays mounted, so what was typed stays too: gone when it closes (2026-11-06 sweep: after a logout the next
+  // person opened it on the last password, and pressing 로그인 logged in as that account). The mail address may stay
+  useEffect(() => {
+    if (!open) { setPassword(''); setConfirm('') }
+  }, [open])
+
   useEffect(() => {
     if (open) setTimeout(() => emailRef.current?.focus(), 100)
   }, [open, mode])
@@ -59,6 +65,8 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
   function finish(user: AuthUser, token: string, refreshToken?: string) {
     if (!saveAuth(user, token, refreshToken)) { setError('로그인 응답에 토큰이 없습니다. 잠시 후 다시 시도하세요.'); return }
     setSuccess(true)
+    setPassword('')
+    setConfirm('')
     setTimeout(() => { onSuccess(user, token); onClose() }, 800)
   }
 

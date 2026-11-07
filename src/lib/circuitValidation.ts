@@ -1,4 +1,5 @@
 import type { NetGraph } from '../types'
+import { fromGraph, ledsWithoutResistor } from './operatingCheck'
 
 export interface CircuitIssue {
   code: string
@@ -47,10 +48,12 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
   }
   for (const [pin, names] of pinNets) if (names.length > 1) add({ code: 'CIR006', severity: 'error', title: '핀의 넷이 충돌합니다', message: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있습니다.`, suggestion: '이 핀은 하나의 넷에만 남기세요.', chat: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있어. ${pin}을 맞는 넷 하나에만 남겨줘.`, refs: [pin.split('.')[0]], nets: names })
 
+  // a part counts as a resistor by its type or its reference, as it did here: an edit may have saved R3 under a name of its own
   const resistors = new Set(components.filter(c => c.name === 'R' || /^R\d+$/i.test(c.ref)).map(c => c.ref))
-  for (const led of components.filter(c => c.name === 'LED')) {
-    const ledNets = nets.filter(n => n.nodes.some(node => node.ref === led.ref))
-    if (!ledNets.some(n => n.nodes.some(node => resistors.has(node.ref)))) add({ code: 'CIR101', severity: 'error', title: 'LED 전류 제한 저항이 없습니다', message: `${led.ref}와 직접 연결된 전류 제한 저항을 찾지 못했습니다. LED가 손상될 수 있습니다.`, suggestion: '전원과 LED 사이에 계산된 직렬 저항을 추가하세요.', chat: `${led.ref} LED에 전류 제한 저항이 없어. 전원과 ${led.ref}의 A 핀 사이에 저항을 하나 넣어줘. 값은 LED 전류가 10~20 mA가 되게 정해줘.`, refs: [led.ref], nets: ledNets.map(n => n.name) })
+  const walked = fromGraph({ ...graph, components: components.map(c => (resistors.has(c.ref) ? { ...c, name: 'R' } : c)), nets })
+  for (const string of ledsWithoutResistor(walked)) {
+    const names = string.join('·')
+    add({ code: 'CIR101', severity: 'error', title: 'LED 전류 제한 저항이 없습니다', message: `${names}에 직렬로 이어진 전류 제한 저항을 찾지 못했습니다. LED가 손상될 수 있습니다.`, suggestion: '전원과 LED 사이에 계산된 직렬 저항을 추가하세요.', chat: `${names} LED에 전류 제한 저항이 없어. 전원과 ${string[0]}의 A 핀 사이에 저항을 하나 넣어줘. 값은 LED 전류가 10~20 mA가 되게 정해줘.`, refs: string, nets: nets.filter(n => n.nodes.some(node => string.includes(node.ref))).map(n => n.name) })
   }
 
   for (const transistor of components.filter(c => c.name === 'Q_NMOS' || c.name === 'Q_NPN')) {

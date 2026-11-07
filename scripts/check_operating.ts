@@ -60,8 +60,10 @@ const near = (a: number | null, b: number | null) => (a == null || b == null ? a
 
 // O1. reading values ────────────────────────────────────────────────────────────
 {
-  const ohms: [string, number | null][] = [['680', 680], ['10k', 1e4], ['4k7', 4700], ['4.7k', 4700], ['1M', 1e6], ['100R', 100], ['0R1', 0.1], ['10 Ω', 10], ['0.1', 0.1], ['abc', null], ['100m', 0.1], ['100mΩ', 0.1]]
-  const farads: [string, number | null][] = [['100nF', 1e-7], ['10uF', 1e-5], ['0.1uF', 1e-7], ['22p', 2.2e-11], ['1u', 1e-6], ['104', null], ['22μF', 2.2e-5], ['10', null]]
+  const ohms: [string, number | null][] = [['680', 680], ['10k', 1e4], ['4k7', 4700], ['4.7k', 4700], ['1M', 1e6], ['100R', 100], ['0R1', 0.1], ['10 Ω', 10], ['0.1', 0.1], ['abc', null], ['100m', 0.1], ['100mΩ', 0.1],
+    ['R10', 0.1], ['R47', 0.47], ['r10', 0.1], ['100mR', 0.1], ['10mR', 0.01], ['1R0', 1], ['2M2', 2.2e6], ['R', null], ['m', null], ['k10', null]]
+  const farads: [string, number | null][] = [['100nF', 1e-7], ['10uF', 1e-5], ['0.1uF', 1e-7], ['22p', 2.2e-11], ['1u', 1e-6], ['104', null], ['22μF', 2.2e-5], ['10', null],
+    ['4u7', 4.7e-6], ['4n7', 4.7e-9], ['2n2', 2.2e-9], ['1u0', 1e-6], ['2p2', 2.2e-12], ['4μ7', 4.7e-6], ['4u7F', 4.7e-6], ['100MF', null], ['100M', null], ['4M7', null], ['100mF', 0.1], ['47uF', 4.7e-5], ['10NF', 1e-8], ['1UF', 1e-6], ['1n4148', null], ['2n7000', null]]
   const volts: [string, number | null][] = [['9V', 9], ['3.7 V', 3.7], ['3V3', 3.3], ['SRD-05VDC-SL-C', 5], ['12VDC', 12], ['RED', null], ['2x1.5V', 3], ['12V2A', 12]]
   const names: [string, number | null][] = [['GND', 0], ['+5V', 5], ['12V', 12], ['3V3', 3.3], ['+3.3V', 3.3], ['VCC', null], ['PWM', null]]
   const bad = [
@@ -71,6 +73,34 @@ const near = (a: number | null, b: number | null) => (a == null || b == null ? a
     ...names.filter(([s, v]) => !near(voltsFromName(s), v)).map(([s]) => `net ${s}`),
   ]
   check('O1 value parsers', bad.length === 0, bad.join(', '))
+  // what those values decide (2026-11-06 sweep: R10 under an emitter read "이미터가 GND가 아닌 구성", a 555 with 4u7 "단위가
+  // 필요합니다"). The same circuit with the value written either way gives the same verdicts
+  const states = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.ref}/${r.state}`).sort().join(' ')
+  const sensed = (value: string) => run(circuit(
+    [['J1', 'Conn_01x03', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['D1', 'D', '1N4148'], ['K1', 'Relay', '5V'], ['R2', 'R', value]],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['IN', 'J1.2', 'R1.1'], ['GND', 'J1.3', 'R2.2'], ['BASE', 'R1.2', 'Q1.1'], ['COIL_LOW', 'Q1.2', 'K1.2', 'D1.1'], ['SENSE', 'Q1.3', 'R2.1']]))
+  const timed = (value: string) => run(circuit(
+    [['BT1', 'Battery', '9V'], ['U1', 'NE555', 'NE555'], ['R1', 'R', '1k'], ['R2', 'R', '10k'], ['C1', 'C', value], ['C2', 'C', '100nF'], ['R3', 'R', '470'], ['D1', 'LED', 'RED']],
+    [['VCC', 'BT1.1', 'U1.8', 'U1.4', 'R1.1', 'C2.1'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'C2.2', 'D1.2'], ['DISCH', 'U1.7', 'R1.2', 'R2.1'], ['TH', 'U1.2', 'U1.6', 'R2.2', 'C1.1'], ['OUT', 'U1.3', 'R3.1'], ['A', 'R3.2', 'D1.1']]))
+  check('O1b R10 and 0.1, 4u7 and 4.7uF give the same verdicts; 100MF is not read as 0.1 F',
+    states(sensed('R10')) === states(sensed('0.1')) && !/GND가 아닌/.test(sensed('R10').map(r => r.summary).join())
+    && states(timed('4u7')) === states(timed('4.7uF')) && pick(timed('4u7'), 'op_555')?.summary === pick(timed('4.7uF'), 'op_555')?.summary
+    && is(timed('100MF'), 'op_555', 'unknown', 'U1', /단위가 필요합니다/),
+    `${show(sensed('R10'), 'op_drive')} / ${show(timed('4u7'), 'op_555')} / ${show(timed('100MF'), 'op_555')}`)
+  // an empty value reaches the netlist and the board as the reference (server/index.ts graphToNetlist), and R1 reads like
+  // 0.1 Ω: on the finished board a resistor with no value read as 70 A through the LED and 490 W, not as no value
+  const limited = (ref: string, value: string) => circuit([['BT1', 'Battery', '9V'], [ref, 'R', value], ['D1', 'LED', 'RED']],
+    [['VCC', 'BT1.1', `${ref}.1`], ['A', `${ref}.2`, 'D1.1'], ['GND', 'D1.2', 'BT1.2']])
+  const onBoard = (g: NetGraph) => operatingChecks(fromBoard({ style: null, parts: g.components.map(c => {
+    const pads = g.nets.flatMap(n => n.nodes.filter(nd => nd.ref === c.ref).map(nd => ({ num: nd.pin, net: n.name })))
+    return { ref: c.ref, part: c.name, value: c.value, pads, pad_pins: Object.fromEntries(pads.map(p => [p.num, Number(p.num)])) }
+  }) } as unknown as BoardModel))
+  const asWritten = limited('R1', 'R1'), asTenth = limited('R10', 'R10'), other = limited('R3', 'R10')
+  check('O1c a resistor whose value is its own reference has no value, on the schematic and the board; R10 on another part is 0.1 Ω',
+    states(onBoard(asWritten)) === states(run(limited('R1', ''))) && is(onBoard(asWritten), 'op_led', 'unknown', 'D1', /값/) && !pick(onBoard(asWritten), 'op_rpower')
+    && is(run(asWritten), 'op_led', 'unknown', 'D1') && is(onBoard(asTenth), 'op_led', 'unknown', 'D1')
+    && is(onBoard(other), 'op_led', 'error', 'D1', /R3 0\.1 Ω/) && is(run(other), 'op_led', 'error', 'D1', /R3 0\.1 Ω/),
+    `${show(onBoard(asWritten), 'op_led')} / ${show(onBoard(asWritten), 'op_rpower')} / ${show(onBoard(other), 'op_led')}`)
 }
 
 // O2. parts table: every limit has a number and a source, nothing left as a placeholder ──
@@ -241,6 +271,17 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     && is(run(lm), 'op_led', 'pass', 'D1', /14 mA/)
     && is(run(variant(variant(fed, setValue('U1', 'AMS1117CD-3.3')), setValue('BT1', '3.7V'))), 'op_reg', 'error', 'U1', /유지하지 못합니다/),
     [show(lmLow, 'op_led'), lowLed?.detail.join(' | ') ?? '', show(run(lm), 'op_led')].join(' / '))
+  // a 1117's voltage written with a V for the point (2026-11-06 sweep: AMS1117-3V3 read 3 V, its right +3V3 net an
+  // op_power error, and the LED it feeds was reckoned on 3 V; 1V8 read 1 V, 2V5 2 V), a package after it too
+  const named3V3 = (value: string) => run(variant(fed, c => { setValue('U1', value)(c); c.nets.find(n => n.name === 'V3')!.name = '+3V3' }))
+  const out = (value: string, v: RegExp) => is(run(variant(reg, setValue('U1', value))), 'op_reg', 'pass', 'U1', v)
+  const v3 = named3V3('AMS1117-3V3'), pkg = named3V3('AMS1117-3V3 SOT-223')
+  check('O7f3 AMS1117-3V3, 1V8, 2V5 and with a package after it read their voltage; a +3V3 net agrees; LM1117-3V3 too, still no verdict',
+    !v3.some(r => r.rule === 'op_power') && is(v3, 'op_led', 'pass', 'D1', /14 mA/) && is(v3, 'op_reg', 'pass', 'U1', /→ 3\.3 V/)
+    && !pkg.some(r => r.rule === 'op_power') && is(pkg, 'op_led', 'pass', 'D1', /14 mA/)
+    && out('AMS1117-1V8', /→ 1\.8 V/) && out('AMS1117-2V5', /→ 2\.5 V/) && out('AMS1117-3.3', /→ 3\.3 V/)
+    && is(named3V3('LM1117-3V3'), 'op_reg', 'unknown', 'U1', /LM1117-3\.3/) && is(named3V3('LM1117-3V3'), 'op_led', 'pass', 'D1', /14 mA/),
+    [show(v3, 'op_power'), show(v3, 'op_reg'), show(pkg, 'op_reg'), show(run(variant(reg, setValue('U1', 'AMS1117-1V8'))), 'op_reg')].join(' / '))
 }
 
 // O8. headline ──────────────────────────────────────────────────────────────────
@@ -1402,6 +1443,67 @@ function verdictProblems(rs: OpResult[]): string[] {
   add('every verdict from O15 on: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
 
   for (const [name, ok, info] of F) check(`O20 ${name}`, ok, info)
+}
+
+// O21. sweep of 2026-11-06: a second ground cut off from the supply's ground is no ground (the battery's − on GND, the
+// LEDs' cathodes on an AGND joined to nothing read '동작 검사 통과') ──
+{
+  const onGround = (ground: string) => circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED'], ['C1', 'C', '100nF']],
+    [['VCC', 'BT1.1', 'R1.1', 'C1.1'], ['GND', 'BT1.2', 'C1.2'], ['LED_A', 'R1.2', 'D1.1'], [ground, 'D1.2']])
+  const cut = (rs: OpResult[]) => is(rs, 'op_power', 'error', 'BT1', /이어져 있지 않습니다/) && pick(rs, 'op_led', 'D1')?.state === 'unknown' && pick(rs, 'op_led', 'D1')?.cause === 'BT1'
+    && operatingHeadline(rs).state === 'error'
+  const allPass = (rs: OpResult[]) => rs.every(r => r.state === 'pass') && is(rs, 'op_led', 'pass', 'D1')
+  const names = ['AGND', 'PGND', 'GND2', 'VSS'].filter(n => !cut(run(onGround(n))))
+  check('O21 AGND, PGND, GND2 and VSS joined to nothing: op_power error, the LED on them not judged, not passed', !names.length,
+    `not caught: [${names}] · ${show(run(onGround('AGND')), 'op_power')} | ${show(run(onGround('AGND')), 'op_led')}`)
+
+  // a regulator whose ground pin is only on AGND: nothing it feeds has a voltage
+  const regCut = (g: string) => circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF'], ['C2', 'C', '100nF'], ['R1', 'R', '100'], ['D1', 'LED', 'RED']],
+    [['VIN', 'BT1.1', 'U1.3', 'C2.1'], ['GND', 'BT1.2', 'C2.2'], [g, 'U1.1', 'C1.2', 'D1.2'], ['V3', 'U1.2', 'C1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1']])
+  const rc = run(regCut('AGND'))
+  check('O21b a regulator\'s ground pin only on AGND: op_reg and the LED it feeds are not passed',
+    is(rc, 'op_power', 'error', 'BT1', /AGND/) && pick(rc, 'op_reg', 'U1')?.state !== 'pass' && pick(rc, 'op_led', 'D1')?.state !== 'pass' && operatingHeadline(rc).state === 'error',
+    `${show(rc, 'op_power')} | ${show(rc, 'op_reg')} | ${show(rc, 'op_led')}`)
+
+  // joined to the supply's ground it is that ground: a net tie, a small shunt, an inductor, a switch or a low-side
+  // transistor, a tie through a net of no name; a resistor of more than 1 Ω is no tie
+  const tie = (comps: Comp[], ...nets: [string, ...string[]][]) => circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED'], ...comps],
+    [['VCC', 'BT1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1'], ...nets])
+  const zero = tie([['R2', 'R', '0']], ['GND', 'BT1.2', 'R2.1'], ['AGND', 'D1.2', 'R2.2'])
+  const fine = {
+    netTie: allPass(run(zero)), shunt: allPass(run(variant(zero, setValue('R2', '0.1')))), oneOhm: !run(variant(zero, setValue('R2', '1'))).some(r => r.rule === 'op_power'),
+    noValue: !run(variant(zero, setValue('R2', ''))).some(r => r.rule === 'op_power'),
+    inductor: !run(tie([['L1', 'L', '10uH']], ['GND', 'BT1.2', 'L1.1'], ['AGND', 'D1.2', 'L1.2'])).some(r => r.rule === 'op_power'),
+    twoSteps: !run(tie([['R2', 'R', '0'], ['L1', 'L', '10uH']], ['GND', 'BT1.2', 'R2.1'], ['MID', 'R2.2', 'L1.1'], ['AGND', 'D1.2', 'L1.2'])).some(r => r.rule === 'op_power'),
+    lowSide: !run(tie([['Q1', 'Q_NMOS', '2N7000'], ['R2', 'R', '1k'], ['J1', 'Conn_01x01', 'IN']], ['GND', 'BT1.2', 'Q1.3'], ['GND_SW', 'D1.2', 'Q1.2'], ['GATE', 'Q1.1', 'R2.2'], ['IN', 'R2.1', 'J1.1'])).some(r => r.rule === 'op_power'),
+    connector: !run(variant(onGround('AGND'), c => { c.components.push({ ref: 'J1', name: 'Conn_01x01', value: 'AUX' }); movePin('J1.1', 'AGND')(c) })).some(r => r.rule === 'op_power'),
+    // a switch beside a connector's ground (no battery walks across it), and a relay in the return: judged released first
+    switched: !run(circuit([['J1', 'Conn_01x02', 'PWR_IN'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['SW1', 'SW', '']],
+      [['+5V', 'J1.1', 'R1.1'], ['GND', 'J1.2', 'SW1.1'], ['AGND', 'SW1.2', 'D1.2'], ['LED_A', 'R1.2', 'D1.1']])).some(r => r.rule === 'op_power'),
+    relay: !run(circuit([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['K1', 'Relay', '5V'], ['D2', 'D', '1N4148']],
+      [['VCC', 'BT1.1', 'R1.1', 'K1.1', 'D2.2'], ['GND', 'BT1.2', 'K1.2', 'K1.3', 'D2.1'], ['GND_LOAD', 'K1.4', 'D1.2'], ['LED_A', 'R1.2', 'D1.1']])).some(r => r.rule === 'op_power'),
+    tenOhms: cut(run(variant(zero, setValue('R2', '10')))),
+  }
+  check('O21c joined by a net tie, a small resistor, an inductor or a low-side switch, or with a connector on it: no fault; 10 Ω is no tie', Object.values(fine).every(Boolean), JSON.stringify(fine))
+
+  // the two sides of the same question: batteries with their own grounds, a connector supply, a battery with no GND
+  // joined by a shunt to one, and no source on any ground (names stand, as they did)
+  const twoBatteries = circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED'], ['BT2', 'Battery', '5V'], ['R2', 'R', '330'], ['D2', 'LED', 'RED']],
+    [['VCC', 'BT1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1'], ['GND', 'BT1.2', 'D1.2'], ['V2', 'BT2.1', 'R2.1'], ['LED_B', 'R2.2', 'D2.1'], ['GND2', 'BT2.2', 'D2.2']])
+  const viaConn = circuit([['J1', 'Conn_01x02', 'PWR_IN'], ['R1', 'R', '680'], ['D1', 'LED', 'RED']], [['+5V', 'J1.1', 'R1.1'], ['GND', 'J1.2'], ['LED_A', 'R1.2', 'D1.1'], ['AGND', 'D1.2']])
+  const namesOnly = circuit([['R1', 'R', '330'], ['D1', 'LED', 'RED'], ['C1', 'C', '100nF']], [['+5V', 'R1.1', 'C1.1'], ['LED_A', 'R1.2', 'D1.1'], ['AGND', 'D1.2'], ['GND', 'C1.2']])
+  const shuntBack = circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED'], ['R2', 'R', '0.1']],
+    [['VCC', 'BT1.1', 'R1.1'], ['LED_A', 'R1.2', 'D1.1'], ['GND', 'D1.2', 'R2.1'], ['BAT_N', 'BT1.2', 'R2.2']])
+  const vc = run(viaConn)
+  const other = {
+    twoBatteries: allPass(run(twoBatteries)) && is(run(twoBatteries), 'op_led', 'pass', 'D2'),
+    viaConn: is(vc, 'op_power', 'error', 'J1', /AGND.*전원 쪽 GND와/) && pick(vc, 'op_led', 'D1')?.state === 'unknown',
+    namesOnly: allPass(run(namesOnly)),
+    shuntBack: !run(shuntBack).some(r => r.rule === 'op_power') && is(run(shuntBack), 'op_led', 'pass', 'D1'),
+    anyOrder: full(run(onGround('AGND'))) === full(run(reversed(onGround('AGND')))),
+  }
+  check('O21d separate batteries each with a ground pass; a connector supply\'s AGND is cut too; no source on any ground: the names stand; the order of the listing changes nothing',
+    Object.values(other).every(Boolean), `${JSON.stringify(other)} · ${show(vc, 'op_power')}`)
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──

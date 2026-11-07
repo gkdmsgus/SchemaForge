@@ -30,7 +30,7 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
       // a part needs its reference: one added with ref "" (seen live, 2026-10-29) was saved to the history and
       // stopped the schematic from drawing whenever it was opened. skippedAdds tells the chat about it.
       const ref = (a.ref || '').trim()
-      if (ref && !comps.find(c => c.ref === ref)) comps = [...comps, { ref, name: a.name || ref, value: a.value || '' }]
+      if (ref && !comps.find(c => c.ref === ref)) comps = [...comps, { ref, name: (a.name || '').trim() || ref, value: a.value || '' }]
     } else if (a.type === 'remove_component') {
       comps = comps.filter(c => c.ref !== a.ref)
       nets = nets.map(n => ({ ...n, nodes: n.nodes.filter(nd => nd.ref !== a.ref) })).filter(n => n.nodes.length > 0)
@@ -52,7 +52,8 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
         .filter(n => n.name === name || n.nodes.length > 0)
       const at = nets.findIndex(n => n.name === name)
       if (at >= 0) nets[at] = { ...nets[at], nodes: [...nets[at].nodes, ...add.filter(x => !nets[at].nodes.some(nd => same(nd, x)))] }
-      else nets = [...nets, { name, nodes: add }]
+      // no pins, no net (2026-11-06 sweep: an empty NEW counted as a changed circuit: an undo step, a stale PCB, no word of it)
+      else if (add.length) nets = [...nets, { name, nodes: add }]
     } else if (a.type === 'remove_net') {
       nets = nets.filter(n => n.name !== a.name)
     }
@@ -60,21 +61,42 @@ export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
   return { ...graph, components: comps, nets }
 }
 
-/** the part types the AI editor is told to use (server/index.ts), and a few words for them, → reference prefix */
-const PREFIXES: [RegExp, string][] = [
-  [/^(R|resistor|저항)$/i, 'R'], [/^(C|CP|capacitor|커패시터|콘덴서)$/i, 'C'], [/^(L|inductor|인덕터)$/i, 'L'],
-  [/^(LED|D|diode|다이오드)$/i, 'D'], [/^Q(_|$)/i, 'Q'], [/^(NE555|REG|U)$/i, 'U'], [/^SW/i, 'SW'], [/^relay$/i, 'K'],
-  [/^buzzer$/i, 'LS'], [/^battery$/i, 'BT'], [/^crystal$/i, 'Y'], [/^conn/i, 'J'],
+/**
+ * The part types the AI editor is told to use (server/index.ts), and a few words for them, → reference prefix and the
+ * template (the name the PCB's footprint table goes by: server/pcb/footprints_table.py). A word that decides no one
+ * template (Q, U, conn, SW_SPDT) has none: the part keeps it and is reported unmapped, never put on a guessed footprint.
+ */
+const PREFIXES: [RegExp, string, string?][] = [
+  [/^(R|resistor|저항)$/i, 'R', 'R'], [/^(C|capacitor|커패시터|콘덴서)$/i, 'C', 'C'], [/^CP$/i, 'C', 'CP'], [/^(L|inductor|인덕터)$/i, 'L', 'L'],
+  [/^LED$/i, 'D', 'LED'], [/^(D|diode|다이오드)$/i, 'D', 'D'], [/^Q_NPN$/i, 'Q', 'Q_NPN'], [/^Q_NMOS$/i, 'Q', 'Q_NMOS'], [/^Q(_|$)/i, 'Q'],
+  [/^NE555$/i, 'U', 'NE555'], [/^REG$/i, 'U', 'REG'], [/^U$/i, 'U'], [/^(SW|switch|스위치)$/i, 'SW', 'SW'], [/^SW/i, 'SW'], [/^(relay|릴레이)$/i, 'K', 'Relay'],
+  [/^(buzzer|버저|부저)$/i, 'LS', 'Buzzer'], [/^(battery|배터리|전지)$/i, 'BT', 'Battery'], [/^(crystal|크리스탈)$/i, 'Y', 'Crystal'], [/^conn/i, 'J'],
 ]
 const refPrefix = (ref: string) => ref.replace(/\d+$/, '')
 
-function prefixOf(name?: string, value?: string): string | null {
-  const n = (name || '').trim(), v = (value || '').trim()
-  for (const [re, p] of PREFIXES) if (re.test(n)) return p
-  if (/\d\s*[pnuµm]?F$/.test(v)) return 'C'
-  if (/\d\s*[nuµm]?H$/.test(v)) return 'L'
-  if (/\d\s*[kKM]?\s*(Ω|ohm)$/i.test(v) || /^\d+(\.\d+)?\s*[kKM]$/.test(v)) return 'R'
+/**
+ * the kind a value's unit tells: C, L or R, each its own template and reference prefix. The whole value is a number and a
+ * unit: this picks a footprint, and a part number can end like one (LM7805F, 2N3904H) or read like 2n2 in lower case
+ * (1n4148, 2n7000), so a letter for the point has one digit after it
+ */
+function kindOfValue(value?: string): string | null {
+  const v = (value || '').trim()
+  if (/^\d+(\.\d+)?\s*[pnuµμm]?[fF]$/.test(v) || /^\d+[pnuµμ]\d$/.test(v)) return 'C'
+  if (/^\d+(\.\d+)?\s*[nuµμm]?H$/.test(v)) return 'L'
+  if (/^\d+(\.\d+)?\s*[mkKM]?\s*(Ω|ohms?)$/i.test(v) || /^\d+(\.\d+)?\s*[kKMR]$/.test(v) || /^\d+[kKMRr]\d+$/.test(v)) return 'R'
   return null
+}
+
+function prefixOf(name?: string, value?: string): string | null {
+  const n = (name || '').trim()
+  for (const [re, p] of PREFIXES) if (re.test(n)) return p
+  return kindOfValue(value)
+}
+
+/** the name an added part is saved under: its template, by its value's unit when it has no name; a name that decides none as written */
+function templateOf(name?: string, value?: string): string | undefined {
+  const n = (name || '').trim()
+  return n ? PREFIXES.find(([re]) => re.test(n))?.[2] ?? n : kindOfValue(value) ?? undefined
 }
 
 /**
@@ -83,6 +105,9 @@ function prefixOf(name?: string, value?: string): string | null {
  * was never added). The code names it: the one reference of that kind the edit's nets use and no part has, else
  * the next free number of its kind (C3 after C1 and C2). A part whose kind it cannot tell keeps none (skippedAdds).
  * A net pin with no reference goes to the one part named here, when there is just one.
+ * Every part it adds is saved under its template (2026-11-06 sweep: {value: '100nF'} was saved as a part named C2, and
+ * 'capacitor', 'relay' and '저항' as written: on the schematic a capacitor, on the board no footprint, to the operating
+ * check no part at all, so 22uF added that way read "출력 커패시터 0 µF").
  */
 export function withRefs(graph: NetGraph, actions: ChatAction[]): ChatAction[] {
   const taken = new Set((graph.components || []).map(c => c.ref))
@@ -90,8 +115,11 @@ export function withRefs(graph: NetGraph, actions: ChatAction[]): ChatAction[] {
   const unknown = [...new Set(actions.flatMap(a => (a.type === 'add_net' ? (a.nodes || []).map(nd => (nd.ref || '').trim()) : [])))]
     .filter(r => r && !taken.has(r))
   const given: string[] = []
-  const out = actions.map(a => {
-    if (a.type !== 'add_component' || (a.ref || '').trim()) return a
+  const out = actions.map(action => {
+    if (action.type !== 'add_component') return action
+    const name = templateOf(action.name, action.value)
+    const a = name ? { ...action, name } : action
+    if ((a.ref || '').trim()) return a
     const p = prefixOf(a.name, a.value)
     let ref = unknown.find(r => !taken.has(r) && (p ? refPrefix(r) === p : unknown.length === 1))
     if (!ref && p) ref = p + (Math.max(0, ...[...taken].filter(r => refPrefix(r) === p).map(r => Number(r.slice(p.length)) || 0)) + 1)
@@ -214,7 +242,7 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
   const without = (drop: (nd: { ref: string; pin: string }) => boolean) => out.flatMap(a => {
     if (a.type !== 'add_net') return [a]
     const nodes = (a.nodes || []).filter(nd => !drop(nd))
-    return nodes.length || !(a.nodes || []).length ? [{ ...a, nodes }] : []
+    return nodes.some(nd => (nd.ref || '').trim()) ? [{ ...a, nodes }] : []
   })
   const dropped = out.flatMap(a => (a.type === 'add_net' ? (a.nodes || []) : [])).filter(nd => reused.has((nd.ref || '').trim())).map(key)
   out = without(nd => reused.has((nd.ref || '').trim()))
@@ -230,8 +258,11 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
   return { actions: out, held: [...held.values()], dropped, kept: [...new Set(kept)], valued: [...new Set(valued)] }
 }
 
-/** a reply that asks the person something: a question mark, or a sentence ending like one ("적용할까요.") */
-export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|나요|습니까)[.!]?(\s|$)/.test(reply)
+/**
+ * a reply that asks the person something: a question mark, or a sentence ending like one ("적용할까요.", "켜지나요."). Not the
+ * verb 나요 on its own or in 빛나요 (2026-11-06 sweep: "이제 버저에서 소리가 나요." held back the edit it was reporting)
+ */
+export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|(?<=[^\s빛])나요|습니까)[.!]?(\s|$)/.test(reply)
 
 /**
  * An AI edit as the chat applies it: references filled in, what the request did not ask for held back (guardEdit),

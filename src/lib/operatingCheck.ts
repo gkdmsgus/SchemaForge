@@ -60,11 +60,16 @@ export interface OpCircuit {
 
 const pinKey = (ref: string, pin: number) => `${ref}.${pin}`
 const FURNITURE = new Set(['MountingHole', 'TestPoint'])
+/**
+ * A part's value as the checks read it. An empty value reaches the netlist, and so the board, as the part's reference
+ * (server/index.ts graphToNetlist), and a resistor's reads like a value: R1 is no 0.1 Ω. No value, as on the schematic.
+ */
+const partValue = (ref: string, value: unknown) => { const v = String(value ?? ''); return v === ref ? '' : v }
 
 /** The schematic graph (before a PCB exists); style = the SMD/THT choice the PCB will use. */
 export function fromGraph(g: NetGraph, style: 'smd' | 'tht' | null = null): OpCircuit {
   const parts = (g.components || []).filter(c => c.name && !FURNITURE.has(c.name))
-    .map(c => ({ ref: c.ref, part: c.name!, value: String(c.value ?? '') }))
+    .map(c => ({ ref: c.ref, part: c.name!, value: partValue(c.ref, c.value) }))
   const known = new Set(parts.map(p => p.ref))
   const pins = new Map<string, string>()
   for (const n of g.nets || []) for (const nd of n.nodes || []) {
@@ -82,7 +87,7 @@ export function fromBoard(b: BoardModel): OpCircuit {
     if (pin != null && pd.net) pins.set(pinKey(p.ref, pin), pd.net)
   }
   return {
-    parts: real.map(p => ({ ref: p.ref, part: p.part, value: String(p.value ?? '') })), pins, style: b.style ?? null,
+    parts: real.map(p => ({ ref: p.ref, part: p.part, value: partValue(p.ref, p.value) })), pins, style: b.style ?? null,
     missing: real.filter(p => !p.pad_pins).map(p => p.ref),
   }
 }
@@ -92,24 +97,30 @@ export function fromBoard(b: BoardModel): OpCircuit {
 /** the value part of a part value with a rating after it: "22uF 16V" -> "22uF", "680 1/4W" -> "680", "1k 1%" -> "1k" */
 const valuePart = (v: string) => String(v ?? '').trim().replace(/(?:(?<=[A-Za-zµμΩ])\s*[,/]\s*|\s+)(?=\d+(?:\.\d+)?\s*(?:V|W|%)|\d+\s*\/\s*\d+\s*W).*$/i, '')
 
-/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "10 Ω", "100m" (milliohm), "680 1/4W" -> ohms */
+/** "680", "10k", "4k7", "4.7k", "1M", "100R", "0R1", "R10", "10 Ω", "100m" (milliohm), "100mR", "680 1/4W" -> ohms */
 export function parseOhms(v: string): number | null {
   const s = valuePart(v).replace(/Ω|ohms?/gi, '').replace(/\s+/g, '')
-  // M is mega and m is milli (a 100 mΩ sense resistor), k/K kilo, r/R the decimal point
+  // M is mega and m is milli (a 100 mΩ sense resistor), k/K kilo, r/R the decimal point, with nothing before it too
+  // (R10, as server/ai_layout.ts reads it: 2026-11-06 sweep, a sense resistor R10 left its transistor unjudged)
   const mul = (u: string) => (u === 'M' ? 1e6 : u === 'm' ? 1e-3 : u === 'k' || u === 'K' ? 1e3 : 1)
-  let m = /^(\d+)([rRkKmM])(\d+)$/.exec(s)
+  let m = /^(\d*)[rR](\d+)$/.exec(s)
+  if (m) return Number(`${m[1] || '0'}.${m[2]}`)
+  m = /^(\d+)([kKmM])(\d+)$/.exec(s)
   if (m) return Number(`${m[1]}.${m[3]}`) * mul(m[2])
-  m = /^(\d+(?:\.\d+)?)([rRkKmM]?)$/.exec(s)
+  m = /^(\d+(?:\.\d+)?)([kKmM]?)[rR]?$/.exec(s)
   if (m) return Number(m[1]) * mul(m[2])
   return null
 }
 
-/** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u" -> farads */
+/** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u", "4u7", "2n2" -> farads */
 export function parseFarads(v: string): number | null {
-  const m = /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(valuePart(v))
+  const s = valuePart(v)
+  const point = /^(\d+)([pnuµμm])(\d)f?$/i.exec(s)       // 4u7 is 4.7 uF (2026-11-06 sweep: read as no value, "단위가 필요합니다"); 1n4148 is no value
+  const m = point ?? /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(s)
   if (!m || (!m[2] && !m[3])) return null      // "104" is a code, not 104 F
+  if (m[2] === 'M') return null                // "100MF" is an old way to write µF, not 0.1 F: not read at all
   const mul: Record<string, number> = { '': 1, p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3 }
-  const f = Number(m[1]) * mul[(m[2] || '').toLowerCase()]
+  const f = Number(point ? `${m[1]}.${m[3]}` : m[1]) * mul[(m[2] || '').toLowerCase()]
   return Number.isFinite(f) ? f : null
 }
 
@@ -235,8 +246,9 @@ function regSpec(value: string) {
   const v = value.toUpperCase().replace(/\s+/g, '')
   // a 1117's voltage: d.d(d) right after its package letters (AMS1117CD-3.3, LM1117MPX-3.3, 'LM1117 3.3V'), or one
   // digit after a dash (LM1117-5). Not two bare digits (ST12 is 12 V, S12 1.2 V by maker), not a package name
-  // (AMS1117 SOT-223 read 2.2 V), never an ADJ (review of 2026-11-03)
-  const x1117 = /([A-Z]*)1117(?!SOT|TO)[A-Z]{0,4}(?:-?(\d\.\d{1,2})|-(\d))(?![\d.])/.exec(v)
+  // (AMS1117 SOT-223 read 2.2 V), never an ADJ (review of 2026-11-03). 3V3 is 3.3 here as in parseVolts and net names
+  // (2026-11-06 sweep: AMS1117-3V3 read 3 V, and its right +3V3 net read '동작 안 됨'; 1V8 read 1 V, 2V5 2 V)
+  const x1117 = /([A-Z]*)1117(?!SOT|TO)[A-Z]{0,4}(?:-?(\d\.\d{1,2})|-(\d))(?![\d.])/.exec(v.replace(/(\d)V(\d)/g, '$1.$2'))
   if (x1117 && !/ADJ/.test(v)) {
     const out = x1117[2] ?? x1117[3]
     // the AMS1117's limits are looked up
@@ -325,8 +337,6 @@ function baseIndex(c: OpCircuit, open: ReadonlySet<string> = new Set()) {
     /** a relay's COM–NO contact taken as closed (the circuit judged switched on, the relay pulled in);
      *  a coil with a pin left open or both pins on one net never pulls in */
     closedRelay: (ref: string) => { const a = net(ref, 1), z = net(ref, 2); return !open.has(ref) && !!a && !!z && a !== z },
-    /** a relay not pulled in: its COM–NC contact is closed */
-    releasedRelay: (ref: string) => { const a = net(ref, 1), z = net(ref, 2); return !(!open.has(ref) && !!a && !!z && a !== z) },
     parts: () => parts,
     nets: () => nets,
     net,
@@ -558,13 +568,37 @@ function analyzePower(b: Base, force = false) {
     }
   }
 
-  // A GND-named net that no battery reaches and nothing else feeds (no connector) cannot return
-  // current to a battery whose group has no GND of its own.
-  const deadGround = noGround.length ? [...named.keys()].filter(n => named.get(n) === 0 && !volts.has(n) && !blocked.has(n) && !hasConn(n)) : []
-  if (deadGround.length) {
+  // A GND-named net that no battery reaches and nothing else feeds (no connector) cannot return current to a battery
+  // whose group has no GND of its own, nor to the supply's ground when it is a second ground beside it (2026-11-06 sweep:
+  // the battery's − on GND, the LEDs' cathodes on an AGND joined to nothing read '동작 검사 통과'). Joined to that ground by
+  // a net tie (a resistor of 1 Ω or less, or one with no value to judge), an inductor, or what the circuit is judged with
+  // closed or on (a switch, a relay's contact, a transistor), it is the same ground. With no battery or connector on any
+  // ground there is nothing to be cut off from: the names stand.
+  const grounds = [...named.keys()].filter(n => named.get(n) === 0)
+  const supplyGrounds = grounds.filter(n => volts.has(n) || hasConn(n))
+  const returns = new Set([...supplyGrounds, ...edges.filter(e => noGround.includes(e.ref)).map(e => e.minus)])
+  const tiePins = (p: OpPart): [number, number][] => {
+    if (p.part === 'L' || p.part === 'SW') return [[1, 2]]
+    if (p.part === 'R') { const r = parseOhms(p.value); return r == null || r <= 1 ? [[1, 2]] : [] }
+    if (p.part === 'Relay') return [[3, 4], [3, 5]]
+    return p.part === 'Q_NPN' || p.part === 'Q_NMOS' ? [[2, 3]] : []
+  }
+  const ties = b.parts().flatMap(p => tiePins(p).map(([a, z]) => [b.net(p.ref, a), b.net(p.ref, z)] as const))
+  for (let grew = true; grew;) {
+    grew = false
+    for (const [a, z] of ties) if (a && z && returns.has(a) !== returns.has(z)) { returns.add(a); returns.add(z); grew = true }
+  }
+  const deadGround = returns.size ? grounds.filter(n => !returns.has(n) && !blocked.has(n)) : []
+  if (deadGround.length && noGround.length) {
     issue(noGround[0], `${noGround.join('·')} 배터리가 ${deadGround.slice(0, 3).join(', ')} 넷과 이어져 있지 않습니다: 이 넷에 연결된 부품은 배터리로 전류가 돌아가지 못합니다`,
       ['배터리 − 단자를 GND 넷에 연결해야 합니다', `${deadGround.join(', ')}의 전압은 이름만 보고 정하지 않습니다`])
     for (const n of deadGround) blocked.set(n, { why: `${ga(n)} 배터리와 이어져 있지 않습니다`, cause: noGround[0] })
+  } else if (deadGround.length) {
+    const main = supplyGrounds[0]
+    const owner = edges[0]?.ref ?? b.on(main).find(nd => { const p = b.part(nd.ref); return !!p && /^Conn_/.test(p.part) && !isMotor(p) })!.ref
+    issue(owner, `${deadGround.slice(0, 3).join(', ')} 넷이 전원 쪽 ${wa(main)} 이어져 있지 않습니다: 이 넷에 연결된 부품은 전원으로 전류가 돌아가지 못합니다`,
+      [`${deadGround.join(', ')} 넷을 ${main}에 바로 잇거나, 0 Ω 저항이나 인덕터로 이어야 합니다`, `${deadGround.join(', ')}의 전압은 이름만 보고 정하지 않습니다`])
+    for (const n of deadGround) blocked.set(n, { why: `${ga(n)} 전원 쪽 ${wa(main)} 이어져 있지 않습니다`, cause: owner })
   }
 
   // Regulator outputs and closed switches, until nothing changes: one regulator can feed another,
@@ -2206,6 +2240,23 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
     if (root !== r && RANK[root.state] >= RANK[r.state]) r.detail = [`${root.ref} ${label[root.rule]} 문제에서 이어진 결과라 머리글 개수에는 한 번만 셉니다`, ...r.detail]
   }
   return out
+}
+
+/**
+ * The LEDs no resistor limits, one list per string (anode end first), whatever their colour: checkLeds stops at a colour
+ * it has no data for, and a green LED with no resistor burns as well. validateCircuit blocks the PCB on this (2026-11-06
+ * sweep: 9 V - 220 Ω - three LEDs and R - switch - LED were refused for "no resistor"), so it only says what the walk is
+ * sure of. The walk stops at a net of three pins or a relay's NC contact: on a net with no voltage of its own, a resistor
+ * or a contact there can still be in the LED's path. A chain cut by an LED facing the other way is op_led's error.
+ */
+export function ledsWithoutResistor(c: OpCircuit): string[][] {
+  let x: Ctx
+  try { x = context(c) } catch { return [] }   // not judged: the operating checks say 판단 불가 for the same reason
+  const perhaps = (n: string | null) => {
+    const v = x.voltOf(n)
+    return (!v || !!v.pulled) && !x.blockedWhy(n) && !x.timerOut(n) && x.on(n).some(o => ['R', 'Relay'].includes(x.part(o.ref)?.part ?? ''))
+  }
+  return ledStrings(x).filter(s => !s.rs.length && !s.opposed && !perhaps(s.top) && !perhaps(s.bot)).map(s => s.leds.map(l => l.ref))
 }
 
 const resultsSig = (rs: OpResult[]) => rs.map(r => `${r.rule}/${r.state}/${r.summary}`).join('\n')
