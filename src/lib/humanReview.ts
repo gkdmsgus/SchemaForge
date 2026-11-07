@@ -1,4 +1,5 @@
 import type { BoardModel } from '../types'
+import { safeStorage } from './storage'
 
 // What a person has to confirm on a finished board: the things the automatic checks
 // cannot see. DRC proves the copper follows the footprint; it cannot prove the real
@@ -260,8 +261,4 @@ export function saveReviewed(map: Record<string, number>,
   const kept = Object.fromEntries(Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, MAX_KEPT))
   try { storage?.setItem(REVIEW_STORE, JSON.stringify(kept)) } catch { /* private mode or full: keep in memory */ }
   return kept
-}
-
-function safeStorage(): Storage | null {
-  try { return typeof window !== 'undefined' ? window.localStorage : null } catch { return null }
 }

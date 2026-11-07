@@ -26,15 +26,10 @@ import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
+import { getSavedResults } from '../lib/storage'
 import { boardNetlist, guideNote, netlistNote } from '../lib/drawerNotes'
 
 const API = ''
-
-interface StoredEntry { id: number; name: string; prompt: string; result?: GenerateResult; time: number; messages?: ChatMessage[]; graph?: NetGraph | null }
-
-export function getSavedResults(): StoredEntry[] {
-  try { return JSON.parse(localStorage.getItem('sf_saved_results') || '[]') } catch { return [] }
-}
 
 /**
  * The saved entry of this description follows the chat and the circuit, while it holds this circuit: ↺ leaves it with the

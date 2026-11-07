@@ -17,6 +17,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { actionLabel, applyActions, asksBack, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import { boardNetlist, guideNote, netlistNote } from '../src/lib/drawerNotes.ts'
+import { buildMST, getMaxPin, isPowerNet } from '../src/lib/nets.ts'
 import CircuitCanvas from '../src/components/CircuitCanvas.tsx'
 import OperatingPanel from '../src/components/OperatingPanel.tsx'
 import PCBLayout from '../src/components/PCBLayout.tsx'
@@ -579,6 +580,22 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const draws = (el: Parameters<typeof createElement>[0]) => { try { return renderToStaticMarkup(createElement(el, { graph: bad })).length > 0 } catch (e) { return String(e) } }
   const schem = draws(CircuitCanvas), pcb = draws(PCBLayout)
   check('G6 a part with an empty reference draws instead of blanking the screen', schem === true && pcb === true, `schematic ${schem}, pcb ${pcb}`)
+}
+
+// G6b. the schematic and the PCB sketch read the nets with one set of helpers (src/lib/nets.ts), and the saved results
+// and the browser storage are read in one place each (src/lib/storage.ts). Each file kept its own copy and two drifted:
+// a net named V33 was a supply in the schematic and a signal on the sketch (sweep of 2026-11-07)
+{
+  const files = ['components/CircuitCanvas.tsx', 'components/PCBLayout.tsx', 'components/ResultPanel.tsx', 'components/SideDrawer.tsx',
+    'lib/assembly.ts', 'lib/humanReview.ts']
+  const copies = files.filter(f => /function (getMaxPin|buildMST|isPowerNet|getSavedResults|safeStorage)\b/.test(fs.readFileSync(path.join('src', f), 'utf8')))
+  const supplies = ['V33', 'V50', '3V3', 'VCC', 'GND', '12V'].filter(n => !isPowerNet(n))
+  const signals = ['OUT', 'LED_A', 'TRIG', 'VSIG'].filter(n => isPowerNet(n))
+  const pins = [getMaxPin('U1', [net('VCC', 'U1.8', 'R1.1'), net('OUT', 'U1.3')]), getMaxPin('R9', [net('VCC', 'U1.8')])]
+  const mst = JSON.stringify(buildMST([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 5 }]))
+  check('G6b one copy of the net and storage helpers; V33 is a supply on both views',
+    !copies.length && !supplies.length && !signals.length && pins.join() === '8,2' && mst === '[[0,2],[0,1]]',
+    JSON.stringify({ copies, supplies, signals, pins, mst }))
 }
 
 // F9b. where the target is not known the instruction asks the AI editor to ask, not guess

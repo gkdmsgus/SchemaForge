@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import type { NetGraph, NetEntry, ComponentEntry } from '../types'
+import { buildMST, getMaxPin, isPowerNet } from '../lib/nets'
 
 interface Pos { x: number; y: number }
 interface Pad { x: number; y: number; w: number; h: number }
@@ -14,12 +15,6 @@ const COPPER_GLOW = '#ffc56f'
 const PCB_GREEN_DARK = '#081a11'
 const PAD_GOLD = '#e8c97a'
 const SILK_WHITE = '#dfe5dd'
-
-function getMaxPin(ref: string, nets: NetEntry[]): number {
-  let m = 2
-  nets.forEach(n => n.nodes.forEach(nd => { if (nd.ref === ref) m = Math.max(m, parseInt(nd.pin) || 2) }))
-  return m
-}
 
 // PCB-style footprint sizes (different from schematic — flatter, wider)
 function getFootprint(ref: string, pinCount: number): Footprint {
@@ -110,15 +105,6 @@ function padAbs(ref: string, pin: string, pos: Record<string, Pos>, footprints: 
   return { x: p.x + pad.x, y: p.y + pad.y, w: pad.w, h: pad.h }
 }
 
-function isPowerNet(name: string): boolean {
-  if (!name) return false
-  const n = name.toUpperCase()
-  return ['GND','AGND','DGND','PGND','SGND','EARTH','PWR','POWER','VBAT','AVCC','VREF'].includes(n)
-    || /^VCC/.test(n) || /^VDD/.test(n) || /^VEE/.test(n) || /^VSS/.test(n)
-    || /^VIN/.test(n) || /^VOUT/.test(n) || /^3V/.test(n) || /^5V/.test(n)
-    || /^12V/.test(n) || /^\d+V\d*$/.test(n)
-}
-
 function getPCBTraceColor(name: string): string | null {
   const n = (name || '').toUpperCase()
   if (/GND|EARTH|VSS|VEE|AGND|DGND|PGND/.test(n)) return '#5dc8a3'
@@ -131,32 +117,6 @@ function routeTrace(ax: number, ay: number, bx: number, by: number, mx: number, 
   const midY = my !== undefined ? my : by
   const midX = mx !== undefined ? mx : ax
   return `M${ax},${ay} L${ax},${midY} L${midX},${midY} L${midX},${by} L${bx},${by}`
-}
-
-// Minimum Spanning Tree (Prim's, Manhattan distance)
-function buildMST(pts: Pos[]): number[][] {
-  const n = pts.length
-  if (n <= 1) return []
-  const inMST = new Array(n).fill(false)
-  const minDist = new Array(n).fill(Infinity)
-  const parent = new Array(n).fill(-1)
-  minDist[0] = 0
-  const edges = []
-  for (let iter = 0; iter < n; iter++) {
-    let u = -1
-    for (let i = 0; i < n; i++) {
-      if (!inMST[i] && (u === -1 || minDist[i] < minDist[u])) u = i
-    }
-    inMST[u] = true
-    if (parent[u] !== -1) edges.push([parent[u], u])
-    for (let v = 0; v < n; v++) {
-      if (!inMST[v]) {
-        const d = Math.abs(pts[u].x - pts[v].x) + Math.abs(pts[u].y - pts[v].y)
-        if (d < minDist[v]) { minDist[v] = d; parent[v] = u }
-      }
-    }
-  }
-  return edges
 }
 
 export default function PCBLayout({ graph }: { graph?: NetGraph }) {

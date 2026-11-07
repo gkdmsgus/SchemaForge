@@ -3,6 +3,7 @@ import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
 import { carryOver, type Spots } from '../lib/schematicPlace'
 import { DIFF_EDGE, DIFF_FILL, NAME_TEXT, VALUE_TEXT, type DiffKind } from '../lib/diffColors'
+import { buildMST, getMaxPin, isPowerNet } from '../lib/nets'
 
 // ── Color palette ─────────────────────────────────────────────
 const NET_COLORS = ['#6a4cb5','#1d7a6a','#c87515','#2563eb','#b04826','#0891b2','#c2410c','#4d7c0f']
@@ -32,12 +33,6 @@ interface Pos { x: number; y: number }
 // ref[0] ?? '': a part saved with an empty reference must still draw (it stopped the whole screen before)
 function compColor(ref: string): string {
   return (COMP_COLORS as Record<string, string>)[(ref[0] ?? '').toUpperCase()] || '#64748b'
-}
-
-function getMaxPin(ref: string, nets: NetEntry[]): number {
-  let m = 2
-  nets.forEach(n => n.nodes.forEach(nd => { if (nd.ref === ref) m = Math.max(m, parseInt(nd.pin) || 2) }))
-  return m
 }
 
 function getPinLayout(ref: string, pinCount: number): Layout {
@@ -94,15 +89,6 @@ function autoLayout(comps: {ref: string}[], layouts: Record<string, Layout>) {
   const TW = cx+M
   const TH = Object.values(pos).reduce((m,p)=>Math.max(m,p.y),0)+M+80
   return { positions:pos, width:Math.max(TW,700), height:Math.max(TH,480) }
-}
-
-function isPowerNet(name: string): boolean {
-  if (!name) return false
-  const n = name.toUpperCase()
-  return ['GND','AGND','DGND','PGND','SGND','EARTH','PWR','POWER','VBAT','AVCC','VREF'].includes(n)
-    || /^VCC/.test(n) || /^VDD/.test(n) || /^VEE/.test(n) || /^VSS/.test(n)
-    || /^VIN/.test(n) || /^VOUT/.test(n) || /^3V/.test(n) || /^5V/.test(n)
-    || /^12V/.test(n) || /^V3\d/.test(n) || /^V5\d/.test(n) || /^\d+V\d*$/.test(n)
 }
 
 const isGround = (name: string) => /GND|EARTH|VSS|VEE/i.test(name)
@@ -230,32 +216,6 @@ function routeWire(ax: number, ay: number, bx: number, by: number, mx?: number, 
   const midX = mx !== undefined ? mx : ax + (bx - ax) * 0.5
   const midY = my !== undefined ? my : by
   return `M${ax},${ay} L${midX},${ay} L${midX},${midY} L${bx},${midY} L${bx},${by}`
-}
-
-// Minimum Spanning Tree (Prim's, Manhattan distance) — minimises total wire length
-function buildMST(pts: Pos[]): number[][] {
-  const n = pts.length
-  if (n <= 1) return []
-  const inMST = new Array(n).fill(false)
-  const minDist = new Array(n).fill(Infinity)
-  const parent = new Array(n).fill(-1)
-  minDist[0] = 0
-  const edges = []
-  for (let iter = 0; iter < n; iter++) {
-    let u = -1
-    for (let i = 0; i < n; i++) {
-      if (!inMST[i] && (u === -1 || minDist[i] < minDist[u])) u = i
-    }
-    inMST[u] = true
-    if (parent[u] !== -1) edges.push([parent[u], u])
-    for (let v = 0; v < n; v++) {
-      if (!inMST[v]) {
-        const d = Math.abs(pts[u].x - pts[v].x) + Math.abs(pts[u].y - pts[v].y)
-        if (d < minDist[v]) { minDist[v] = d; parent[v] = u }
-      }
-    }
-  }
-  return edges
 }
 
 interface DragState { ref: string; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; pointerId: number }

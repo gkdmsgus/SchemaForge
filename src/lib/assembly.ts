@@ -3,6 +3,7 @@
 // because a PCB made again from the same netlist (SMD -> THT, AI on) keeps the file name.
 import { FURNITURE, naturalRef } from './bom'
 import type { BoardModel } from '../types'
+import { safeStorage } from './storage'
 
 export const PLACED_STORE = 'sf_assembly_v1'
 const MAX_BOARDS = 50
@@ -72,8 +73,4 @@ export function loadAssemblyView(storage: Pick<Storage, 'getItem'> | null = safe
 
 export function saveAssemblyView(view: '3d' | '2d', storage: Pick<Storage, 'setItem'> | null = safeStorage()): void {
   try { storage?.setItem(VIEW_STORE, view) } catch { /* private mode: this visit only */ }
-}
-
-function safeStorage(): Storage | null {
-  try { return typeof window !== 'undefined' ? window.localStorage : null } catch { return null }
 }

@@ -1,37 +1,26 @@
 import React, { useState, useEffect } from 'react'
-import type { SavedSession, ChatMessage, NetGraph, GenerateResult } from '../types'
+import type { SavedSession, NetGraph } from '../types'
 import {
   getSessions, deleteSession as dbDeleteSession, deleteAllSessions, getFavorites, removeFavorite, renameSession,
   type AuthUser, type DbFavorite,
 } from '../api'
 import { savedGraph } from '../lib/graphEdit'
+import { getSavedResults, type StoredEntry } from '../lib/storage'
 
-interface StoredEntry {
-  id: number
-  name: string
-  prompt: string
-  result?: GenerateResult
-  time: number
-  messages?: ChatMessage[]
-  graph?: NetGraph | null
-  _dbId?: string
-}
-
-function getSavedResults(): StoredEntry[] {
-  try { return JSON.parse(localStorage.getItem('sf_saved_results') || '[]') } catch { return [] }
-}
+/** a result saved in this browser, or a session on the server (_dbId) listed the same way */
+type DrawerEntry = StoredEntry & { _dbId?: string }
 
 const MONO = "'IBM Plex Mono','JetBrains Mono',monospace"
 const SANS = "'Space Grotesk','Inter',sans-serif"
 
-function groupByDate(items: StoredEntry[]): [string, StoredEntry[]][] {
+function groupByDate(items: DrawerEntry[]): [string, DrawerEntry[]][] {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const weekAgo = new Date(today.getTime() - 6 * 86400000)
   const monthAgo = new Date(today.getTime() - 29 * 86400000)
 
-  const groups: Record<string, StoredEntry[]> = { '오늘': [], '이번 주': [], '이번 달': [], '이전': [] }
-  items.forEach((item: StoredEntry) => {
+  const groups: Record<string, DrawerEntry[]> = { '오늘': [], '이번 주': [], '이번 달': [], '이전': [] }
+  items.forEach((item: DrawerEntry) => {
     const d = new Date(item.time)
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
     if (day >= today) groups['오늘'].push(item)
@@ -62,7 +51,7 @@ type Tab = 'history' | 'favorites'
 
 export default function SideDrawer({ open, onClose, onLoadSession, user }: SideDrawerProps) {
   const [tab, setTab] = useState<Tab>('history')
-  const [savedResults, setSavedResults] = useState<StoredEntry[]>([])
+  const [savedResults, setSavedResults] = useState<DrawerEntry[]>([])
   const [favorites, setFavorites] = useState<DbFavorite[]>([])
   const [dbMode, setDbMode] = useState(false)
   // why a server action failed (list, delete, rename): shown above the list instead of failing silently
@@ -86,7 +75,7 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
       setLoading({ history: true, favorites: true })
       getSessions().then(sessions => {
         if (!live) return
-        const entries: StoredEntry[] = sessions.map((s, i) => ({
+        const entries: DrawerEntry[] = sessions.map((s, i) => ({
           id: i,
           name: s.name || s.prompt,
           prompt: s.prompt,
@@ -158,7 +147,7 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
     setSavedResults([])
   }
 
-  async function renameSaved(entry: StoredEntry, name: string) {
+  async function renameSaved(entry: DrawerEntry, name: string) {
     if (!entry._dbId) return
     const before = entry.name
     setSavedResults(prev => prev.map(x => x.id === entry.id ? { ...x, name } : x))
