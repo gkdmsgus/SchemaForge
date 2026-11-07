@@ -4,7 +4,8 @@
  * (each stayed, about 127 MB of GPU memory, until Chrome warned at 16: review of 2026-11-06), 32-39 it draws only when
  * something changes (every frame, shadow pass included, it filled the main thread of an Iris Xe laptop during the tens of
  * minutes 배치하기 stays open: review of 2026-11-06), and everything still redraws: its labels, a drag and the slide after
- * it, the wheel, the top view, a pane resized, the hover light and tooltip, a pick and its badge, in both views.
+ * it, the wheel, the top view, a pane resized, the hover light and tooltip, a pick and its badge, in both views,
+ * 40 a GPU reset gives back the same picture, shadows too (they are drawn once, and the context's loss took them).
  *
  * Run: npx tsx scripts/check_3d.ts [board.json ...]     BASE=http://localhost:8133 adds the browser checks
  * With no arguments it uses every *.board.json in server/outputs.
@@ -207,7 +208,7 @@ else {
       }
       return false
     }
-    const cdp =await page.context().newCDPSession(page)
+    const cdp = await page.context().newCDPSession(page)
     await cdp.send('Performance.enable')
     const busy = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]))
     const m0 = await busy(), d0 = await draws()
@@ -334,6 +335,36 @@ else {
     const shadowWarned = warned.filter(t => /PCFSoftShadowMap/.test(t)).length
     check('39 the PCB tab\'s viewer: quiet when left alone, a click picks a part and redraws; three.js has no complaint about the shadows', idleBoard === 0 && !!pickedRef && shadowWarned === 0,
       `${idleBoard} draw calls alone, picked ${pickedRef || 'none'}, ${shadowWarned} shadow warnings`)
+
+    // 40: the context lost and restored by the extension a GPU reset goes through; the picture's own pixels compared
+    await page.mouse.move(2, 2)
+    await settle()
+    const b40 = (await boardViewer.boundingBox())!
+    const clip40 = { x: b40.x, y: b40.y, width: b40.width, height: b40.height }
+    const before40 = await page.screenshot({ clip: clip40 })
+    await page.evaluate(() => {
+      const gl = document.querySelector<HTMLCanvasElement>('[data-testid="kicad-3d"] canvas')!.getContext('webgl2')!
+      const lose = gl.getExtension('WEBGL_lose_context')!
+      Object.assign(window, { __lose: lose })
+      lose.loseContext()
+    })
+    await page.waitForTimeout(500)
+    await page.evaluate(() => (window as unknown as { __lose: WEBGL_lose_context }).__lose.restoreContext())
+    await settle()
+    const after40 = await page.screenshot({ clip: clip40 })
+    // the two PNGs, decoded by the page: the share of pixels that differ
+    const differ = await page.evaluate(async pngs => {
+      const [x, y] = await Promise.all(pngs.map(async b64 => {
+        const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob())
+        const c = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')!
+        c.drawImage(bitmap, 0, 0)
+        return c.getImageData(0, 0, bitmap.width, bitmap.height).data
+      }))
+      let off = 0
+      for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2]) > 12) off++
+      return off / (x.length / 4)
+    }, [before40.toString('base64'), after40.toString('base64')])
+    check('40 a GPU reset gives back the same picture, shadows too', differ < 0.002, `${(100 * differ).toFixed(2)}% of the pixels differ`)
   } finally {
     await browser.close()
   }

@@ -111,7 +111,8 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     renderer.toneMappingExposure = 1.0
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
-    // nothing in the scene moves but the camera, and the key light's shadows do not depend on it: drawn once, when the model is in
+    // nothing in the scene moves but the camera, and the key light's shadows do not depend on it: drawn once, when the model
+    // is in, and again if a GPU reset takes them
     renderer.shadowMap.autoUpdate = false
     // CSS size follows the panel; the drawing buffer is panel size x devicePixelRatio. Without this the
     // canvas shows at DPR x its CSS size on HiDPI screens and only its top-left part is visible.
@@ -312,8 +313,10 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerleave', onLeave)
     renderer.domElement.addEventListener('wheel', draw, { passive: true })
-    // the GPU reset or the browser gave the context back: three.js sets it up again, and nothing else asks for a draw
-    renderer.domElement.addEventListener('webglcontextrestored', draw)
+    // the GPU reset or the browser gave the context back: three.js sets it up again, but the shadow map is gone (the board
+    // came back flat, 8% of the view's pixels off: 2026-11-07), and nothing else asks for a draw
+    const onRestored = () => { renderer.shadowMap.needsUpdate = true; draw() }
+    renderer.domElement.addEventListener('webglcontextrestored', onRestored)
     // dev builds: where a part's centre lands on screen, so UI checks can click it
     if (import.meta.env.DEV) {
       Object.assign(el, {
@@ -461,7 +464,7 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       renderer.domElement.removeEventListener('pointermove', onMove)
       renderer.domElement.removeEventListener('pointerleave', onLeave)
       renderer.domElement.removeEventListener('wheel', draw)
-      renderer.domElement.removeEventListener('webglcontextrestored', draw)
+      renderer.domElement.removeEventListener('webglcontextrestored', onRestored)
       placeCamera.current = () => {}
       partsRef.current = new Map()
       anchorsRef.current = new Map()
