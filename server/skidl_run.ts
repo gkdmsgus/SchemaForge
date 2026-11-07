@@ -61,8 +61,11 @@ export function runSkidl(code: string, outDir: string, timeout = 90000): Promise
     // A killed process still fires 'close'; the folder is removed there, once Python has let go of it.
     const timer = setTimeout(() => { killTree(); settle(() => reject(new Error('skidl execution timed out'))) }, timeout)
     proc.on('error', (e: Error) => { settle(() => reject(e)); cleanup() })
+    // whatever the code started and left running goes when python does (POSIX: the group outlives python; Windows has no
+    // group). On 'exit', not 'close': 'close' waits for every holder of the stderr pipe, so a child that kept it held a
+    // finished run until it ended or the time limit came (review of 2026-11-07)
+    proc.on('exit', () => { if (posix) killTree() })
     proc.on('close', (exit: number | null) => {
-      // whatever the code started and left running goes too (POSIX: the group outlives python; Windows has no group)
       if (posix) killTree()
       settle(() => {
         if (exit !== 0) return reject(new Error(stderr))

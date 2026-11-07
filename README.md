@@ -233,7 +233,7 @@ cd server && npx tsx check_outputs_sweep.ts
 ```bash
 python server/pcb/check_deploy.py
 ```
-배포 이미지 10항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), skidl 코드가 띄운 자식 프로세스가 함께 정리되고 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
+배포 이미지 10항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), skidl 코드가 띄운 자식 프로세스가 함께 정리되고(그 자식이 파이썬의 오류 출력을 쥐고 있어도 실행이 바로 끝나는지) 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
 
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
