@@ -14,12 +14,18 @@
 // B10b there 배치하기 and its 3D button ask for a reload (they said the button tries again, which asks for nothing: the
 // lazy import keeps its failure, review of 2026-11-07), B10c a 3D model that did not load keeps the retry, which asks again.
 // B11 a board stopped because the same board was started in another window says why over the board, with what to do (it
-// showed only "오류" and 재시도: review of 2026-11-07).
+// showed only "오류" and 재시도: review of 2026-11-07). B12 a tab open across a restart, its board's files gone from the
+// server: 거버 says why in Korean and builds the board again, and the gerbers follow (its title said "PCB file not found."
+// and offered 거버 다시, refused the same way: review of 2026-11-07). B12 removes those files from this checkout's
+// server/outputs, as a restart does, so the API must run from this checkout.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
+import fs from 'node:fs'
+import path from 'node:path'
 import { chromium } from 'playwright'
 
 const BASE = (process.argv[2] || 'http://localhost:3000').replace(/\/$/, '')
+const OUTPUTS = path.resolve(import.meta.dirname, '..', 'server', 'outputs')
 const SHOTS = process.env.SHOTS
 let failed = 0
 const check = (name, ok, info = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`) }
@@ -271,6 +277,30 @@ try {
     /다른 창/.test(said11) && /재시도/.test(said11) && /다른 창/.test(title11 ?? '') && /event: done/.test(otherBoard),
     `banner "${said11.replace(/\s+/g, ' ')}", 재시도 title ${title11 ? 'says why' : 'none'}, the other window ${/event: done/.test(otherBoard) ? 'got its board' : otherBoard.slice(-120)}`)
   await twice.context().close()
+
+  // B12: the board is built, then its files (netlist, board, the rest of its name) go as a restart takes them
+  const old = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  let net12 = ''
+  old.on('request', r => { if (/\/generate_pcb_stream$/.test(r.url()) && !net12) net12 = r.postDataJSON()?.filename ?? '' })
+  await old.goto(`${BASE}/?demo=led`, { waitUntil: 'networkidle' })
+  await old.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+  const gerber12 = old.getByRole('button', { name: /^거버$/ })
+  await gerber12.waitFor({ timeout: 300000 })
+  const stem12 = net12.replace(/\.net$/, '')
+  const removed12 = stem12 ? fs.readdirSync(OUTPUTS).filter(f => f.startsWith(stem12)) : []
+  for (const f of removed12) fs.rmSync(path.join(OUTPUTS, f), { recursive: true, force: true })
+  await gerber12.click()
+  const gone12 = old.getByTestId('gerber-retry')
+  await gone12.waitFor({ timeout: 30000 })
+  const button12 = await gone12.innerText(), title12 = await gone12.getAttribute('title') ?? ''
+  if (SHOTS) await old.screenshot({ path: `${SHOTS}/board_gone.png` })
+  await gone12.click()
+  const rebuilt12 = await gerber12.waitFor({ timeout: 300000 }).then(() => true, () => false)
+  const zip12 = rebuilt12 && await gerber12.click().then(() => old.getByTestId('gerber-zip').waitFor({ timeout: 200000 })).then(() => true, () => false)
+  check('B12 a board file gone from the server: 거버 says why in Korean, builds the board again, then the gerbers',
+    removed12.length >= 2 && /PCB 다시 생성/.test(button12) && /남아 있지 않습니다/.test(title12) && !/not found/i.test(title12) && rebuilt12 && zip12,
+    `removed ${removed12.length} file(s); button "${button12}", title "${title12.replace(/\n/g, ' / ')}"; board again ${rebuilt12}, gerber zip ${zip12}`)
+  await old.context().close()
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])

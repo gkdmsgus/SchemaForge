@@ -1733,7 +1733,11 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
   if (!pcbFilename) return res.status(400).json({ error: 'No PCB filename provided.' })
 
   const pcbPath = join(OUTPUTS_DIR, basename(pcbFilename as string))
-  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'PCB file not found.' })
+  // an old tab's board after a restart or the sweep of old files: its tooltip said "PCB file not found." (review of
+  // 2026-11-07). board_gone: the screen offers to build the board again (its netlist is written again if it went too)
+  if (!existsSync(pcbPath)) {
+    return res.status(404).json({ error: '서버에 이 기판 파일이 남아 있지 않습니다. 서버가 다시 시작되거나 오래된 파일을 정리하면 지워집니다. PCB를 다시 생성한 뒤 거버를 만들어 주세요.', code: 'board_gone' })
+  }
 
   const gerberDir = join(OUTPUTS_DIR, basename(pcbFilename as string, '.kicad_pcb') + '_gerber')
   // fab_export.py empties the folder first, so a second request for the same board waits for the running one

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import {
-  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText,
+  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText, restoreNetlist,
   type AuthUser, type SessionPatch,
 } from '../api'
 import CircuitCanvas from './CircuitCanvas'
@@ -118,6 +118,8 @@ export default function ResultPanel({
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<GerberInfo | null>(null)
   const [gerberError, setGerberError] = useState('')
+  // the server no longer has the board file (a restart, or old files swept): the board is built again, not the gerbers
+  const [gerberGone, setGerberGone] = useState(false)
   // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
   const gerberReq = useRef(0)
   // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
@@ -354,7 +356,7 @@ export default function ResultPanel({
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
-  async function generatePCB(opts: { style?: 'smd' | 'tht'; ai?: boolean } = {}) {
+  async function generatePCB(opts: { style?: 'smd' | 'tht'; ai?: boolean; restored?: boolean } = {}) {
     const style = opts.style ?? pcbStyle, ai = opts.ai ?? useAi
     if (opts.style) setPcbStyle(opts.style)
     if (opts.ai != null) setUseAi(opts.ai)
@@ -398,6 +400,13 @@ export default function ResultPanel({
         setAiNote({ text: why, login })
         if (login) onAuthExpired?.()
         return generatePCB({ style, ai: false })
+      }
+      if (res.status === 404 && 'filename' in body && !opts.restored && result?.filename && result.graph) {
+        // its netlist file is gone too (a restart, or old files swept): written again from this circuit, as for a session
+        // opened from history, and asked once more. A filename is sent only when the circuit on screen is the file's
+        const written = await restoreNetlist(result.filename, result.graph).catch(() => false)
+        if (abort.signal.aborted) return
+        if (written) return generatePCB({ style, ai, restored: true })
       }
       if (!res.ok || !res.body) {
         const why = await errorText(res)
@@ -493,6 +502,7 @@ export default function ResultPanel({
     if (!pcbFilename) return
     const req = ++gerberReq.current
     setGerberStatus('loading')
+    setGerberGone(false)
     try {
       const res = await fetch(`${API}/generate_gerber`, {
         method: 'POST',
@@ -500,6 +510,7 @@ export default function ResultPanel({
         body: JSON.stringify({ pcbFilename }),
       })
       const data = await res.json()
+      if (data.code === 'board_gone' && req === gerberReq.current) setGerberGone(true)
       if (data.error) throw new Error(data.error)
       if (req !== gerberReq.current) return
       setGerberInfo({ dir: data.gerberDir as string, files: data.files || [], zip: data.zip as string | undefined })
@@ -999,10 +1010,12 @@ export default function ResultPanel({
                       ↓ 거버 zip{fabIssues.length ? ' · 확인 필요' : ''}
                     </a>
                   : <StatusChip tone={fabIssues.length ? 'warn' : 'ok'} title={fabIssues.length ? fabWarning(fabIssues) : undefined}>거버 완료</StatusChip>)}
-                {gerberStatus === 'error' && (
-                  <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
-                    style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>
-                )}
+                {/* the board file gone: 거버 다시 would be refused the same way, so the board is built again */}
+                {gerberStatus === 'error' && (gerberGone
+                  ? <button onClick={() => generatePCB()} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 PCB를 다시 만듭니다`}
+                      style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>PCB 다시 생성</button>
+                  : <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
+                      style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>)}
               </>}
               {pcbStatus === 'error' && <button onClick={() => generatePCB()} data-testid="pcb-retry"
                 title={pcbError ? `${pcbError}\n눌러서 다시 만듭니다` : undefined} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
