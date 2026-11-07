@@ -9,7 +9,6 @@
 //   from the old file — everything else here is brand-new.
 // ============================================================================
 
-import React from 'react';
 import Logo from './Logo.tsx';
 import { Button, IconSettings } from './primitives.tsx';
 import type { AuthUser } from '../api';

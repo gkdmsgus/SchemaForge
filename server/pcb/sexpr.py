@@ -104,10 +104,3 @@ def find_all(node, key):
     return [c for c in node if isinstance(c, list) and c and c[0] == key]
 
 
-def set_child(node, key, new_child):
-    """Replace the first child list headed by key, or append it."""
-    for i, c in enumerate(node):
-        if isinstance(c, list) and c and c[0] == key:
-            node[i] = new_child
-            return
-    node.append(new_child)

@@ -190,7 +190,6 @@ export interface GenerateResult {
   graph?: NetGraph
   error?: string
   guide?: string
-  netlist?: string
   /** the netlist check /generate ran before any PCB; findings null when it could not run (reason says why) */
   erc?: {
     findings: ErcFinding[] | null

@@ -13,7 +13,7 @@ sys.path.insert(0, HERE)
 from board import build_board, generate, hpwl, netlist_check, parse_netlist, BOARD_MARGIN, MAX_PLACEHOLDER_PINS  # noqa: E402
 import placer  # noqa: E402
 from kicad_pads import kicad_pad_positions  # noqa: E402
-from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
+from footprints_table import TABLE, KNOWN_UNMAPPED  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
 from fab_export import export_fab, FAB_SUFFIXES  # noqa: E402
 

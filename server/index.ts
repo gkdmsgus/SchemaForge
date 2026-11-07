@@ -4,7 +4,7 @@ import cors from 'cors'
 import { spawn } from 'child_process'
 import {
   mkdirSync, mkdtempSync, existsSync, rmSync,
-  readdirSync, writeFileSync, readFileSync, unlinkSync,
+  writeFileSync, readFileSync, unlinkSync,
 } from 'fs'
 import { join, basename } from 'path'
 import { tmpdir } from 'os'

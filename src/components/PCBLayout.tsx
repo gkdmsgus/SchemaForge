@@ -11,16 +11,9 @@ interface TraceDrag { netIdx: number; segIdx: number }
 
 const COPPER = '#d9a35a'
 const COPPER_GLOW = '#ffc56f'
-const PCB_GREEN = '#0c2418'
 const PCB_GREEN_DARK = '#081a11'
 const PAD_GOLD = '#e8c97a'
 const SILK_WHITE = '#dfe5dd'
-
-const COMP_TYPE_LABELS = {
-  R: '저항', C: '커패시터', L: '인덕터', D: '다이오드',
-  Q: '트랜지스터', U: 'IC', SW: '스위치', LS: '스피커',
-  K: '릴레이', BT: '배터리', F: '퓨즈',
-}
 
 function getMaxPin(ref: string, nets: NetEntry[]): number {
   let m = 2
@@ -346,7 +339,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
         {selectedNet !== null && (() => {
           const net = nets[selectedNet]
           if (!net) return null
-          const isPwr = isPowerNet(net.name)
           const traceColor = getPCBTraceColor(net.name) || COPPER
           return (
             <div style={{

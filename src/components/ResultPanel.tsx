@@ -12,10 +12,7 @@ import type { Spots } from '../lib/schematicPlace'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import { firstChangedLine, toLF, type CodeEdit } from '../lib/pythonCode'
-import {
-  Button, Input,
-  IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
-} from './primitives.tsx'
+import { IconCopy, IconDownload, IconLayers } from './primitives.tsx'
 import type {
   GenerateResult, Version, ChatSession, NetGraph, ChatMessage, ChatAction, PcbSummary, ErcFinding,
   BoardPart, BoardFrame, BoardModel, RouteEvent, DrcResult, AiRound,
@@ -85,7 +82,6 @@ export function saveResultToLocal(result: GenerateResult, prompt: string) {
 interface ResultPanelProps {
   result: GenerateResult
   setResult: Dispatch<SetStateAction<GenerateResult | null>>
-  theme?: string
   /** generate this prompt again now (no cache, no questions or plan: those panels are hidden here) */
   onRegenerate: (p: string) => void
   /** the server rejected the saved login (401) */
@@ -101,7 +97,7 @@ interface ResultPanelProps {
 }
 
 export default function ResultPanel({
-  result, setResult, theme, onRegenerate, onAuthExpired, lastPrompt,
+  result, setResult, onRegenerate, onAuthExpired, lastPrompt,
   versions = [], currentVersionId = null, onSelectVersion, onApplyVersion,
   initialChatSession = null, authUser = null, sessionId = null,
 }: ResultPanelProps) {
@@ -668,12 +664,6 @@ export default function ResultPanel({
 
   const components = effectiveGraph?.components || []
   const nets = effectiveGraph?.nets || []
-  const bom = components.map(c => ({ ref: c.ref, part: c.name || c.ref, val: c.value || '' }))
-  const spec = [
-    ['Parts', String(components.length)],
-    ['Nets', String(nets.length)],
-    ['Filename', result.filename || '—'],
-  ]
   const title = (lastPrompt || 'Generated Circuit').slice(0, 60)
 
   const lastRun = codeRun && codeRun.filename === result.filename ? codeRun : null
@@ -1235,11 +1225,11 @@ export default function ResultPanel({
                 <KicadGuide />
                 {netNote && <div style={drawerNote}>{netNote}</div>}
                 <pre style={{ margin:0, padding:'14px 20px', fontFamily:'var(--sf-font-mono)', fontSize:12, lineHeight:1.7, color:'var(--sf-fg-muted)', overflowX:'auto' }}>
-                  {(boardNet ? null : result.netlist) || (netText && netText.file === netFile
+                  {netText && netText.file === netFile
                     ? netText.text ?? (netText.failed ? '넷리스트를 불러오지 못했습니다.' : '넷리스트 파일을 서버에서 찾지 못했습니다.')
-                    : netFile ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.')}
+                    : netFile ? '불러오는 중…' : '이 결과에는 넷리스트 파일이 없습니다.'}
                 </pre>
-                {netText?.failed && netText.file === netFile && (boardNet || !result.netlist) && (
+                {netText?.failed && netText.file === netFile && (
                   <button onClick={() => setNetText(null)} style={{ ...ghostBtn, margin: '0 20px 14px' }}>다시 불러오기</button>
                 )}
               </>
@@ -1287,150 +1277,6 @@ const ghostBtn = {
 const drawerNote: React.CSSProperties = {
   margin: '10px 20px 0', padding: '4px 10px', borderLeft: '2px solid var(--sf-amber)',
   color: 'var(--sf-fg-muted)', fontFamily: 'var(--sf-font-sans)', fontSize: 11, lineHeight: 1.5,
-}
-
-function PanelLabel({ color, label, sub, extra }: { color: string; label: string; sub?: string; extra?: React.ReactNode }) {
-  return (
-    <div style={{
-      height: 30, flexShrink: 0,
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '0 14px',
-      background: 'var(--sf-bg-1)',
-      borderBottom: '1px solid var(--sf-line)',
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
-      <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color, letterSpacing: '0.12em', fontWeight: 700 }}>{label}</span>
-      <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-fg-faint)' }}>{sub}</span>
-      {extra && <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>{extra}</div>}
-    </div>
-  )
-}
-
-function TimelineStrip({ versions, currentVersionId, onSelectVersion, onApplyVersion }: { versions: Version[]; currentVersionId: string | null; onSelectVersion?: (id: string) => void; onApplyVersion?: () => void }) {
-  const currentIdx = versions.findIndex(v => v.id === currentVersionId)
-  const isBrowsingPast = currentIdx >= 0 && currentIdx < versions.length - 1
-  const futureCount = versions.length - 1 - currentIdx
-
-  return (
-    <div style={{
-      marginBottom: 20,
-      background: 'var(--sf-bg-2)',
-      border: '1px solid var(--sf-line)',
-      borderRadius: 'var(--sf-r-lg)',
-      padding: '12px 16px',
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 10, gap: 16, flexWrap: 'wrap',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <span style={{
-            fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-            color: 'var(--sf-amber)', letterSpacing: '0.14em',
-          }}>TIMELINE</span>
-          <span style={{
-            fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-            color: 'var(--sf-fg-dim)', letterSpacing: '0.06em',
-          }}>{currentIdx + 1} / {versions.length} · 이번 세션</span>
-        </div>
-        {isBrowsingPast && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)' }}>
-              이후 {futureCount}개 버전 폐기됨
-            </span>
-            <button
-              onClick={onApplyVersion}
-              style={{
-                padding: '5px 14px',
-                background: 'var(--sf-amber)',
-                color: 'var(--sf-fg-inverse)',
-                border: 'none',
-                borderRadius: 'var(--sf-r-pill)',
-                fontFamily: 'var(--sf-font-mono)',
-                fontSize: 12, fontWeight: 600,
-                letterSpacing: '0.06em',
-                cursor: 'pointer',
-              }}
-            >
-              ✓ 이 버전으로 Apply
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div style={{
-        display: 'flex', alignItems: 'stretch', gap: 8,
-        overflowX: 'auto', paddingBottom: 4,
-      }}>
-        {versions.map((v, i) => {
-          const active = v.id === currentVersionId
-          const past = currentIdx >= 0 && i > currentIdx
-          const time = new Date(v.time)
-          const ts = `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}:${String(time.getSeconds()).padStart(2, '0')}`
-          const compCount = v.result?.graph?.components?.length || 0
-          const netCount = v.result?.graph?.nets?.length || 0
-          return (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                onClick={() => onSelectVersion?.(v.id)}
-                style={{
-                  flexShrink: 0,
-                  minWidth: 180, maxWidth: 240,
-                  padding: '10px 12px',
-                  textAlign: 'left',
-                  background: active ? 'var(--sf-amber-soft)' : 'var(--sf-bg-3)',
-                  border: `1px solid ${active ? 'var(--sf-amber-line)' : 'var(--sf-line)'}`,
-                  borderRadius: 'var(--sf-r-md)',
-                  color: 'var(--sf-fg)',
-                  cursor: 'pointer',
-                  opacity: past ? 0.55 : 1,
-                  transition: 'all var(--sf-dur) var(--sf-ease)',
-                  position: 'relative',
-                }}
-              >
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  marginBottom: 4,
-                }}>
-                  <span style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: active ? 'var(--sf-amber)' : (past ? 'var(--sf-fg-dim)' : 'var(--sf-cyan)'),
-                  }} />
-                  <span style={{
-                    fontFamily: 'var(--sf-font-mono)', fontSize: 11,
-                    color: active ? 'var(--sf-amber)' : 'var(--sf-fg-dim)',
-                    fontWeight: 600, letterSpacing: '0.06em',
-                  }}>v{i + 1}</span>
-                  <span style={{
-                    fontFamily: 'var(--sf-font-mono)', fontSize: 10,
-                    color: 'var(--sf-fg-dim)', marginLeft: 'auto',
-                  }}>{ts}</span>
-                </div>
-                <div style={{
-                  fontSize: 12, color: active ? 'var(--sf-fg)' : 'var(--sf-fg-muted)',
-                  fontFamily: 'var(--sf-font-sans)',
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  marginBottom: 2,
-                }}>{v.label}</div>
-                <div style={{
-                  fontSize: 10, color: 'var(--sf-fg-dim)',
-                  fontFamily: 'var(--sf-font-mono)', letterSpacing: '0.04em',
-                }}>{compCount}부품 · {netCount}넷</div>
-              </button>
-              {i < versions.length - 1 && (
-                <span style={{
-                  flexShrink: 0,
-                  fontSize: 14,
-                  color: i < currentIdx ? 'var(--sf-amber)' : 'var(--sf-fg-dim)',
-                  fontFamily: 'var(--sf-font-mono)',
-                }}>→</span>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
 }
 
 /** /generate_gerber's answer: the fabrication files in outputs/<dir>/ and the zip of all of them */

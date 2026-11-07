@@ -1,4 +1,4 @@
-import React, { useState, CSSProperties, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from 'react';
+import { useState, CSSProperties, ReactNode, ButtonHTMLAttributes } from 'react';
 
 // ── Spinner ────────────────────────────────────────────────────────────────
 
@@ -148,43 +148,6 @@ export function Chip({ children, icon, active, onClick, variant = 'default', sty
   );
 }
 
-// ── Input ──────────────────────────────────────────────────────────────────
-
-interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
-  icon?: ReactNode
-  size?: 'sm' | 'md' | 'lg'
-  style?: CSSProperties
-}
-
-export function Input({ icon, size = 'md', style, ...rest }: InputProps) {
-  const [focus, setFocus] = useState(false);
-  const h = size === 'lg' ? 44 : size === 'sm' ? 28 : 36;
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      height: h, padding: '0 12px',
-      background: 'var(--sf-bg-2)',
-      border: `1px solid ${focus ? 'var(--sf-amber-line)' : 'var(--sf-line-strong)'}`,
-      borderRadius: 'var(--sf-r-sm)',
-      transition: 'border-color var(--sf-dur) var(--sf-ease)',
-      boxShadow: focus ? '0 0 0 3px var(--sf-amber-soft)' : 'none',
-      ...style,
-    }}>
-      {icon && <span style={{ color: 'var(--sf-fg-dim)', display: 'flex' }}>{icon}</span>}
-      <input
-        onFocus={() => setFocus(true)}
-        onBlur={() => setFocus(false)}
-        style={{
-          flex: 1, background: 'transparent', border: 'none', outline: 'none',
-          color: 'var(--sf-fg)', fontFamily: 'var(--sf-font-sans)', fontSize: 14,
-          letterSpacing: '-0.005em',
-        }}
-        {...rest}
-      />
-    </div>
-  );
-}
-
 // ── Icon set ───────────────────────────────────────────────────────────────
 
 interface IconProps {
@@ -193,14 +156,10 @@ interface IconProps {
 
 const stroke = { stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
 
-export const IconBolt     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>;
 export const IconWand     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8l1.4 1.4M17.8 6.2l1.4-1.4M3 21l9-9M12.2 6.2l-1.4-1.4"/></svg>;
-export const IconFile     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>;
 export const IconClose    = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M6 6l12 12M18 6L6 18"/></svg>;
 export const IconCheck    = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M4 12l5 5L20 6"/></svg>;
 export const IconCopy     = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>;
-export const IconPin      = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 17v5M5 3h14l-2 7H7L5 3zM7 10l5 7 5-7"/></svg>;
 export const IconDownload = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 3v13M6 11l6 6 6-6M4 21h16"/></svg>;
-export const IconHistory  = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
 export const IconSettings = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
 export const IconLayers   = (p: IconProps) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" {...stroke}><path d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>;

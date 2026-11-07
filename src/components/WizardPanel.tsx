@@ -21,13 +21,10 @@ const STEPS = [
 
 interface WizardPanelProps {
   phase?: string
-  initialPrompt?: string
   currentPrompt?: string
   onSubmit: (prompt: string, typeKey?: string) => void
   onCancel?: () => void
   logLines?: LogLine[]
-  tokensUsed?: number
-  tokenBudget?: number
 }
 
 export default function WizardPanel({ phase = 'composer', currentPrompt = '', onSubmit, onCancel, logLines = [] }: WizardPanelProps) {

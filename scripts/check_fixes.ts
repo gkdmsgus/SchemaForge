@@ -604,7 +604,8 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
 // D1. after an AI edit, the board built from it gives its own .net in the Netlist tab and the top bar's .net button:
 // the generated .net went with the edited .kicad_pcb, two files of two circuits downloaded together (2026-11-03 tour
 // takes 1 and 3, S17). No edit, no finished board, or a board of another circuit: the generated one, notes as before.
-// The name is the server's: the edited circuit's .net and its board share one stem (/generate_pcb_stream)
+// The name is the server's: the edited circuit's .net and its board share one stem (/generate_pcb_stream). The tab
+// shows only what it read from that file: no response carries the netlist's text (result.netlist was never sent)
 {
   const pcb = 'blinky_1a2b3c4d.kicad_pcb'
   const own = boardNetlist(true, 'done', null, pcb), style = boardNetlist(true, 'done', 'style', pcb)
@@ -615,8 +616,8 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const src = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf8')
   const wired = /const boardNet = boardNetlist\(aiEdited, pcbStatus, pcbStale, pcbFilename\)/.test(src) && /const netFile = boardNet \?\? result\?\.filename/.test(src)
     && /download\/\$\{netFile\}`/.test(src) && !/download\/\$\{result\.filename\}/.test(src)
-    && /\(boardNet \? null : result\.netlist\) \|\| \(netText && netText\.file === netFile/.test(src)
-    && /netText\.file === netFile && \(boardNet \|\| !result\.netlist\)/.test(src)
+    && /\{netText && netText\.file === netFile\s*\? netText\.text/.test(src) && /netText\?\.failed && netText\.file === netFile && \(/.test(src)
+    && !/result\.netlist/.test(src)
   const server = fs.readFileSync(path.join('server', 'index.ts'), 'utf8')
   const sameStem = /if \(graph\) \{\s*const netFilename = `\$\{fileStem\(baseName\)\}_[^`]*\.net`[\s\S]{0,200}?pcbFilename = netFilename\.replace\('\.net', '\.kicad_pcb'\)/.test(server)
   check('D1 after an AI edit the board\'s own .net is shown and downloaded; otherwise the generated one',

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, CSSProperties } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import type { NetGraph, NetEntry } from '../types'
 import { routeLinks, type Box, type Link, type PinEnd } from '../lib/schematicRoute'
 import { carryOver, type Spots } from '../lib/schematicPlace'
@@ -42,7 +42,6 @@ function getMaxPin(ref: string, nets: NetEntry[]): number {
 
 function getPinLayout(ref: string, pinCount: number): Layout {
   const t = (ref[0] ?? '').toUpperCase()
-  const PIN_STUB = 14
   if (t === 'Q') {
     return { w: 72, h: 80,
       pins: { 1:{x:-36,y:0,side:'L'}, 2:{x:0,y:-40,side:'T'}, 3:{x:0,y:40,side:'B'} } }
@@ -432,8 +431,6 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   const drawn = useMemo(() => drawing(nets, positions, layouts), [nets, positions, layouts])
 
   if (!graph || !comps.length) return null
-
-  const W = auto.width, H = auto.height
 
   function svgPoint(e: React.PointerEvent | PointerEvent): Pos {
     const svg = svgRef.current

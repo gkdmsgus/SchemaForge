@@ -44,7 +44,6 @@ function getSettings(): AppSettings {
 function detectStep(msg: string): number {
   if (/netlist|fixing/i.test(msg)) return 2
   if (msg.includes('GPT') || msg.includes('analysing') || msg.includes('analyzing')) return 1
-  if (msg.includes('netlist') || msg.includes('Generating')) return 2
   return 0
 }
 
@@ -759,13 +758,10 @@ export default function App() {
         <div style={{ display: preparing ? 'none' : 'contents' }}>
           <WizardPanel
             phase={wizardPhase}
-            initialPrompt=""
             currentPrompt={lastPrompt.current}
             onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
             onCancel={goHome}
             logLines={logLines}
-            tokensUsed={Math.min(4096, logLines.length * 200)}
-            tokenBudget={4096}
           />
         </div>
       )}
