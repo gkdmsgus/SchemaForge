@@ -1,10 +1,12 @@
-// Checks J0-J7 on scripts/jetson_run.sh, the Jetson's deploy, with stand-ins for docker, curl, git and sleep: no Docker,
+// Checks J0-J9 on scripts/jetson_run.sh, the Jetson's deploy, with stand-ins for docker, curl, git and sleep: no Docker,
 // no Jetson. The stand-ins keep images as tags, containers as names, and give each image's /health from a file. J0 bash
 // reads the script. J1 a new image that comes up runs, and the image that ran before is $IMAGE-prev. J2 a new image
 // whose KiCad does not answer is replaced by the one before, and the run still ends with exit 1. J3 --no-build twice
 // keeps the real image before as $IMAGE-prev. J4 --rollback runs $IMAGE-prev without a build. J5 a failed build leaves
 // the running container alone. J6 IMAGE and NAME run a test image and container beside the real ones. J7 the image
-// takes the commit after its last RUN. Before 2026-11-08 a build replaced the image under the same name and removed the
+// takes the commit after its last RUN. J8 a new image with another KiCad than Dockerfile.jetson's KICAD_EXPECT counts
+// as not up. J9 the image build stops when kicad-cli is not KICAD_EXPECT: the PPA has no version pin, and the Render
+// image is 10.0.5 while the Jetson's came out 10.0.8 (vault note on the move). Before 2026-11-08 a build replaced the image under the same name and removed the
 // running container first, so a new image that did not come up left the site down with nothing to go back to.
 // Usage: npx tsx scripts/check_jetson_run.ts [script]   → exit 0 only if all pass (script: another jetson_run.sh to check)
 import fs from 'node:fs'
@@ -63,14 +65,25 @@ exit 7
 echo "git $*" >> "$SF_STUB/calls"; echo abc1234
 `,
   sleep: '#!/usr/bin/env bash\n',
+  // three tries instead of 60: each one is a few processes, slow on Windows when the PC is busy
+  seq: '#!/usr/bin/env bash\necho 1 2 3\n',
 }
 
 type State = { tags: [string, string][], containers: [string, string, string][], health: Record<string, string>,
   buildId?: string, buildFail?: boolean, envFile?: boolean }
 type Result = { code: number | null, out: string, tags: Map<string, string>, containers: Map<string, string>, calls: string[] }
 
-const ok = (id: string) => JSON.stringify({ status: 'ok', kicad: '10.0.8', id })
-const broken = (id: string) => JSON.stringify({ status: 'ok', kicad: null, id })
+const ok = (id: string, kicad: string | null = '10.0.8') => JSON.stringify({ status: 'ok', kicad, id })
+const broken = (id: string) => ok(id, null)
+
+/** bash with the stand-ins in `stubs` first on PATH, set inside bash: Git's bash puts its own folders (a real curl) in front */
+const inBash = (stubs: string, args: string[], env: Record<string, string>) => {
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k)))
+  return spawnSync(BASH, ['-c', 'if command -v cygpath >/dev/null; then s=$(cygpath -u "$SF_STUBS"); else s="$SF_STUBS"; fi; '
+    + 'PATH="$s:$PATH" exec bash "$@"', 'bash', ...args], {
+    encoding: 'utf8', timeout: 120_000, env: { ...base, PATH: process.env.PATH ?? process.env.Path ?? '', SF_STUBS: slash(stubs), ...env },
+  })
+}
 
 const run = (state: State, args: string[] = [], env: Record<string, string> = {}): Result => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-jetson-run-'))
@@ -88,13 +101,7 @@ const run = (state: State, args: string[] = [], env: Record<string, string> = {}
     if (state.buildId) fs.writeFileSync(path.join(st, 'build_id'), state.buildId)
     if (state.buildFail) fs.writeFileSync(path.join(st, 'build_fail'), '')
     if (state.envFile) fs.writeFileSync(path.join(home, 'schemaforge.env'), 'ALLOWED_EMAILS=nobody@example.com\n')
-    const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k)))
-    // the stand-ins first on PATH, set inside bash: Git's bash puts its own folders (with a real curl) in front
-    const r = spawnSync(BASH, ['-c', 'if command -v cygpath >/dev/null; then s=$(cygpath -u "$SF_STUBS"); else s="$SF_STUBS"; fi; '
-      + 'PATH="$s:$PATH" exec bash "$0" "$@"', slash(path.join(repo, 'scripts', 'jetson_run.sh')), ...args], {
-      encoding: 'utf8', timeout: 60_000,
-      env: { ...base, PATH: process.env.PATH ?? process.env.Path ?? '', HOME: slash(home), SF_STUB: slash(st), SF_STUBS: slash(stubs), ...env },
-    })
+    const r = inBash(stubs, [slash(path.join(repo, 'scripts', 'jetson_run.sh')), ...args], { HOME: slash(home), SF_STUB: slash(st), ...env })
     const lines = (f: string) => fs.readFileSync(path.join(st, f), 'utf8').split('\n').filter(Boolean)
     return {
       code: r.error ? null : r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? String(r.error) : ''}`,
@@ -184,6 +191,36 @@ const live = (): State => ({
   const arg = lines.findIndex(l => /^ARG SF_COMMIT(=|$)/.test(l)), env = lines.findIndex(l => /^ENV SF_COMMIT=\$SF_COMMIT$/.test(l))
   check('J7 Dockerfile.jetson takes the commit (ARG and ENV SF_COMMIT) after its last RUN', arg > lastRun && env > arg,
     `last RUN line ${lastRun + 1}, ARG ${arg + 1}, ENV ${env + 1}`)
+}
+
+// J8
+{
+  const r = run({ ...live(), health: { old: ok('old'), new: ok('new', '10.0.9') } })
+  check('J8 a new image with another KiCad than KICAD_EXPECT is replaced by the one before',
+    r.code === 1 && r.containers.get('schemaforge') === 'old' && /rolled back/.test(r.out), said(r))
+}
+
+// J9: the RUN after ARG KICAD_EXPECT, run as the build would with a kicad-cli stand-in
+{
+  const lines = lf(path.join(ROOT, 'Dockerfile.jetson')).split('\n')
+  const arg = lines.findIndex(l => /^ARG KICAD_EXPECT=\S+$/.test(l))
+  const apt = lines.findIndex(l => /apt-get install .*\bkicad\b/.test(l))
+  let at = lines.findIndex((l, i) => i > arg && /^RUN /.test(l)), cmd = ''
+  while (at >= 0 && at < lines.length) { cmd += lines[at].replace(/\\$/, ' '); if (!lines[at].endsWith('\\')) break; at++ }
+  cmd = cmd.replace(/^RUN /, '')
+  const expect = arg >= 0 ? lines[arg].split('=')[1] : ''
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-kicad-pin-'))
+  const builds: Record<string, number | null> = {}
+  try {
+    fs.writeFileSync(path.join(tmp, 'kicad-cli'), '#!/usr/bin/env bash\n[ -n "$FAKE" ] && echo "$FAKE"\n[ -n "$FAKE" ]\n', { mode: 0o755 })
+    for (const fake of [expect, '10.0.9', '']) builds[fake || 'none'] = inBash(tmp, ['-c', cmd], { KICAD_EXPECT: expect, FAKE: fake }).status
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+  check('J9 Dockerfile.jetson stops the build when kicad-cli is not KICAD_EXPECT (10.0.8, the version the image has now)',
+    expect === '10.0.8' && arg > apt && apt >= 0 && /kicad-cli version/.test(cmd)
+    && builds[expect] === 0 && builds['10.0.9'] !== 0 && builds.none !== 0,
+    `ARG ${expect || 'missing'} at line ${arg + 1}, apt line ${apt + 1}, build exit by kicad-cli ${JSON.stringify(builds)}`)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')

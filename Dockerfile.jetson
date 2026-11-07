@@ -2,7 +2,7 @@
 #
 # The kicad/kicad image is published for amd64 only, so this image installs
 # kicad-cli from the official KiCad 10 PPA, which has jammy/arm64 builds
-# (10.0.8 as of 2026-11-03; the amd64 image is pinned to 10.0.5).
+# (10.0.8 as of 2026-11-03, held there by KICAD_EXPECT below; the amd64 image is pinned to 10.0.5).
 # Build and run on the Jetson itself: scripts/jetson_run.sh (docker build -f Dockerfile.jetson, then the container
 # with its memory, process and privilege limits).
 
@@ -30,6 +30,12 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends kicad kicad-symbols kicad-footprints python3-venv python3-pip tini \
  && rm -rf /var/lib/apt/lists/*
+# the KiCad this image is checked with. The PPA likely keeps only its newest build, so an apt version pin would stop
+# the build as soon as a new one comes out; this stops it too, and names the version that came. After checking a new
+# one (server/pcb/check_deploy.py --dockerfile Dockerfile.jetson), change it here: scripts/jetson_run.sh reads it too
+ARG KICAD_EXPECT=10.0.8
+RUN v="$(kicad-cli version)"; [ "$v" = "$KICAD_EXPECT" ] \
+ || { echo "kicad-cli is ${v:-missing}, but this image is checked with $KICAD_EXPECT (KICAD_EXPECT in Dockerfile.jetson)"; exit 1; }
 
 COPY --from=api /usr/local/bin/node /usr/local/bin/node
 

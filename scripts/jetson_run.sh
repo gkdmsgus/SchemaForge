@@ -27,6 +27,10 @@ ENV_FILE="$HOME/schemaforge.env"
 PUBLISH="${PUBLISH:-127.0.0.1:8002:8002}"
 MEMORY="${MEMORY:-2g}"
 CPUS="${CPUS:-4}"
+# the KiCad Dockerfile.jetson checks its image against: a new image is up only with exactly that one. The image before
+# may have another 10.x, and going back to it only needs KiCad to answer
+KICAD=$(sed -n 's/^ARG KICAD_EXPECT=//p' Dockerfile.jetson | tr -d '\r')
+[ -n "$KICAD" ] || { echo "no ARG KICAD_EXPECT in Dockerfile.jetson"; exit 1; }
 
 mode="${1:-}"
 case "$mode" in
@@ -88,7 +92,7 @@ new=$(image_id "$IMAGE")
 if [ -n "$live" ] && [ "$live" != "$new" ]; then docker tag "$live" "$PREV"; fi
 
 start "$IMAGE"
-if wait_up '"kicad":"10.'; then exit 0; fi
+if wait_up "\"kicad\":\"$KICAD\""; then exit 0; fi
 
 prev=$(image_id "$PREV")
 if [ -n "$prev" ] && [ "$prev" != "$new" ]; then

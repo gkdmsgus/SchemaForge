@@ -224,7 +224,7 @@ npx tsx scripts/check_test_chain.ts
 ```bash
 npx tsx scripts/check_jetson_run.ts
 ```
-젯슨 배포 스크립트 8항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다.
+젯슨 배포 스크립트 10항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지, `Dockerfile.jetson`의 `KICAD_EXPECT`(10.0.8)와 다른 KiCad로 뜬 새 이미지를 뜨지 않은 것으로 보는지, 이미지 빌드가 `kicad-cli version`이 그 값과 다르면 멈추는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다.
 
 ```bash
 cd server && npx tsx check_demo_cache.ts
@@ -402,6 +402,7 @@ dev/board.html        기판 화면만 따로 띄우는 개발용 페이지
 
 Render 무료 인스턴스(`render.yaml`) + Supabase 기준 순서는 [DEPLOY.md](DEPLOY.md) 참고. 컨테이너에 KiCad가 없으면 DRC·거버·3D가 비활성화된다.
 
+- KiCad 버전은 이미지마다 고정한다. Render 이미지는 10.0.5(`Dockerfile`의 `kicad/kicad:10.0.5`), 젯슨 이미지는 10.0.8(`Dockerfile.jetson`의 `KICAD_EXPECT`: PPA에서 다른 판이 오면 빌드가 멈추고, `scripts/jetson_run.sh`는 `/health`가 그 판을 말해야 뜬 것으로 본다). 같은 회로라도 두 서버의 거버가 바이트까지 같지는 않을 수 있다.
 - 배포 서버(`NODE_ENV=production`)에서는 데모·기판·거버는 누구나 쓰고, 회로 생성·AI 편집·코드 실행은 `ALLOWED_EMAILS`에 있는 계정만 쓴다 (DEPLOY.md 0절).
 - 무료 인스턴스는 CPU 0.1 · 메모리 512 MB다. 같은 제한(`--cpus=0.1 --memory=512m`)으로 묶은 로컬 컨테이너에서 데모 5개와 화면 시험이 통과했고, 데모 하나(넷리스트 → 기판·DRC → 3D → 거버)에 대략 40~60초 걸렸다. 15분 동안 요청이 없으면 잠들고, 다음 요청에 깨는 데 약 1분 걸린다 ([Render 무료 인스턴스](https://render.com/docs/free)).
 - 이미지는 약 4.3 GB(압축 전, gzip 약 0.97 GB)로 KiCad 공식 이미지가 대부분이다.
