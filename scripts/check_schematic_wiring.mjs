@@ -20,7 +20,9 @@
 // part and its toast takes it back, S17 a hand-changed value moves the operating check, S18 opened again from this
 // browser's record it is the edited circuit, not called an AI edit, S19 a typed " or \ does not reach the netlist (the check
 // cleans them and passed; the PCB stopped with a Python traceback), S20 a hand edit that breaks the circuit leaves the
-// schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check).
+// schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check), S21 a hand edit made
+// while the AI editor answers stays, with the answer's change on top (the answer went on the circuit it was asked about: the
+// value went back, on screen and in the saved session).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -647,6 +649,62 @@ try {
   const undone20 = await p20.locator('g[data-net]').count()
   check('S20 a hand edit that breaks the circuit leaves the schematic\'s undo in reach', said20 && onTop && undone20 === nets20 - deleted20 + 1,
     `${deleted20} wires deleted, check's box ${said20}, undo on top ${onTop}, nets ${nets20}→${undone20}`)
+
+  // S21-S22: a saved session and the AI editor's answers faked
+  const answered = []
+  const editorPage = async which => {
+    const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    await c.addInitScript(() => {
+      localStorage.setItem('sf_token', 'fake-token')
+      localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+      localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+    })
+    const p = await c.newPage()
+    const d = await fetch(`${BASE}/demo_result/${which}`).then(r => r.json())
+    await p.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+    await p.route(/\/favorites$/, r => json(r, { favorites: [] }))
+    await p.route(/\/sessions$/, r => json(r, { id: 's21', sessions: [] }))
+    await p.route(/\/sessions\/s21$/, r => { answered.push(r.request().postDataJSON()); return json(r, { ok: true }) })
+    await p.route(/\/sessions\/s21\/messages$/, r => json(r, { messages: [] }))
+    await p.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+    await p.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(d)}\n\n` }))
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    await p.locator('.sf-home-input textarea').fill(`AI 편집 답을 기다리는 ${which} 회로`)
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p.locator('g[data-comp]').first().waitFor({ timeout: 20000 })
+    await p.waitForTimeout(600)
+    return p
+  }
+  const ask = async (p, message) => {
+    await p.getByTestId('chat-input').fill(message)
+    await p.getByTestId('chat-input').press('Enter')
+  }
+  const p21 = await editorPage('motor')
+  let answer19
+  const answering = new Promise(r => { answer19 = r })
+  await p21.route(/\/chat_edit$/, async r => {
+    await answering
+    await r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: 'C9를 더했습니다.', actions: [{ type: 'add_component', ref: 'C9', name: 'C', value: '100nF' }] })}\n\n` })
+  })
+  await ask(p21, 'C9 커패시터를 하나 추가해줘')
+  await p21.waitForTimeout(200)
+  const r21 = await p21.locator("g[data-comp='R2']").boundingBox()
+  await p21.mouse.dblclick(r21.x + r21.width / 2, r21.y + r21.height / 2)
+  await p21.locator('svg foreignObject input').first().fill('33k')
+  await p21.keyboard.press('Enter')
+  await p21.waitForTimeout(400)
+  answer19()
+  await p21.locator("g[data-comp='C9']").waitFor({ timeout: 5000 }).catch(() => {})
+  await p21.waitForTimeout(400)
+  const shown21 = await p21.locator("g[data-comp='R2']").textContent(), c9Came = await p21.locator("g[data-comp='C9']").count() === 1
+  const kept21 = valueOf(answered.at(-1)?.graph, 'R2'), record21 = await p21.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]?.graph)
+  await p21.getByTestId('schematic-undo').click()
+  await p21.locator("g[data-comp='C9']").waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
+  await p21.waitForTimeout(300)
+  const undone21 = await p21.locator("g[data-comp='R2']").textContent()
+  check('S21 a hand edit made while the AI editor answers stays, with the answer on top, on screen and in the saves; one undo takes the answer off',
+    /33k/.test(shown21) && c9Came && kept21 === '33k' && valueOf(record21, 'R2') === '33k' && /33k/.test(undone21),
+    `R2 "${shown21}", C9 ${c9Came}, session ${kept21}, this browser ${valueOf(record21, 'R2')}, after undo "${undone21}"`)
 } finally {
   await browser.close()
 }

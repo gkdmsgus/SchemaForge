@@ -172,6 +172,9 @@ export default function ResultPanel({
   const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
+  // the circuit on screen now, for an answer that comes back later (sendChat)
+  const graphNow = useRef(effectiveGraph)
+  graphNow.current = effectiveGraph
   // the circuit is no longer the generated one: changed in the AI chat or by hand on the schematic (a session opened
   // from history starts with localGraph === result.graph, or with savedEdit when its saved circuit is an AI edit)
   const aiEdited = !!localGraph && localGraph !== result?.graph
@@ -575,7 +578,9 @@ export default function ResultPanel({
           } else if (evt === 'done') {
             finished = true
             const { reply, actions: proposed } = JSON.parse(raw)
-            const snapshot = effectiveGraph ?? null
+            // the circuit as it is now: the answer is a list of changes, and on the circuit it was asked about it took back
+            // a hand edit or an undo made while it was on its way, on screen and in the saves (2026-11-07)
+            const snapshot = graphNow.current ?? null
             // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit): a pin of a part the
             // message does not name keeps its net, and a reply that asks first changes nothing yet. Nothing left to
             // apply leaves the circuit, undo list and re-check alone, and says so under a reply that does not ask
