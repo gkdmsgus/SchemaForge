@@ -22,7 +22,8 @@
 // cleans them and passed; the PCB stopped with a Python traceback), S20 a hand edit that breaks the circuit leaves the
 // schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check), S21 a hand edit made
 // while the AI editor answers stays, with the answer's change on top (the answer went on the circuit it was asked about: the
-// value went back, on screen and in the saved session).
+// value went back, on screen and in the saved session), S22 a part's pins are kept for that part: a 3-pin regulator that took
+// the ref of a 555 has 3 (it had the 8 of the 555, 5 of them on nothing), and an undo brings the 555 back with its 8.
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -705,6 +706,33 @@ try {
   check('S21 a hand edit made while the AI editor answers stays, with the answer on top, on screen and in the saves; one undo takes the answer off',
     /33k/.test(shown21) && c9Came && kept21 === '33k' && valueOf(record21, 'R2') === '33k' && /33k/.test(undone21),
     `R2 "${shown21}", C9 ${c9Came}, session ${kept21}, this browser ${valueOf(record21, 'R2')}, after undo "${undone21}"`)
+
+  const p22 = await editorPage('ne555')
+  const u1Pins = () => p22.locator("g[data-comp='U1'] g[style*='crosshair'] circle[r='8']").count()
+  const pins22 = await u1Pins()
+  await p22.route(/\/chat_edit$/, r => {
+    const actions = /빼줘/.test(r.request().postDataJSON().message) ? [{ type: 'remove_component', ref: 'U1' }] : [
+      { type: 'add_component', ref: 'U1', name: 'LM7805', value: 'LM7805' },
+      { type: 'add_net', name: 'IN22', nodes: [{ ref: 'U1', pin: '1' }, { ref: 'R1', pin: '1' }] },
+      { type: 'add_net', name: 'OUT22', nodes: [{ ref: 'U1', pin: '3' }, { ref: 'R2', pin: '1' }] },
+    ]
+    return r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: '바꿨습니다.', actions })}\n\n` })
+  })
+  await ask(p22, 'U1 빼줘')
+  await p22.locator("g[data-comp='U1']").waitFor({ state: 'detached', timeout: 5000 })
+  await p22.waitForTimeout(800)
+  await ask(p22, 'U1 자리에 LM7805 U1을 넣고 R1, R2 연결도 바꿔줘')
+  await p22.locator("g[data-comp='U1']").waitFor({ timeout: 5000 })
+  await p22.waitForTimeout(400)
+  const regulator = await u1Pins()
+  await p22.getByTestId('schematic-undo').click()
+  await p22.locator("g[data-comp='U1']").waitFor({ state: 'detached', timeout: 5000 })
+  await p22.waitForTimeout(300)
+  await p22.getByTestId('schematic-undo').click()
+  await p22.locator("g[data-comp='U1']").waitFor({ timeout: 5000 })
+  await p22.waitForTimeout(400)
+  const back22 = await u1Pins()
+  check('S22 a part that takes another\'s ref has its own pins; an undo brings the first part back with its own', pins22 === 8 && regulator === 3 && back22 === 8, `555 ${pins22} pins, regulator ${regulator}, after undo ${back22}`)
 } finally {
   await browser.close()
 }

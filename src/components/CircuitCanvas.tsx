@@ -326,14 +326,16 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }, [])
 
   // each part keeps the pins it has been drawn with in this result: counted from the nets alone, a deleted wire took
-  // its pin along, so the pin could not be wired again and an IC's other pins moved (2026-11-06)
+  // its pin along, so the pin could not be wired again and an IC's other pins moved (2026-11-06). By ref and kind: a 3-pin
+  // regulator that took a 555's ref is not that 555, and an undo brings the 555 back with its own (2026-11-07)
   const pinCounts = useRef<Record<string, number>>(spots?.pins ?? {})
   if (spots) spots.pins = pinCounts.current
   const layouts = useMemo<Record<string, Layout>>(() => {
     const ls: Record<string, Layout> = {}
     comps.forEach(c => {
-      const count = Math.max(getMaxPin(c.ref, nets), pinCounts.current[c.ref] ?? 0)
-      pinCounts.current[c.ref] = count
+      const part = `${c.ref} ${c.name ?? ''}`
+      const count = Math.max(getMaxPin(c.ref, nets), pinCounts.current[part] ?? 0)
+      pinCounts.current[part] = count
       ls[c.ref] = getPinLayout(c.ref, count)
     })
     return ls
@@ -341,7 +343,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
 
   const auto = useMemo(() => autoLayout(comps, layouts), [graph, layouts])
 
-  // a new circuit's parts are placed, and the edits to the last one's nets dropped, in the render it arrives in, not
+  // a new circuit's parts are placed in the render it arrives in, not
   // in the effect below: a resize in between refit the view to no parts at all and left it at zoom 1 from the origin
   // (3 of 30 openings of the tour's 555, 2026-10-31). An edit of the circuit on screen (AI edit, undo, a code run)
   // keeps the parts that stay where they are and puts only new ones on free spots, in view where there is room: laid
