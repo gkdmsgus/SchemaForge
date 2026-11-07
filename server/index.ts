@@ -1481,6 +1481,9 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   // (IndexError, review of 2026-11-06)
   const clean = graph ? cleanGraph(graph) : null
   if (graph && !clean) return res.status(400).json({ error: 'graph with components and nets required' })
+  // a graph with no part left: the generator died on it and the SSE error carried its traceback, server paths and all
+  // (review of 2026-11-07). Answered before anything runs; /erc_graph still checks such a graph (no_ground)
+  if (clean && !clean.components.length) return res.status(400).json({ error: '부품이 하나도 없는 회로라 기판을 만들 수 없습니다.' })
   let netPath: string
   let pcbFilename: string
   if (graph) {

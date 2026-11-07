@@ -164,6 +164,22 @@ async function live() {
       && values.join() === '0.1 pitch,470,470' && noGraph.status === 400 && /json/.test(noGraph.headers.get('content-type') ?? ''),
       `${JSON.stringify(values)} graph {} -> ${noGraph.status}`)
 
+    // D9d. a graph with no part left (none sent, only blank references, nets alone): the generator died on it and the SSE
+    //      error carried its traceback with the server's paths (review of 2026-11-07). 400 with a short Korean sentence
+    //      before anything runs; /erc_graph keeps checking such a graph (no GND)
+    const empties = [{ components: [], nets: [] }, { components: [{ ref: ' ' }], nets: [] },
+      { components: [], nets: [{ name: 'A', nodes: [{ ref: 'R1', pin: '1' }, { ref: 'R1', pin: '2' }] }] }]
+    const answers = await Promise.all(empties.map(async g => {
+      const r = await post('/generate_pcb_stream', { graph: g, baseName: 'guardcheck' })
+      return { status: r.status, type: r.headers.get('content-type') ?? '', text: await r.text() }
+    }))
+    const said = (text: string) => { try { return String(JSON.parse(text).error) } catch { return '' } }
+    const emptyErc = await (await post('/erc_graph', { graph: { components: [], nets: [] } })).json() as { erc?: { rule: string }[] }
+    check('D9d a graph with no parts: 400 in Korean, no traceback; /erc_graph still checks it',
+      answers.every(a => a.status === 400 && /json/.test(a.type) && /부품이 하나도 없는/.test(said(a.text)) && !/Traceback|\.py\b/.test(a.text))
+      && emptyErc.erc?.some(f => f.rule === 'no_ground') === true,
+      `${answers.map(a => `${a.status} ${said(a.text) || a.text.slice(0, 80).replace(/\s+/g, ' ')}`).join(' | ')}; /erc_graph ${JSON.stringify(emptyErc.erc?.map(f => f.rule))}`)
+
     // D9c. a BOM price search spends the operator's Mouser quota, one call per line: a visitor is told refused and keeps
     //      the search links, before any key is read (review of 2026-11-06)
     const mouser = await (await post('/mouser_search', { components: [{ ref: 'R1', value: '1k', name: 'R' }] })).json() as { available?: boolean; refused?: boolean; results?: unknown[] }

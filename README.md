@@ -182,7 +182,7 @@ cd server && npx tsx check_erc_repair.ts
 ```bash
 cd server && npx tsx check_deploy_guard.ts
 ```
-배포 서버(`NODE_ENV=production`)가 막는 것 10항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지도 확인한다 (python과 skidl 필요).
+배포 서버(`NODE_ENV=production`)가 막는 것 16항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지, 부품이 하나도 없는 회로로 기판을 요청하면 파이썬 오류 대신 400과 한국어 문장이 오는지도 확인한다 (python과 skidl 필요).
 
 ```bash
 cd server && npx tsx check_auth_flow.ts
