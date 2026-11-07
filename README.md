@@ -189,7 +189,7 @@ cd server && npx tsx check_erc_repair.ts
 ```bash
 cd server && npx tsx check_deploy_guard.ts
 ```
-배포 서버(`NODE_ENV=production`)가 막는 것 20항목(Windows가 아니면 19항목). `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지, Windows가 잡아 둔 포트로 띄우면 그 범위를 보는 방법을 알리는지, 어느 폴더에 남은 빌드(`server/dist` 등)도 이미지와 lint에 들어가지 않는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지, 부품이 하나도 없는 회로로 기판을 요청하면 파이썬 오류 대신 400과 한국어 문장이 오는지도 확인한다 (python과 skidl 필요). 기판 요청이 실패한 이유가 모두 할 일이 적힌 한국어 문장인지(영어나 파이썬 오류 출력이 화면으로 가지 않는지), 서버에 파일이 남아 있지 않은 기판·거버 요청이 그렇게 알리고 거버는 `board_gone`을 붙이는지도 본다.
+배포 서버(`NODE_ENV=production`)가 막는 것 27항목(Windows가 아니면 26항목). `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지, Windows가 잡아 둔 포트로 띄우면 그 범위를 보는 방법을 알리는지, 어느 폴더에 남은 빌드(`server/dist` 등)도 이미지와 lint에 들어가지 않는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지, 부품이 하나도 없는 회로로 기판을 요청하면 파이썬 오류 대신 400과 한국어 문장이 오는지도 확인한다 (python과 skidl 필요). 기판 요청이 실패한 이유가 모두 할 일이 적힌 한국어 문장인지(영어나 파이썬 오류 출력이 화면으로 가지 않는지), 서버에 파일이 남아 있지 않은 기판·거버 요청이 그렇게 알리고 거버는 `board_gone`을 붙이는지도 본다. 배포 서버가 다른 사이트의 화면에 CORS 허용 헤더를 주지 않고 `FRONTEND_URL`이 있으면 그 주소에만 주는지, `/health`가 돌고 있는 커밋(`SF_COMMIT`, 없으면 Render의 `RENDER_GIT_COMMIT`)을 7자로 알려 주는지, 젯슨 이미지가 `scripts/jetson_run.sh`에서 빌드한 커밋을 `SF_COMMIT`으로 받는지(`Dockerfile.jetson`과 스크립트를 글로 읽는다)도 본다.
 
 ```bash
 cd server && npx tsx check_auth_flow.ts
@@ -200,6 +200,16 @@ cd server && npx tsx check_auth_flow.ts
 cd server && npx tsx check_model_config.ts
 ```
 모델 설정 23항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, 승인한 설계 계획이 회로 요청에 들어가는지, AI 편집 프롬프트가 새 부품에 쓸 비어 있는 기호(C3가 있으면 C4)를 주고 요청에 없는 부품을 지우거나 값·연결을 바꾸지 말라고 하는지, 사용자에게 묻는 답이면 편집을 비우라고 하는지, 모델이 답 문장 없이 끝나거나 편집이 중간에 끊겨도 "완료했습니다"라고 하지 않는지(끊긴 편집은 적용하지 않고 나눠서 요청하라고 하며, 끊긴 답의 이스케이프는 제대로 읽음), `/health`가 화면에 보일 모델 이름을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다. 모델 크레딧이 떨어졌을 때(OpenAI 429 `insufficient_quota`) 계획·회로 생성·AI 편집이 상태 코드 대신 한국어로 알리는지(계획은 503), 질문 단계도 그런 실패는 알리고 다른 실패에는 질문 없이 넘어가는지, 요청이 몰렸을 때(429 `rate_limit_exceeded`) 잠시 뒤 다시 하라고 하는지, OpenAI SDK·axios·xAI가 주는 오류 모양을 모두 같은 안내로 읽는지, 계획 프롬프트에 부품 수 하한과 해당 없는 사양(주파수·효율)이 없고, 회로가 동작하는 데 필요한 부품(LED 직렬 저항, 555 타이밍 부품)은 빠뜨리지 않게 하는지도 본다. 모든 모델 호출이 60초 한도와 재시도 한 번의 같은 클라이언트를 쓰는지, 다시 해 볼 만한 실패는 한 번만 더 묻는지, 답하지 않거나 연결을 끊거나 연결을 받지 않는 모델을 OpenAI SDK와 axios 모두 한국어로 알리는지, 방문자가 떠나면 AI 편집의 모델 스트림이 끊기는지도 본다. 모델이 만든 회로 코드가 실행되지 않을 때(자동 재시도가 꺼져 있을 때, 고친 코드도 실행되지 않을 때, 고치는 호출이 `SF_CODE_FIX_MS` 안에 답하지 않을 때) 오류 상자가 "skidl execution error" 대신 무슨 일이 있었고 무엇을 하면 되는지 한국어로 말하는지도 본다.
+
+```bash
+cd server && npx tsx check_kicad_config.ts
+```
+개발 PC의 DRC 라이브러리 표 5항목 (KiCad와 python·skidl 필요). 개발 서버는 시작할 때 임시 폴더에 `server/pcb/footprints` 사본만 담은 풋프린트 라이브러리 표를 만들고, DRC만 이 표를 읽는다(`KICAD_CONFIG_HOME`, 배포 이미지와 같은 표. 이미 `KICAD_CONFIG_HOME`이 있으면 그것을 쓴다). 이 PC의 표는 설치된 KiCad 라이브러리 전체를 읽어 DRC 한 번이 대략 10초·1.4 GB였고, 이 표로는 대략 1초·160 MB에 같은 결과가 나왔다. 라이브러리 이름에 `.pretty`가 붙지 않는지, 데모 기판의 DRC에 `lib_footprint_issues`가 없는지, 그 DRC가 정말 이 표를 읽는지(표를 비우면 부품마다 `lib_footprint_issues`가 나오는지), `run_checks.py`가 같은 표를 만들어 자기 DRC에 주는지 확인한다. 3D와 거버 내보내기는 그대로다.
+
+```bash
+cd server && npx tsx check_inputs.ts
+```
+잘못된 요청에 서버가 하는 답 1항목. 개발 모드와 배포 모드 서버를 직접 띄워 요청을 보내고, 정해진 상태 코드(400·404·413)와 함께 한국어 문장이 JSON으로 오는지, 답 어디에도 스택이나 서버 경로가 없는지 본다. 깨진 JSON, 100 kB가 넘는 본문, 읽을 수 없는 %-이스케이프, 없는 주소를 보낸다(Express 기본 화면은 개발 모드에서 스택과 서버 경로를, 배포 모드에서 영어를 보였다). 모델·Supabase·Mouser는 부르지 않는다.
 
 ```bash
 npx tsx scripts/check_api_client.ts

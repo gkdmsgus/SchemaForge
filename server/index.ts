@@ -16,8 +16,9 @@ import {
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
-import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
+import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, runningCommit, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
+import { vendoredKicadConfig } from './kicad_config'
 import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
@@ -83,10 +84,9 @@ if (GUARD.deployed) console.log(`[guard] deployed: code runs and model calls for
 // ── Express app ────────────────────────────────────────────────────
 
 const app = express()
-app.use(cors({
-  origin: process.env.FRONTEND_URL || true,
-  credentials: true,
-}))
+// deployed: no CORS allow headers unless FRONTEND_URL names the one page that may call it (deploy_guard.ts corsOrigin)
+const CORS_ORIGIN = corsOrigin(GUARD, process.env.FRONTEND_URL)
+if (CORS_ORIGIN !== null) app.use(cors({ origin: CORS_ORIGIN, credentials: true }))
 app.use(express.json())
 
 // Production: serve built React files
@@ -1274,6 +1274,15 @@ interface DrcResult {
   warnings?: number
 }
 
+/**
+ * DRC on the development PC reads the vendored footprint table, as the images do (kicad_config.ts): the PC's own table
+ * made each DRC about 10 s and 1.4 GB. A deployed server has its table from the image; a KICAD_CONFIG_HOME set is kept.
+ * The 3D and gerber exports read no footprint library and stay as they were.
+ */
+const DRC_CONFIG = !GUARD.deployed && !process.env.KICAD_CONFIG_HOME ? vendoredKicadConfig(join(process.cwd(), 'pcb', 'footprints')) : null
+const DRC_ENV = DRC_CONFIG ? { ...process.env, KICAD_CONFIG_HOME: DRC_CONFIG } : undefined
+if (DRC_CONFIG) console.log(`[kicad] DRC reads the vendored footprint table in ${DRC_CONFIG}`)
+
 /** Run KiCad's design rule check on a finished board. Never throws. */
 async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult> {
   const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
@@ -1282,7 +1291,7 @@ async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult>
   try {
     // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
     // The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal)
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal, DRC_ENV)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
@@ -1702,10 +1711,10 @@ app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Re
 const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
 
-function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal): Promise<void> {
+function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error(`${label} stopped`))
-    const proc = spawn(KICAD_CLI, args)
+    const proc = spawn(KICAD_CLI, args, env ? { env } : {})
     const onAbort = () => proc.kill('SIGKILL')
     signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''
@@ -1823,9 +1832,11 @@ let kicadVersion: string | null = null
   proc.on('close', (code: number | null) => { kicadVersion = code === 0 ? out.trim() || null : null })
 }
 
+const COMMIT = runningCommit()
+
 app.get('/health', (_req: Request, res: Response) => {
-  // model: the circuit model's name for the screen (never the key), provider: who runs it
-  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
+  // model: the circuit model's name for the screen (never the key), provider: who runs it, commit: deploy_guard.ts
+  res.json({ status: 'ok', version: '2.0.0', commit: COMMIT, db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
     model: modelLabel(MODEL), provider: modelProvider() })
 })
 
@@ -1836,6 +1847,31 @@ if (existsSync(distPath)) {
     res.sendFile(join(distPath, 'index.html'))
   })
 }
+
+// ── What no route could take ───────────────────────────────────────
+// Express's own pages showed the stack in development (a broken JSON body: "SyntaxError ... at JSON.parse", with the
+// server's paths) and English words in production. A Korean sentence instead; a server error goes to the log.
+// check_inputs.ts I1
+const REQUEST_SAYS = {
+  notFound: '이 서버에 없는 주소입니다. 주소를 확인해 주세요.',
+  badBody: '요청 내용을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  tooBig: '요청 내용이 너무 큽니다. 회로의 부품 수를 줄여 다시 시도해 주세요.',
+  badPath: '주소를 읽지 못했습니다. 주소를 확인해 주세요.',
+  failed: '서버 오류로 요청을 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+}
+
+app.use((_req: Request, res: Response) => { res.status(404).json({ error: REQUEST_SAYS.notFound }) })
+
+// four arguments: Express tells an error handler by its length
+app.use((err: { type?: string; status?: number; statusCode?: number }, req: Request, res: Response, _next: NextFunction) => {
+  const status = Number(err?.status ?? err?.statusCode) || 500
+  if (status >= 500) console.error(`[server] ${req.method} ${req.path}:`, err)
+  if (res.headersSent) return res.end()
+  if (status === 413) return res.status(413).json({ error: REQUEST_SAYS.tooBig })
+  // body-parser's errors carry a type (entity.parse.failed, ...); a %-escape the router could not decode has none
+  if (status >= 400 && status < 500) return res.status(status).json({ error: err?.type ? REQUEST_SAYS.badBody : REQUEST_SAYS.badPath })
+  res.status(500).json({ error: REQUEST_SAYS.failed })
+})
 
 // the development port (the images set PORT=8002, Render 10000): 8080 and then 8002 sat in a range Windows had reserved
 // on the development PC (7989-8088), where they failed with EACCES (review of 2026-11-07)

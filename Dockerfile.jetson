@@ -60,8 +60,12 @@ RUN mkdir -p /tmp/.config/kicad/10.0 \
       echo ')'; } > /tmp/.config/kicad/10.0/fp-lib-table \
  && chown -R sf /tmp/.config
 USER sf
+# the commit the image is built from, which /health names (deploy_guard.ts runningCommit); scripts/jetson_run.sh gives
+# it. After the last RUN, so a new commit rebuilds no layer
+ARG SF_COMMIT=unknown
 # no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
-ENV NODE_ENV=production \
+ENV SF_COMMIT=$SF_COMMIT \
+    NODE_ENV=production \
     PORT=8002 \
     SF_OUTPUTS_SWEEP=1 \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
