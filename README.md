@@ -144,8 +144,10 @@ KICAD_CLI_PATH=...          # kicad-cli가 PATH에 없을 때
 ```
 
 ```bash
-npm run dev      # 화면(vite 3000) + API(8002) 동시 실행
+npm run dev      # 화면(vite 3000) + API(8113) 동시 실행
 ```
+
+Windows는 포트를 100개씩 묶어 자기 몫으로 잡아 둘 수 있고(Hyper-V·WSL, 재부팅하면 바뀔 수 있다), 그 안의 포트는 `EACCES`로 열리지 않는다. 개발 PC에서 8080과 8002가 그랬다(7989-8088). API가 `Cannot listen on port`로 끝나면 `netsh interface ipv4 show excludedportrange protocol=tcp`로 범위를 보고, 그 밖의 포트를 `server/.env`의 `PORT`에 적는다.
 
 `http://localhost:3000` 접속. 키 없이 보려면 `http://localhost:3000/?demo=motor` (다른 데모: `led`, `ne555`, `relay`, 일부러 망가뜨린 `led_bad`, `ne555_bad`, `relay_bad`).
 
@@ -153,7 +155,7 @@ npm run dev      # 화면(vite 3000) + API(8002) 동시 실행
 
 | 변수 | 쓰임 |
 |---|---|
-| `PORT` | API 포트 (기본 8002, vite 프록시도 이 값을 따른다) |
+| `PORT` | API 포트 (기본 8113, vite 프록시도 이 값을 따른다. 배포 이미지는 8002) |
 | `OPENAI_BASE_URL` | OpenAI 호환 API 주소. 모든 모델 호출이 이 주소로 간다 (예: xAI Grok `https://api.x.ai/v1`, 키는 `OPENAI_API_KEY`에) |
 | `SF_MODEL` | 회로 코드와 ERC 자동 수정에 쓸 모델 (기본 `gpt-4o`). 화면 위쪽과 생성 단계에 이 이름이 나온다 |
 | `SF_MODEL_MINI` | 되묻기·설계 계획·AI 편집에 쓸 모델 (기본 `gpt-4o-mini`) |
@@ -186,7 +188,7 @@ cd server && npx tsx check_erc_repair.ts
 ```bash
 cd server && npx tsx check_deploy_guard.ts
 ```
-배포 서버(`NODE_ENV=production`)가 막는 것 16항목. `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지, 부품이 하나도 없는 회로로 기판을 요청하면 파이썬 오류 대신 400과 한국어 문장이 오는지도 확인한다 (python과 skidl 필요).
+배포 서버(`NODE_ENV=production`)가 막는 것 17항목(Windows가 아니면 16항목). `ALLOWED_EMAILS`에 있고 가입 확인을 마친 계정만 회로 생성·AI 편집·코드 실행을 쓰는지, 비밀번호를 보지 않는 개발용 로그인이 꺼지는지, 요청에서 받은 파일 이름이 `outputs` 밖으로 나가지 않는지, `render.yaml`에 키 값이 없고 무료 플랜·헬스 체크 경로·포트가 맞는지, Windows가 잡아 둔 포트로 띄우면 그 범위를 보는 방법을 알리는지. 서버를 배포 모드로 직접 띄워 데모는 열리고 나머지는 거절되는지, 부품이 하나도 없는 회로로 기판을 요청하면 파이썬 오류 대신 400과 한국어 문장이 오는지도 확인한다 (python과 skidl 필요).
 
 ```bash
 cd server && npx tsx check_auth_flow.ts
@@ -201,7 +203,7 @@ cd server && npx tsx check_model_config.ts
 ```bash
 npx tsx scripts/check_api_client.ts
 ```
-화면 쪽 API 클라이언트 38항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다. 개발 서버의 프록시(`vite.config.ts`)도 본다. vite는 경로가 처음으로 맞는 앞부분 하나로 보내므로, 어느 서버 경로도 먼저 닿지 않는 항목(`/generate` 뒤의 `/generate_gerber`)이 없고 모든 서버 경로에 항목이 있는지 확인한다.
+화면 쪽 API 클라이언트 39항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다. 개발 서버의 프록시(`vite.config.ts`)도 본다. vite는 경로가 처음으로 맞는 앞부분 하나로 보내므로, 어느 서버 경로도 먼저 닿지 않는 항목(`/generate` 뒤의 `/generate_gerber`)이 없고 모든 서버 경로에 항목이 있는지 확인한다. 개발 포트(프록시의 기본값, 서버 기본값, `.env.example`)가 하나이고 Windows가 잡아 둔 7989-8088 밖인지, 두 이미지가 내보내는 포트를 `PORT`로 정하는지도 본다.
 
 ```bash
 npx tsx scripts/check_pins.ts
@@ -236,7 +238,7 @@ python server/pcb/check_deploy.py
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
 ```
-배포된 서버를 브라우저로 쓰는 9항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지. 주소를 바꾸면 로컬 컨테이너(`http://localhost:8002`)에도 쓸 수 있다.
+배포된 서버를 브라우저로 쓰는 9항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지. 주소를 바꾸면 로컬 컨테이너(DEPLOY.md 4절의 `http://localhost:8114`)에도 쓸 수 있다.
 
 ```bash
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로

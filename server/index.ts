@@ -1788,11 +1788,17 @@ if (existsSync(distPath)) {
   })
 }
 
-const PORT = Number(process.env.PORT) || 8002
+// the development port (the images set PORT=8002, Render 10000): 8080 and then 8002 sat in a range Windows had reserved
+// on the development PC (7989-8088), where they failed with EACCES (review of 2026-11-07)
+const PORT = Number(process.env.PORT) || 8113
 // Express 5 hands a listen error to this callback: a port in use printed "running" and exited 0 (review of 2026-11-06)
 app.listen(PORT, err => {
   if (err) {
     console.error(`Cannot listen on port ${PORT}: ${err.message}`)
+    // EACCES on Windows: a port in a range the system reserved (Hyper-V and WSL take blocks of 100, which can move on a restart)
+    if (/EACCES/.test(err.message) && process.platform === 'win32') {
+      console.error('Windows may have reserved this port: netsh interface ipv4 show excludedportrange protocol=tcp lists the ranges. Set PORT in server/.env to one outside them.')
+    }
     process.exit(1)
   }
   console.log(`SchemaForge v2 running on http://localhost:${PORT}`)

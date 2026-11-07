@@ -201,5 +201,23 @@ check('the dev proxy: every prefix is the one some server route goes through, an
   prefixes.length > 10 && routes.length > 20 && !unused.length && !unserved.length,
   JSON.stringify({ prefixes: prefixes.length, routes: routes.length, unused, unserved }))
 
+// The ports, read as text. Development: the proxy's fallback, the server's default and .env.example's PORT are one port,
+// outside 7989-8088, which Windows had reserved on the development PC (8080, then 8002 failed there with EACCES: review of
+// 2026-11-07). The images: each sets PORT to the port it exposes, which check_deploy.py and the Jetson script publish, so
+// moving the development port does not move the container's
+const num = (text: string, re: RegExp) => Number(re.exec(text)?.[1] ?? NaN)
+const dev = {
+  vite: num(viteConfig, /\.PORT \|\| (\d+)/), server: num(root('server/index.ts'), /const PORT = Number\(process\.env\.PORT\) \|\| (\d+)/),
+  example: num(root('server/.env.example'), /^PORT=(\d+)/m),
+}
+const image = (f: string) => ({ env: num(root(f), /^\s*(?:ENV\s+)?PORT=(\d+)/m), exposed: num(root(f), /^EXPOSE (\d+)/m) })
+const images = { docker: image('Dockerfile'), jetson: image('Dockerfile.jetson') }
+const published = { checkDeploy: num(root('server/pcb/check_deploy.py'), /\{args\.port\}:(\d+)'/), jetsonRun: num(root('scripts/jetson_run.sh'), /-e PORT=(\d+)/) }
+const ports = Object.values(images).flatMap(i => [i.env, i.exposed]).concat(Object.values(published))
+check('the ports: one for development, outside 7989-8088; each image sets the PORT it exposes and is published on',
+  dev.vite === dev.server && dev.server === dev.example && !(dev.server >= 7989 && dev.server <= 8088)
+  && ports.every(p => p === images.docker.exposed) && Number.isInteger(images.docker.exposed),
+  JSON.stringify({ dev, images, published }))
+
 console.log(failed ? `\n${failed} FAILED` : '\nall api client checks passed')
 process.exitCode = failed ? 1 : 0

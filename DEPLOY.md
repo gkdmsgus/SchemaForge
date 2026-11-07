@@ -66,22 +66,22 @@
 | `ALLOWED_EMAILS` | 회로 생성 | 쉼표로 구분한 메일 주소. 대소문자·공백은 무시 |
 | `FRONTEND_URL` | 선택 | CORS 허용 주소. 화면과 API가 같은 주소면 없어도 된다 |
 | `MOUSER_API_KEY` | 선택 | BOM 가격·재고 조회. 없으면 검색 링크만 |
-| `PORT` | 자동 | `render.yaml`이 10000으로 정한다 (코드 기본값 8002) |
+| `PORT` | 자동 | `render.yaml`이 10000으로 정한다 (이미지 기본값 8002, 로컬 개발 기본값 8113) |
 
 ## 4. 이미지를 로컬에서 먼저 확인
 
 ```bash
 docker build -t schemaforge:local .
-docker run --rm --cpus=0.1 --memory=512m --memory-swap=512m -p 8002:8002 schemaforge:local
+docker run --rm --cpus=0.1 --memory=512m --memory-swap=512m -p 8114:8002 schemaforge:local
 ```
 
-무료 인스턴스와 같은 제한으로 띄운다. `http://localhost:8002/?demo=motor`에서 PCB → 3D → 거버까지 되는지 본다. 키를 넣지 않았으니 회로 생성은 거절되는 것이 맞다. 이미지 검사는 `python server/pcb/check_deploy.py` (README 검사 절).
+무료 인스턴스와 같은 제한으로 띄운다. `http://localhost:8114/?demo=motor`에서 PCB → 3D → 거버까지 되는지 본다. 키를 넣지 않았으니 회로 생성은 거절되는 것이 맞다. 이미지 검사는 `python server/pcb/check_deploy.py` (README 검사 절).
 
 ## 5. 로컬 개발
 
 ```bash
 cp server/.env.example server/.env   # 값 채우기 (vite 프록시는 PORT 값을 따른다)
-npm run dev                          # 화면 3000 + API 8002
+npm run dev                          # 화면 3000 + API 8113
 ```
 
 개발 모드(`NODE_ENV`가 production이 아님)에서는 0절의 제한이 없다.

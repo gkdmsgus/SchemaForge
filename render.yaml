@@ -33,7 +33,7 @@ services:
         - "docs/**"
     envVars:
       # Render's documented port variable (default 10000), set explicitly so the bound port
-      # never depends on port detection (the code default is 8002)
+      # never depends on port detection (the image's default is 8002)
       - key: PORT
         value: "10000"
       # optional secrets: the dashboard asks for these only when the Blueprint is first created;

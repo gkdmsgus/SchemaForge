@@ -29,7 +29,7 @@ env_args=()
 if [ -f "$ENV_FILE" ]; then env_args=(--env-file "$ENV_FILE"); else echo "no $ENV_FILE: demos only"; fi
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-# PORT after the env file: server/.env.example has PORT=8080 (the local vite proxy's), and copied into the env file it
+# PORT after the env file: server/.env.example has the local dev API's PORT for the vite proxy, and copied into the env file it
 # made the server listen where nothing is published (review of 2026-11-03). NODE_ENV too: it alone turns on the
 # deployed-server guard (deploy_guard.ts), so a NODE_ENV=development in the env file opened generation to anyone
 docker run -d --name "$NAME" --restart unless-stopped -p "$PUBLISH" "${env_args[@]}" -e PORT=8002 -e NODE_ENV=production \
