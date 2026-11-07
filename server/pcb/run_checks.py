@@ -337,6 +337,26 @@ def check_no_bypass(work):
     return all(g == want for g in got.values()), f'{got}'
 
 
+def check_split_ground(work):
+    """Two supplies whose grounds (GND, AGND) nothing joins: one split_ground warning; joined by a 0 Ω resistor or an
+    inductor (a ferrite bead), none; a 10 kΩ resistor between them does not join them. Before the rule (2026-11-08) the
+    split circuit passed every netlist check."""
+    comps = [{'ref': 'J1', 'value': 'P5', 'part': 'Conn_01x02'}, {'ref': 'R1', 'value': '1k', 'part': 'R'},
+             {'ref': 'J2', 'value': 'P12', 'part': 'Conn_01x02'}, {'ref': 'R2', 'value': '1k', 'part': 'R'}]
+    nets = [('+5V', ['J1.1', 'R1.1']), ('GND', ['J1.2', 'R1.2']), ('+12V', ['J2.1', 'R2.1']), ('AGND', ['J2.2', 'R2.2'])]
+    got = {}
+    for name, tie in (('split', None), ('0 ohm', ('R3', 'R', '0')), ('ferrite', ('L1', 'L', 'FB')), ('10k', ('R3', 'R', '10k'))):
+        cs = comps + ([{'ref': tie[0], 'value': tie[2], 'part': tie[1]}] if tie else [])
+        ns = [(n, pins + ([f'{tie[0]}.{1 if n == "GND" else 2}'] if tie and n in ('GND', 'AGND') else [])) for n, pins in nets]
+        path = os.path.join(work, f'split_{name.replace(" ", "_")}.net')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(_graph_netlist(cs, [{'name': n, 'nodes': [{'ref': p.split('.')[0], 'pin': p.split('.')[1]} for p in pins]}
+                                        for n, pins in ns]))
+        got[name] = [(e['rule'], e['severity']) for e in netlist_check(path)['erc']]
+    want = {'split': [('split_ground', 'warning')], '0 ohm': [], 'ferrite': [], '10k': [('split_ground', 'warning')]}
+    return got == want, f'{got}'
+
+
 def check_four_legged_diode(work):
     """A bridge written as a 'D' with four pins (seen from the model) is reported pin by pin, never placed
     as if it fit. src/lib/humanReview.ts missingPads reads these words for the screen."""
@@ -603,6 +623,11 @@ def main():
     c_ok, c_info = check_no_bypass(c_dir)
     all_ok &= c_ok
     print(f'== 555 with no capacitor on VCC warned {"PASS" if c_ok else "FAIL"}  {c_info}')
+    g_dir = os.path.join(work_root, 'split_ground')
+    os.makedirs(g_dir, exist_ok=True)
+    g_ok, g_info = check_split_ground(g_dir)
+    all_ok &= g_ok
+    print(f'== two grounds nothing joins warned, a 0 ohm or ferrite tie not {"PASS" if g_ok else "FAIL"}  {g_info}')
     d_dir = os.path.join(work_root, 'four_legged_diode')
     os.makedirs(d_dir, exist_ok=True)
     d_ok, d_info = check_four_legged_diode(d_dir)

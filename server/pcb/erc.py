@@ -54,6 +54,20 @@ def is_ground(name):
     return n in ('GND', 'AGND', 'DGND', 'PGND') or n.startswith('GND_') or n.endswith('_GND')
 
 
+def ohms(value):
+    """a resistor value in ohms ('0', '0R', '0Ω', '1R0', 'R10', '0R1', '100m', '4k7'), or None"""
+    v = re.sub(r'(?i)\s+|ohms?$|Ω$', '', value or '')
+    m = re.fullmatch(r'(\d*)([RrkKM])(\d+)', v)     # the letter as the decimal point
+    if m and (m.group(1) or m.group(2) in 'Rr'):
+        return float(f"{m.group(1) or 0}.{m.group(3)}") * {'r': 1, 'k': 1e3, 'm': 1e6}[m.group(2).lower()]
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)([mkKM]?)[Rr]?', v)
+    return float(m.group(1)) * {'': 1, 'm': 1e-3, 'k': 1e3, 'K': 1e3, 'M': 1e6}[m.group(2)] if m else None
+
+
+# parts that tie two grounds into one on purpose: a 0 Ω or other tiny resistor, an inductor or ferrite bead
+TIE_OHMS = 1.0
+
+
 def pin_of(part, pad):
     """(symbol pin number, pin name or None) of a footprint pad."""
     sym = (part.get('pad_sym') or part.get('pad_pin') or {}).get(pad)
@@ -175,5 +189,33 @@ def check(components, nets, parts=None):
                 'rule': 'no_bypass', 'severity': 'warning',
                 'message': f"{c['ref']}의 {label} 옆에 GND로 가는 커패시터가 없습니다. {todo} {c['ref']} 가까이 달아야 합니다",
                 'refs': [ref], 'net': n['name']})
+
+    # 7. two ground nets that nothing joins: two supplies whose − sides are not tied have no common reference, so a
+    #    signal from one side means nothing on the other. Joined through a resistor of TIE_OHMS or less, or an inductor
+    #    (a ferrite bead tying analog and digital ground at one point), they are one ground.
+    group = {n['name']: n['name'] for n in nets}
+
+    def root(a):
+        while group[a] != a:
+            group[a] = group[group[a]]
+            a = group[a]
+        return a
+    for c in components:
+        r = ohms(c.get('value')) if c.get('part') == 'R' else None
+        if c.get('part') == 'L' or (r is not None and r <= TIE_OHMS):
+            ends = list(pins_of.get(c['ref'], {}).values())
+            for other in ends[1:]:
+                group[root(other)] = root(ends[0])
+    grounds = {}
+    for n in nets:
+        if is_ground(n['name']):
+            grounds.setdefault(root(n['name']), []).append(n)
+    if len(grounds) > 1:
+        apart = sorted((sorted(g, key=lambda n: n['name']) for g in grounds.values()), key=lambda g: g[0]['name'])
+        names = '·'.join(g[0]['name'] for g in apart)
+        findings.append({
+            'rule': 'split_ground', 'severity': 'warning',
+            'message': f"접지({names})가 서로 이어지지 않아 {len(apart)}개로 나뉘어 있습니다. 두 전원의 − 쪽을 이어야 합니다",
+            'refs': [node_ref(g[0]['nodes'][0]) for g in apart if g[0]['nodes']], 'net': None})
 
     return findings

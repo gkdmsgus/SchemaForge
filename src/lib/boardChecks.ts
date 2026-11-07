@@ -51,6 +51,7 @@ export const ERC_RULES: [string, string][] = [
   ['unpowered_rail', '전원 넷 공급원'],
   ['output_conflict', '출력끼리 충돌'],
   ['no_bypass', 'IC 전원 옆 커패시터'],
+  ['split_ground', '접지 하나로 이어짐'],
 ]
 
 /**
