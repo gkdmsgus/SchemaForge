@@ -3,7 +3,8 @@
 // page, out of view, and the make button seemed to do nothing: tour take 4, 2026-10-29), O2 불러오기 opens the
 // saved circuit without asking the server for a plan or a circuit again, O3 an entry saved with an AI edit opens with
 // the edit (the chat said "+C9" over a circuit without it, and the next PCB left it out: review of 2026-11-06), O4 a saved
-// copy equal in value is no edit, O5 an edit made, then undone or reset, opens as it was left.
+// copy equal in value is no edit, O5 an edit made, then undone or reset, opens as it was left, O6 from the side drawer's
+// list of this browser's records too (what it shows when the server's list does not come).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_saved_offer.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -122,6 +123,26 @@ try {
   await openSaved()
   const afterUndo = await hasC9()
   check('O5 an edit opens again; undone or reset, it does not', reopened && !afterReset && !afterUndo, `made ${reopened}, after 초기화 ${afterReset}, after 되돌리기 ${afterUndo}`)
+
+  // O6
+  await page.unroute(/\/(favorites|sessions)$/)
+  await page.route(/\/favorites$/, r => json(r, { favorites: [] }))
+  await page.route(/\/sessions$/, r => json(r, { error: 'check' }, 500))
+  const fromDrawer = async () => {
+    await page.goto(BASE, { waitUntil: 'networkidle' })
+    await page.locator("button[aria-label='메뉴']").click()
+    await page.getByText(TYPED.slice(0, 20)).first().click({ timeout: 5000 })
+    await page.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+    await page.waitForTimeout(600)
+  }
+  await entry({ graph: edited, messages: [{ role: 'user', content: 'C9 더해줘' }, { role: 'assistant', content: 'C9를 더했습니다.', actions: c9.actions }] })
+  await fromDrawer()
+  const drawerEdit = await hasC9()
+  await entry({ graph: JSON.parse(JSON.stringify(demo.graph)), messages: [] })
+  rechecks = 0
+  await fromDrawer()
+  await page.waitForTimeout(500)
+  check('O6 the side drawer opens an edit with the edit, and an equal copy as no edit', drawerEdit && !(await hasC9()) && rechecks === 0, `edit ${drawerEdit}, re-checks ${rechecks}`)
 } finally {
   await browser.close()
 }
