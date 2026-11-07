@@ -12,6 +12,7 @@ import copy, json, math, os, re
 
 from sexpr import QStr, parse, dumps, find, find_all
 from footprints_table import lookup, KNOWN_UNMAPPED, ASSUMED_PART
+from erc import PIN_NAMES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FP_DIR = os.path.join(HERE, 'footprints')
@@ -309,15 +310,51 @@ def placeholder_footprint(part, pin_count):
 
 # ── board model ───────────────────────────────────────────────────
 
+def pin_number(part, pin):
+    """A netlist pin as its template pin number, or None. A graph an older edit saved by pin name ({ref: 'D1', pin: 'A'})
+    reaches the netlist as written (server/index.ts graphToNetlist): a name is read through PIN_NAMES, the front end's
+    table, as src/lib/graphEdit.ts pinNumber reads it ('p2' is 2, the minus sign is '-'). A name it does not know is not
+    guessed."""
+    p = str(pin).strip()
+    m = re.fullmatch(r'[pP]?([0-9]+)', p)
+    if m:
+        return int(m.group(1))
+    names = [n.upper() for n in PIN_NAMES.get(part, [])]
+    key = p.replace('−', '-').upper()
+    return names.index(key) + 1 if key in names else None
+
+
+def read_pins(components, nets):
+    """Every node's pin as its template pin number, in the nets themselves, so the netlist checks after build_board read
+    the pins the board has (a regulator's 'OUT' is its power output). A pin that cannot be read stays as written and gets
+    no pad; it is reported in the words src/lib/fixes.ts missingLegs reads, never dropped without a word (2026-11-08)."""
+    part_of = {c['ref']: c['part'] for c in components}
+    warnings = []
+    for n in nets:
+        for nd in n['nodes']:
+            if nd['ref'] not in part_of:
+                continue
+            sym = pin_number(part_of[nd['ref']], nd['pin'])
+            if sym is not None:
+                nd['pin'] = str(sym)
+                continue
+            w = f'{nd["ref"]} pin "{nd["pin"]}" is neither a pin number nor a pin name of {part_of[nd["ref"]] or "its part"}'
+            if w not in warnings:
+                warnings.append(w)
+    return warnings
+
+
 def build_board(components, nets, style='smd'):
-    """Parts with real footprints and nets, laid out by the shelf packer (rot 0)."""
+    """Parts with real footprints and nets, laid out by the shelf packer (rot 0). Pins saved by name are read as their
+    numbers in `nets` (read_pins)."""
+    unread = read_pins(components, nets)
     node_net = {(nd['ref'], nd['pin']): n['name'] for n in nets for nd in n['nodes']}
     max_pin = {}
     for (ref, pin) in node_net:
-        if pin.isdigit():
+        if re.fullmatch(r'[0-9]+', pin):
             max_pin[ref] = max(max_pin.get(ref, 0), int(pin))
 
-    parts, unmapped, warnings = [], [], []
+    parts, unmapped, warnings = [], [], list(unread)
     for comp in components:
         ref, part = comp['ref'], comp['part']
         entry = lookup(part, style)
@@ -342,7 +379,7 @@ def build_board(components, nets, style='smd'):
 
         pad_net, pad_pin = {}, {}
         for (r, pin), net in node_net.items():
-            if r != ref or not pin.isdigit():
+            if r != ref or not re.fullmatch(r'[0-9]+', pin):   # one read_pins could not read, reported there
                 continue
             pad = pin_map.get(int(pin))
             if pad is None:

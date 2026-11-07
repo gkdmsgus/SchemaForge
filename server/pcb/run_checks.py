@@ -14,6 +14,7 @@ from board import build_board, generate, hpwl, netlist_check, parse_netlist, BOA
 import placer  # noqa: E402
 from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED  # noqa: E402
+from erc import PIN_NAMES  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
 from fab_export import export_fab, FAB_SUFFIXES  # noqa: E402
 
@@ -419,6 +420,56 @@ def check_pin_number_bomb(work):
     return bomb_ok and edge_ok, f"{'; '.join(info)}; pads={pads} warnings={done['board']['warnings']} edge={warnings}"
 
 
+def _graph_netlist(components, nets):
+    """A netlist as server/index.ts graphToNetlist writes one from the schematic graph: no pintype, pins as saved."""
+    comps = '\n'.join(f'    (comp (ref "{c["ref"]}") (value "{c["value"]}") (libsource (lib "NO_LIB") (part "{c["part"]}")))'
+                      for c in components)
+    body = '\n'.join(f'    (net (code {i + 1}) (name "{n["name"]}")\n'
+                     + '\n'.join(f'      (node (ref "{nd["ref"]}") (pin "{nd["pin"]}"))' for nd in n['nodes']) + ')'
+                     for i, n in enumerate(nets))
+    return f'(export (version "D")\n  (components\n{comps}\n  )\n  (nets\n{body}\n  )\n)'
+
+
+def check_pin_names(work):
+    """A graph an older edit saved by pin name ({ref: 'D1', pin: 'A'}) reaches the netlist as written (graphToNetlist).
+    Read through erc.PIN_NAMES, the front end's table, it gives the numbered circuit's pads and netlist checks; a name the
+    table does not know is not guessed: one warning in the words src/lib/fixes.ts missingLegs reads, and its pad left
+    without the net. Before 2026-11-08 every pin saved by name was left off the board without a word."""
+    bad, seen = [], 0
+    for name in ('ne555_blink', 'npn_relay'):
+        components, nets = parse_netlist(open(build_netlist(name, work), encoding='utf-8').read())
+        part_of = {c['ref']: c['part'] for c in components}
+
+        def by_name(nd):
+            names, n = PIN_NAMES.get(part_of[nd['ref']]), int(nd['pin'])
+            return names[n - 1] if names and n <= len(names) else f'p{n}'
+
+        led, kind_of_led = next((c['ref'], c['part']) for c in components if c['part'] in ('LED', 'D'))
+        files = {}
+        for kind, pin in (('number', lambda nd: nd['pin']), ('name', by_name),
+                          ('unknown', lambda nd: 'ANODE' if nd['ref'] == led and nd['pin'] == '1' else by_name(nd))):
+            path = os.path.join(work, f'{name}_{kind}.net')
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(_graph_netlist(components, [{'name': n['name'], 'nodes': [{'ref': nd['ref'], 'pin': pin(nd)}
+                                                                                  for nd in n['nodes']]} for n in nets]))
+            files[kind] = path
+        got = {}
+        for kind, path in files.items():
+            comps, ns = parse_netlist(open(path, encoding='utf-8').read())
+            seen += kind == 'name' and sum(not nd['pin'].isdigit() for n in ns for nd in n['nodes'])
+            parts, unmapped, warnings = build_board(comps, ns, 'smd')
+            got[kind] = ({p['ref']: p['pad_net'] for p in parts}, warnings, netlist_check(path)['erc'], parts)
+        (pads, warn, erc, _), (n_pads, n_warn, n_erc, _) = got['number'], got['name']
+        if n_pads != pads or n_warn != warn or n_erc != erc:
+            bad.append(f'{name} by name: pads {n_pads == pads} warnings {n_warn} erc {[f["message"] for f in n_erc]}')
+        u_pads, u_warn, _, u_parts = got['unknown']
+        a_pad = next(pd for pd, s in next(p for p in u_parts if p['ref'] == led)['pad_sym'].items() if s == 1)
+        if u_warn != [f'{led} pin "ANODE" is neither a pin number nor a pin name of {kind_of_led}'] + warn or a_pad in u_pads[led] \
+                or {r: v for r, v in u_pads.items() if r != led} != {r: v for r, v in pads.items() if r != led}:
+            bad.append(f'{name} unknown name: warnings {u_warn} {led} pads {u_pads[led]}')
+    return not bad and seen > 0, f'{seen} pins saved by name; ' + (' | '.join(bad) or 'same pads, warnings and erc')
+
+
 def _round_against_plain_loop(parts):
     """One local-search round beside the per-candidate loop it replaced: (parts that moved, parts that took another move)."""
     costs_of = placer._part_costs
@@ -542,6 +593,11 @@ def main():
     n_ok, n_info = check_pin_number_bomb(n_dir)
     all_ok &= n_ok
     print(f'== huge pin number capped {"PASS" if n_ok else "FAIL"}  {n_info}')
+    p_dir = os.path.join(work_root, 'pin_names')
+    os.makedirs(p_dir, exist_ok=True)
+    p_ok, p_info = check_pin_names(p_dir)
+    all_ok &= p_ok
+    print(f'== pins saved by name read, an unknown name reported {"PASS" if p_ok else "FAIL"}  {p_info}')
     l_dir = os.path.join(work_root, 'local_search')
     os.makedirs(l_dir, exist_ok=True)
     l_ok, l_info = check_local_search(l_dir)
