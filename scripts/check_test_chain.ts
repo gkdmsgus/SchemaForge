@@ -65,9 +65,10 @@ check('T2 the checks that read the check boards run after make_check_boards', ma
 
 // T3
 const runs = browserChecks(ROOT).map(c => c.file)
-const forBrowser = Object.keys(OUT).filter(f => OUT[f] === BROWSER)
+// a reason may say more after BROWSER (what else the check needs): it is still a browser check
+const forBrowser = Object.keys(OUT).filter(f => OUT[f].startsWith(BROWSER))
 const notRun = forBrowser.filter(f => !runs.includes(f))
-const notForBrowser = runs.filter(f => f !== 'scripts/check_3d.ts' && OUT[f] !== BROWSER)
+const notForBrowser = runs.filter(f => f !== 'scripts/check_3d.ts' && !OUT[f]?.startsWith(BROWSER))
 const npmRuns = /\bscripts\/run_browser_checks\.ts\b/.test(scripts['test:browser'] ?? '')
 check('T3 npm run test:browser runs every browser check, check_3d with BASE, not check_live',
   npmRuns && !notRun.length && !notForBrowser.length && runs.includes('scripts/check_3d.ts'),
