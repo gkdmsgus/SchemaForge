@@ -1,11 +1,13 @@
-// Checks P1-P4: what the deploy images install and what the checks run on is fixed, so a build next month runs what was
+// Checks P1-P5: what the deploy images install and what the checks run on is fixed, so a build next month runs what was
 // tested today. P1 every line of requirements.txt is one exact version, P2 each Python the images run gets each package
 // once, with skidl and numpy among them, P3 both Dockerfiles install that file, P4 the root's tsx is the server's, in
 // package.json and in the lock (npm test's scripts/ steps ran whatever npx found or fetched: 4.23.15 beside the server's
-// 4.23.13, and on a fresh clone with an empty npm cache they did not start).
+// 4.23.13, and on a fresh clone with an empty npm cache they did not start), P5 the server declares no package its code
+// does not import (@tavily/core and jsonwebtoken sat in the image for months, about 22 MB, with nothing using them).
 // No server, no Docker (what the images really hold is read with pip freeze: README, 배포).
 // Usage: npx tsx scripts/check_pins.ts   → exit 0 only if all pass
 import fs from 'node:fs'
+import path from 'node:path'
 
 const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')
 let failed = 0
@@ -44,6 +46,17 @@ for (const f of ['Dockerfile', 'Dockerfile.jetson']) {
   const declared = JSON.parse(read('package.json')).devDependencies?.tsx, locked = lockedTsx('package-lock.json')
   check('P4 the root runs the tsx the server has', !!server && declared === server && locked === server,
     `server ${server}, root package.json ${declared}, root lock ${locked}`)
+}
+
+// P5. tsx imports nothing: it is what runs the server (the Dockerfiles' CMD)
+{
+  const dir = path.resolve(import.meta.dirname, '..', 'server')
+  const code = fs.readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .filter(f => /\.ts$/.test(f) && !f.split(path.sep).includes('node_modules'))
+    .map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n')
+  const imported = (d: string) => [`'${d}'`, `"${d}"`, `'${d}/`, `"${d}/`].some(q => new RegExp(`(from |import |import\\(|require\\()${q}`).test(code))
+  const unused = Object.keys(JSON.parse(read('server/package.json')).dependencies).filter(d => d !== 'tsx' && !imported(d))
+  check('P5 the server imports every package it declares', !unused.length, unused.join(', '))
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall pin checks passed')

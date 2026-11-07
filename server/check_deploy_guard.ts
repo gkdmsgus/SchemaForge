@@ -82,7 +82,7 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
     `${secret.length}/${SECRETS.length} secrets${bad.length ? `, not sync:false only: ${bad.join(', ')}` : ''}, health ${health}, ${port}`)
 
   // D10b. no web search left: nothing has called it since 2026-06, and every deploy guide still asked for a key
-  const places = { 'index.ts': src, 'render.yaml': yaml, '.env.example': readFileSync('.env.example', 'utf8'), 'DEPLOY.md': readFileSync(join('..', 'DEPLOY.md'), 'utf8') }
+  const places = { 'index.ts': src, 'render.yaml': yaml, '.env.example': readFileSync('.env.example', 'utf8'), 'DEPLOY.md': readFileSync(join('..', 'DEPLOY.md'), 'utf8'), 'package.json': readFileSync('package.json', 'utf8'), 'package-lock.json': readFileSync('package-lock.json', 'utf8') }
   const left = Object.entries(places).filter(([, text]) => /tavily/i.test(text)).map(([f]) => f)
   check('D10b no web search left', !left.length && !src.includes('sourceUrls'), left.length ? `still in ${left.join(', ')}` : '')
 }
