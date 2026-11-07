@@ -1,2 +1,35 @@
-skidl>=1.2.4
-numpy>=1.26
+# What the deploy images run, read with pip freeze from both (2026-11-07): schemaforge:render-check (amd64, Python 3.13)
+# and schemaforge:jetson (arm64, Python 3.10). A fresh install of the former "skidl>=1.2.4, numpy>=1.26" gave the same.
+# Both Dockerfiles install this file. The images' Pythons differ, hence the markers: numpy 2.2.6 is the last for 3.10,
+# and skidl asks for InSpice only from Python 3.11, which brings the second block.
+deprecation==2.1.0
+graphviz==0.21
+hierplace==1.1.0
+kinet2pcb==1.1.4
+markdown-it-py==4.2.0
+mdurl==0.1.2
+numpy==2.2.6; python_version < "3.11"
+numpy==2.5.4; python_version >= "3.11"
+packaging==26.3
+ply==3.11
+Pygments==2.21.0
+rich==15.0.0
+schematizer==0.2.0
+simp_sexp==0.3.2
+skidl==3.0.0
+
+cffi==2.1.1; python_version >= "3.11"
+contourpy==1.4.0; python_version >= "3.11"
+cycler==0.12.1; python_version >= "3.11"
+diskcache==5.6.3; python_version >= "3.11"
+fonttools==4.68.0; python_version >= "3.11"
+h5py==3.16.0; python_version >= "3.11"
+InSpice==1.7.0.7; python_version >= "3.11"
+kiwisolver==1.5.1; python_version >= "3.11"
+matplotlib==3.11.2; python_version >= "3.11"
+pillow==13.0.0; python_version >= "3.11"
+pycparser==3.12; python_version >= "3.11"
+pyparsing==3.3.3; python_version >= "3.11"
+python-dateutil==4.0.0; python_version >= "3.11"
+PyYAML==6.0.3; python_version >= "3.11"
+tzdata==2026.6; python_version >= "3.11"
