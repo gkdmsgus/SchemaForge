@@ -219,5 +219,23 @@ check('the ports: one for development, outside 7989-8088; each image sets the PO
   && ports.every(p => p === images.docker.exposed) && Number.isInteger(images.docker.exposed),
   JSON.stringify({ dev, images, published }))
 
+// The same file run by vite: a PORT in the environment that both processes got is the API's, but vite's own port is not.
+// The preview tool starts vite alone with PORT=3000, and the proxy sent every request back to vite (2026-11-07)
+const { loadConfigFromFile } = await import('vite')
+const proxyTarget = async (port: string | undefined) => {
+  const saved = process.env.PORT
+  if (port === undefined) delete process.env.PORT; else process.env.PORT = port
+  try {
+    const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' }, new URL('../vite.config.ts', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+    return (loaded?.config.server?.proxy as Record<string, unknown> | undefined)?.['/board_model']
+  } finally {
+    if (saved === undefined) delete process.env.PORT; else process.env.PORT = saved
+  }
+}
+const targets = { none: await proxyTarget(undefined), vite: await proxyTarget('3000'), both: await proxyTarget('8131') }
+check('the dev proxy: PORT=3000 (vite\'s own) leaves the API port as without it; a PORT both processes got is followed',
+  typeof targets.none === 'string' && !targets.none.endsWith(':3000') && targets.vite === targets.none && targets.both === 'http://localhost:8131',
+  JSON.stringify(targets))
+
 console.log(failed ? `\n${failed} FAILED` : '\nall api client checks passed')
 process.exitCode = failed ? 1 : 0
