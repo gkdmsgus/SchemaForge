@@ -84,6 +84,13 @@ if (GUARD.deployed) console.log(`[guard] deployed: code runs and model calls for
 // ── Express app ────────────────────────────────────────────────────
 
 const app = express()
+// req.ip is the visitor's address, for each one's share of the slots (job_slots.ts): the one hop in front is trusted, the
+// reverse proxy (Caddy on the Jetson, through Docker's port forwarding), and req.ip is the last address of
+// X-Forwarded-For, the one that proxy saw, so an address a visitor writes in front of it changes nothing. Without a
+// proxy (development) a request can name any address there, which only moves its own share. Nothing else reads req.ip,
+// req.protocol or req.hostname. Render puts more than one proxy in front (unconfirmed): its visitors may then share a
+// key, the address of the proxy before the last (DEPLOY.md)
+app.set('trust proxy', 1)
 app.use(cors({
   origin: process.env.FRONTEND_URL || true,
   credentials: true,
@@ -1196,11 +1203,12 @@ app.post('/test_code', requireAuth as any, requireMember as any, async (req: Aut
 // hold a slot while they run (job_slots.ts), and the rest wait in line. Nothing capped them: 16 demo boards at once took
 // about 2 GB on the development PC, the Jetson container's whole memory cap (review of 2026-11-08). 4 suits its 4 cores,
 // about 1 GB at the worst (four 3D exports); SF_JOB_SLOTS sets another number. A slot is taken once per job, never
-// again inside it: boards holding all four would each wait for a DRC slot.
+// again inside it: boards holding all four would each wait for a DRC slot. One visitor (one address, 'trust proxy'
+// above) runs 2 at most and waits 4, so a script cannot keep everyone else out; a classroom behind one address shares that.
 
 const JOB_SLOTS = Math.floor(Number(process.env.SF_JOB_SLOTS))
-const SLOTS = new Slots(JOB_SLOTS >= 1 ? JOB_SLOTS : 4, 16, 60000)
-/** whose job this is */
+const SLOTS = new Slots(JOB_SLOTS >= 1 ? JOB_SLOTS : 4, 16, 60000, { running: 2, waiting: 4 })
+/** whose job this is: the visitor's address (an IPv6 one by its first 64 bits) */
 const jobKey = (req: Request) => clientKey(req.ip)
 /** when a visitor told the server is busy is asked to try again (Retry-After, seconds) */
 const BUSY_RETRY_S = 15

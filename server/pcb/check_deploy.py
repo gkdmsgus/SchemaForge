@@ -185,14 +185,16 @@ def main():
               f'pid 1 {init}; {(tree.stdout or tree.stderr).strip()[-160:]}')
 
         # eight 3D exports at once, twice: kicad-cli writes fixed temp names beside its output, and in one shared folder
-        # concurrent exports failed or came back cut short (8 at once: 2 failed, 1 cut short, review of 2026-11-03)
+        # concurrent exports failed or came back cut short (8 at once: 2 failed, 1 cut short, review of 2026-11-03).
+        # From eight visitors, as the proxy names them: one visitor runs 2 and waits 4 (server/job_slots.ts)
         if done:
             from concurrent.futures import ThreadPoolExecutor
             url = f'{base}/board_model?pcb={done[-1]["pcbFilename"]}'
 
-            def get(_):
+            def get(i):
                 try:
-                    with urllib.request.urlopen(url, timeout=300) as r:
+                    req = urllib.request.Request(url, headers={'X-Forwarded-For': f'198.51.100.{i + 1}'})
+                    with urllib.request.urlopen(req, timeout=300) as r:
                         return r.status, len(r.read())
                 except urllib.error.HTTPError as e:
                     return e.code, 0

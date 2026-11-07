@@ -1,8 +1,9 @@
 // Checks J1-J7 and S1-S5: how many heavy jobs run at once and who waits (job_slots.ts). Nothing capped them: 16 demo
 // boards at once took about 2 GB on the development PC, the Jetson container's whole memory cap (review of 2026-11-08).
-// J1-J7 the rules, with no server. S1-S5 a real server in production mode with SF_JOB_SLOTS=3, read through /health:
+// J1-J7 the rules, with no server. S1-S6 a real server in production mode with SF_JOB_SLOTS=3, read through /health:
 // at most 3 jobs run, the rest wait in line, a full line is told at once in Korean with Retry-After, a board request
-// writes its netlist only once it has its slot, and one replaced while it waits leaves the line.
+// writes its netlist only once it has its slot, and one replaced while it waits leaves the line. S6 one visitor's
+// share: 2 running, 4 waiting, by the address the proxy names in X-Forwarded-For, whatever a visitor writes before it.
 // No model; S needs python, skidl and KiCad (a demo board and its 3D export).
 // Usage (from server/): npx tsx check_job_slots.ts   → exit 0 only if all pass
 import { spawn } from 'child_process'
@@ -203,8 +204,8 @@ async function server() {
       await w.stop()
       const after = await settle()
       const whole = answers.filter(a => a.status === 200 && a.body.subarray(0, 4).toString() === 'glTF').length
-      check('S2 six 3D exports at once: at most 3 run, the rest wait, all six whole', w.seen.missing === 0 && w.seen.running <= SLOTS
-        && w.seen.running >= 2 && w.seen.waiting >= 1 && whole === 6 && after === idleJobs,
+      check('S2 six 3D exports from six visitors: 3 run, the rest wait, all six whole', w.seen.missing === 0 && w.seen.running === SLOTS
+        && w.seen.waiting >= 1 && whole === 6 && after === idleJobs,
         `most running ${w.seen.running}, waiting ${w.seen.waiting} (${w.seen.reads} reads, ${w.seen.missing} without jobs); ${whole}/6 whole; after ${after}`)
       const waited = answered - sent
       check('S3 a board request waits in line and writes its netlist only once it has its slot', waited >= 500 && early === 0
@@ -251,6 +252,26 @@ async function server() {
         && a.status === 409 && firstSaid.code === 'replaced' && /[가-힣]/.test(firstSaid.error ?? '') && a.at < b.at
         && b.status === 200 && /event: done/.test(b.text) && !/event: error/.test(b.text) && after === idleJobs,
         `in line: ${inLine}; first ${a.status} ${a.text.slice(0, 100)}; retry ${b.status} ${/event: done/.test(b.text) ? 'done' : b.text.slice(-120)}; after ${after}`)
+    }
+
+    // S6. one visitor runs 2 and waits 4, whatever addresses it writes in front of its own in X-Forwarded-For; the next
+    //     ones are refused at once. A request with no X-Forwarded-For is its own address's and goes in at once
+    {
+      const one = '198.51.100.50'
+      const mine = Array.from({ length: 8 }, (_, i) => model(pcb, i % 2 ? `10.9.9.${i}, ${one}` : one))
+      await sleep(300)
+      const share = JSON.stringify(await jobs())
+      const plain = fetch(`${base}/board_model?pcb=${encodeURIComponent(pcb)}`).then(read)
+      await sleep(150)
+      const beside = await jobs()
+      const answers = await Promise.all(mine)
+      const own = await plain
+      const after = await settle()
+      const refusedNow = answers.filter(busy).length, whole = answers.filter(a => a.status === 200).length
+      check('S6 one visitor: 2 run, 4 wait, the rest refused; a request with no X-Forwarded-For goes in beside it',
+        share === JSON.stringify({ running: 2, waiting: 4, slots: SLOTS }) && beside?.running === 3 && (beside.waiting ?? 0) >= 1
+        && refusedNow === 2 && whole === 6 && own.status === 200 && after === idleJobs,
+        `one visitor: ${share}; with the other: ${JSON.stringify(beside)}; ${whole} whole, ${refusedNow} refused busy; the other ${own.status}; after ${after}`)
     }
   } finally {
     if (proc.exitCode === null && proc.signalCode === null) {
