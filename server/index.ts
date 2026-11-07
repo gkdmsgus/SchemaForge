@@ -16,7 +16,7 @@ import {
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
-import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
+import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
@@ -83,10 +83,9 @@ if (GUARD.deployed) console.log(`[guard] deployed: code runs and model calls for
 // ── Express app ────────────────────────────────────────────────────
 
 const app = express()
-app.use(cors({
-  origin: process.env.FRONTEND_URL || true,
-  credentials: true,
-}))
+// deployed: no CORS allow headers unless FRONTEND_URL names the one page that may call it (deploy_guard.ts corsOrigin)
+const CORS_ORIGIN = corsOrigin(GUARD, process.env.FRONTEND_URL)
+if (CORS_ORIGIN !== null) app.use(cors({ origin: CORS_ORIGIN, credentials: true }))
 app.use(express.json())
 
 // Production: serve built React files

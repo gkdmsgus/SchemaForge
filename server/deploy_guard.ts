@@ -36,6 +36,22 @@ export function memberRefusal(g: Guard, user: Member | undefined): Refusal | nul
   return null
 }
 
+/** cors's origin option: whether this Origin may call the server from a browser and read the answer */
+export type CorsOrigin = boolean | string | ((origin: string | undefined, done: (err: Error | null, allow?: boolean) => void) => void)
+
+/**
+ * Which other web pages may call this server from a visitor's browser and read the answer (CORS), as cors's origin
+ * option, or null for no allow headers at all. Development is as before: FRONTEND_URL, else any page (vite's on another
+ * port). Deployed, the app comes from the server itself: no page unless FRONTEND_URL names one, then that one only.
+ * Every origin was echoed back with credentials, so any site could have a visitor's browser call the open routes and
+ * read the answers (review of 2026-11-07). A trailing / is dropped: a browser's Origin never has one.
+ */
+export function corsOrigin(g: Guard, frontendUrl: string | undefined): CorsOrigin | null {
+  if (!g.deployed) return frontendUrl || true
+  const only = (frontendUrl ?? '').trim().replace(/\/+$/, '')
+  return only ? (origin, done) => done(null, origin === only) : null
+}
+
 /** the password-free sign-in kept for development is never on a deployed server */
 export function localLoginRefusal(g: Guard): string | null {
   return g.deployed && !g.supabase ? `이 서버의 로그인은 아직 열려 있지 않습니다. ${DEMO}` : null

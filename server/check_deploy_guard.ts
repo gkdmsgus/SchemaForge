@@ -4,6 +4,7 @@
 // password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text). D11 a port in use, D11b one
 // Windows reserved (Windows only).
 // D12 the built app's cache headers, on a small dist/ of its own. D13 a build in any folder stays out of the image and lint.
+// D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -12,7 +13,7 @@ import { request } from 'http'
 import { createServer } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
+import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -53,6 +54,21 @@ check('D6 not listed: 403', memberRefusal(full, { email: 'other@example.com', co
 check('D7 names from requests', safeName('..') === null && safeName('.') === null && safeName('') === null && safeName(undefined) === null
   && safeName('a/b/../x.gbr') === 'x.gbr' && safeName('board_gerber') === 'board_gerber'
   && fileStem('../../etc/x') === 'etcx' && fileStem('') === 'edited' && fileStem(undefined) === 'edited' && fileStem('motor-2_v1') === 'motor-2_v1')
+
+// D14. which other pages may call the server from a browser (CORS): development as before (FRONTEND_URL, else any);
+//      deployed none, or FRONTEND_URL's only, its trailing / dropped. Every origin was echoed back with credentials
+{
+  const one = corsOrigin(bare, ' https://app.example/ ')
+  const asked = (origin: string | undefined) => {
+    let allow: boolean | undefined
+    if (typeof one === 'function') one(origin, (_e, a) => { allow = a })
+    return allow
+  }
+  const allow = [asked('https://app.example'), asked('https://evil.example'), asked(undefined)]
+  check('D14 CORS: development any or FRONTEND_URL; deployed none, or FRONTEND_URL only', corsOrigin(dev, undefined) === true
+    && corsOrigin(dev, 'http://localhost:3000') === 'http://localhost:3000' && corsOrigin(bare, undefined) === null
+    && corsOrigin(bare, ' ') === null && typeof one === 'function' && allow.join() === 'true,false,false', `FRONTEND_URL only: ${allow.join(', ')}`)
+}
 
 // D8. index.ts (read as text): each route that runs code or calls the model goes through the guard
 const src = readFileSync(join(process.cwd(), 'index.ts'), 'utf8')
@@ -122,13 +138,20 @@ async function upIn(base: string, proc: ChildProcess) {
   return false
 }
 
+/** a request with headers fetch may not send (Origin), and the answer's status and headers */
+const headers = (port: number, method: string, path: string, sent: Record<string, string>) =>
+  new Promise<{ status: number; headers: Record<string, unknown> }>((resolve, reject) => {
+    request({ host: '127.0.0.1', port, path, method, headers: sent }, r => { r.resume(); resolve({ status: r.statusCode ?? 0, headers: r.headers }) })
+      .on('error', reject).end()
+  })
+
 async function live() {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
   const proc = spawn(process.execPath, [join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'index.ts'], {
     // SF_OUTPUTS_SWEEP off: this server runs in the checkout, whose outputs/ holds the checks' fixtures
     env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '',
-           SF_OUTPUTS_SWEEP: '' },
+           SF_OUTPUTS_SWEEP: '', FRONTEND_URL: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let stderr = ''
@@ -218,6 +241,15 @@ async function live() {
     //      the search links, before any key is read (review of 2026-11-06)
     const mouser = await (await post('/mouser_search', { components: [{ ref: 'R1', value: '1k', name: 'R' }] })).json() as { available?: boolean; refused?: boolean; results?: unknown[] }
     check('D9c /mouser_search refuses a visitor', mouser.available === false && mouser.refused === true && mouser.results?.length === 0, JSON.stringify(mouser))
+
+    // D9f. CORS with no FRONTEND_URL: another site's page gets no allow header, on a plain call or a preflight (D14)
+    const evil = { Origin: 'https://evil.example' }
+    const plain = await headers(port, 'GET', '/health', evil)
+    const preflight = await headers(port, 'OPTIONS', '/generate_pcb_stream',
+      { ...evil, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' })
+    const allowed = (h: Record<string, unknown>) => Object.keys(h).filter(k => k.startsWith('access-control-allow-'))
+    check('D9f CORS, no FRONTEND_URL: no allow header for another site', !allowed(plain.headers).length && !allowed(preflight.headers).length,
+      `GET /health ${plain.status} [${allowed(plain.headers).map(k => `${k}: ${plain.headers[k]}`).join('; ')}] · OPTIONS ${preflight.status} [${allowed(preflight.headers).join(', ')}]`)
   } finally {
     if (proc.exitCode === null && proc.signalCode === null) {
       const gone = new Promise(r => proc.once('exit', r))
@@ -279,7 +311,9 @@ async function cacheHeaders() {
   const port = await freePort()
   const here = process.cwd()
   const proc = spawn(process.execPath, [join(here, 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(here, 'index.ts')], {
-    cwd, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '' },
+    // FRONTEND_URL with a trailing /, as it may be written (D12b)
+    cwd, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '',
+                FRONTEND_URL: 'https://app.example/' },
     stdio: 'ignore',
   })
   try {
@@ -293,6 +327,16 @@ async function cacheHeaders() {
     const page = up ? await cache('/') : '', route = up ? await cache('/some/route') : ''
     check('D12 hashed assets for a year, index.html every time', /^200 .*max-age=31536000/.test(asset) && /immutable/.test(asset)
       && page === '200 public, max-age=0' && route === '200 public, max-age=0', `/assets: ${asset} | /: ${page} | a route: ${route}`)
+
+    // D12b. CORS with FRONTEND_URL: that page may call it with credentials, another site gets no allow header (D14)
+    const cors = async (origin: string) => {
+      if (!up) return 'server did not start'
+      const h = (await headers(port, 'GET', '/health', { Origin: origin })).headers
+      return `${h['access-control-allow-origin'] ?? '-'} ${h['access-control-allow-credentials'] ?? '-'}`
+    }
+    const app = await cors('https://app.example'), evil = await cors('https://evil.example')
+    check('D12b CORS, FRONTEND_URL set: that page only', app === 'https://app.example true' && evil === '- -',
+      `app.example: ${app} | evil.example: ${evil}`)
   } finally {
     if (proc.exitCode === null && proc.signalCode === null) {
       const gone = new Promise(r => proc.once('exit', r))

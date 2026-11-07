@@ -64,7 +64,7 @@
 | `SUPABASE_URL` | 로그인 | 프로젝트 첫 화면이나 Connect 창의 `https://<ref>.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | 로그인 | Settings → API Keys의 Secret key (`sb_secret_…`, 비밀). 서버는 이 키로만 표에 접근한다 |
 | `ALLOWED_EMAILS` | 회로 생성 | 쉼표로 구분한 메일 주소. 대소문자·공백은 무시 |
-| `FRONTEND_URL` | 선택 | CORS 허용 주소. 화면과 API가 같은 주소면 없어도 된다 |
+| `FRONTEND_URL` | 선택 | 다른 주소의 화면이 API를 부를 때 그 화면의 주소 하나 (CORS). 배포 서버는 이 값이 없으면 다른 주소의 화면에 응답을 열어 주지 않는다. 화면과 API가 같은 주소면 없어도 된다 |
 | `MOUSER_API_KEY` | 선택 | BOM 가격·재고 조회. 없으면 검색 링크만 |
 | `PORT` | 자동 | `render.yaml`이 10000으로 정한다 (이미지 기본값 8002, 로컬 개발 기본값 8113) |
 
