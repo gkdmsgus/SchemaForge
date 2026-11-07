@@ -25,9 +25,17 @@ function ViewerFileFailed({ onError }: { onError?: () => void }) {
   )
 }
 
+/**
+ * The viewer's file could not be fetched (set before ViewerFileFailed reports it). lazy() keeps that answer, so asking again
+ * cannot help: 배치하기 asks for a reload instead of saying its 3D button tries again (review of 2026-11-07).
+ */
+let viewerFileMissing = false
+const VIEWER_FILE_GONE = '새 버전이 올라와 3D 화면을 불러오지 못했습니다. 페이지를 새로고침해 주세요.'
+
 // three.js is a quarter of the first download and only a finished board needs it, so the viewer comes in a file of its own
 const KiCad3DViewer = lazy(() => import('./KiCad3DViewer').catch(e => {
   console.error('3D viewer file failed to load:', e)
+  viewerFileMissing = true
   return { default: ViewerFileFailed }
 }))
 const VIEWER_LOADING = (
@@ -1028,9 +1036,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             const on = (v === '3d') === asm3d
             const failed = v === '3d' && glbFailed
             return (
-              // after a failed load the 3D button tries again
+              // after a failed load the 3D button tries again; a viewer file that is gone asks for a reload
               <button key={v} type="button" onClick={() => { if (failed) setGlbFailed(false); chooseAsmView(v) }} aria-pressed={on}
-                data-testid={`assembly-view-${v}`} title={failed ? '3D 모델을 불러오지 못했습니다. 누르면 다시 시도합니다' : v === '3d' ? '실제 3D 모델' : '평면 그림'}
+                data-testid={`assembly-view-${v}`}
+                title={failed ? (viewerFileMissing ? VIEWER_FILE_GONE : '3D 모델을 불러오지 못했습니다. 누르면 다시 시도합니다') : v === '3d' ? '실제 3D 모델' : '평면 그림'}
                 style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${failed ? TONE_COLOR.warn : UI_LINE}`, background: on ? UI_FG : UI_BG,
                   color: on ? '#ffffff' : failed ? TONE_COLOR.warn : UI_FG, fontWeight: on ? 700 : 400, fontFamily: MONO, fontSize: 11,
                   cursor: 'pointer' }}>
@@ -1360,7 +1369,9 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
             ? '3D에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 목록에 마우스를 올리면 그 부품이 기판에서 빛납니다.'
             : '기판에서 부품을 누르면 체크되고, 다시 누르면 풀립니다. 끌어서 이동, 휠로 확대합니다.'}
         </div>
-        {glbFailed && <div style={{ ...small, marginTop: 4, color: TONE_COLOR.warn }}>3D 모델을 불러오지 못해 평면 그림으로 보여 줍니다. 위의 3D 단추를 누르면 다시 시도합니다.</div>}
+        {glbFailed && <div style={{ ...small, marginTop: 4, color: TONE_COLOR.warn }}>{viewerFileMissing
+          ? `평면 그림으로 보여 줍니다. ${VIEWER_FILE_GONE}`
+          : '3D 모델을 불러오지 못해 평면 그림으로 보여 줍니다. 위의 3D 단추를 누르면 다시 시도합니다.'}</div>}
         {missing3d.length > 0 && (
           <div data-testid="assembly-missing3d" style={{ ...small, marginTop: 4, color: TONE_COLOR.warn }}>
             3D 모델이 없는 부품: {missing3d.join(', ')}. 목록에서 체크하거나 2D로 봅니다.

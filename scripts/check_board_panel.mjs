@@ -10,7 +10,9 @@
 // with no footprint or a break KiCad found, in its colour, title and lines, and still downloads (it was green with
 // "그대로 올리면 됩니다" on such a board: review of 2026-11-06), and a clean board stays green, B10 a 3D viewer file that
 // cannot be fetched (a tab open across a deploy, answered with the app's page) leaves the result screen up, says so in
-// the PCB tab and goes to the 2D drawing in 배치하기 (the error boundary took the whole screen: review of 2026-11-06).
+// the PCB tab and goes to the 2D drawing in 배치하기 (the error boundary took the whole screen: review of 2026-11-06),
+// B10b there 배치하기 and its 3D button ask for a reload (they said the button tries again, which asks for nothing: the
+// lazy import keeps its failure, review of 2026-11-07), B10c a 3D model that did not load keeps the retry, which asks again.
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -222,6 +224,30 @@ try {
   const screenError = await stale.getByTestId('screen-error').count(), stillResult = await stale.getByTestId('view-tab-schematic').isVisible()
   check('B10 a 3D viewer file that cannot be fetched leaves the result screen up, says so, and 배치하기 goes to 2D',
     gone > 0 && said3d && flat && screenError === 0 && stillResult, `chunk asked ${gone}x, says so ${said3d}, 2D note ${flat}, error screens ${screenError}`)
+  // B10b. 배치하기 asks for a reload there too: it said the 3D button tries again, but the lazy import keeps its failure, so
+  // the button asked for nothing and went straight back to 2D (review of 2026-11-07). A model that did not load keeps that
+  const panel10 = await stale.getByTestId('assembly-hint').locator('..').innerText().catch(() => '')
+  const title10 = await stale.getByTestId('assembly-view-3d').getAttribute('title').catch(() => '')
+  check('B10b with the 3D viewer file gone, 배치하기 and its 3D button ask for a reload and promise no retry',
+    /새로고침/.test(panel10) && /새로고침/.test(title10 ?? '') && !/다시 시도/.test(panel10 + (title10 ?? '')),
+    `panel "${panel10.split('\n').filter(l => /3D/.test(l)).join(' / ').slice(0, 120)}", button "${title10}"`)
+  // B10c. a 3D model that did not load (the viewer's file did) still offers the 3D button's retry, and that retry asks again
+  const glb = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  let models = 0
+  await glb.route(/\/board_model\?/, r => { models++; return r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"check"}' }) })
+  await glb.route(/\/generate_pcb_stream$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: builtBoard }))
+  await glb.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+  await glb.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+  await glb.getByTestId('view-tab-assembly').click({ timeout: 30000 })
+  const flatGlb = await glb.getByText('평면 그림으로 보여 줍니다').waitFor({ timeout: 30000 }).then(() => true, () => false)
+  const panelGlb = await glb.getByTestId('assembly-hint').locator('..').innerText().catch(() => '')
+  const titleGlb = await glb.getByTestId('assembly-view-3d').getAttribute('title').catch(() => '')
+  const before10 = models
+  await glb.getByTestId('assembly-view-3d').click().catch(() => {})
+  for (let i = 0; i < 50 && models === before10; i++) await glb.waitForTimeout(100)
+  check('B10c a 3D model that did not load keeps the retry, and the 3D button asks for it again',
+    flatGlb && /다시 시도/.test(panelGlb) && /다시 시도/.test(titleGlb ?? '') && !/새로고침/.test(panelGlb) && models > before10,
+    `2D note ${flatGlb}, button "${titleGlb}", model asked ${before10} then ${models}`)
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
