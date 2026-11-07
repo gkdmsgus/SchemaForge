@@ -956,6 +956,17 @@ export function approvedPlanText(plan: unknown): string {
   return lines.join('\n').slice(0, 4000)
 }
 
+/** how long the model gets to send a failed circuit's code back fixed. The checks shorten it (check_model_config.ts L9c) */
+const CODE_FIX_MS = Number(process.env.SF_CODE_FIX_MS) || 45000
+
+// A circuit code that did not run, in words for the error box: the screen showed "skidl execution error" (review of
+// 2026-11-07). What happened, then what to do; the traceback stays in detail, which the screen does not show
+const CODE_FAILED = 'AI가 만든 회로 코드가 실행되지 않았습니다.'
+const CODE_NO_FIX = `${CODE_FAILED} 설정의 '자동 재시도'가 꺼져 있어 고치지 않았습니다. 재시도를 누르면 회로를 처음부터 다시 만듭니다.`
+const CODE_FIX_FAILED = `${CODE_FAILED} 한 번 고쳐 봤지만 고친 코드도 실행되지 않았습니다. 재시도를 누르면 회로를 처음부터 다시 만듭니다.`
+const CODE_FIX_TIMEOUT = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델이 정해진 시간 안에 답하지 않았습니다. 잠시 뒤에 재시도를 눌러 주세요.`
+const CODE_FIX_NO_ANSWER = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델에게서 고친 코드를 받지 못했습니다. 잠시 뒤에 재시도를 눌러 주세요.`
+
 app.post('/generate', optionalAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
@@ -1038,13 +1049,16 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
       if (abort.signal.aborted) return res.end()
       if (!autoFix) {
         res.write(sse('error', JSON.stringify({
-          message: 'skidl execution error',
+          message: CODE_NO_FIX,
           detail: (firstErr as Error).message,
           code: skidlCode,
         })))
         return res.end()
       }
       res.write(sse('status', '🔧 Fixing code and retrying...'))
+      // the fixed code came and was run: a failure now is the code's, before it the model call's
+      let fixRun = false
+      let fixTimedOut = false
       try {
         const fixMessages = [
           { role: 'system' as const, content: SYSTEM_PROMPT },
@@ -1052,24 +1066,31 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
           { role: 'assistant' as const, content: raw },
           { role: 'user' as const, content: `The code above failed:\n${(firstErr as Error).message}\n\nFix and output corrected code + ---GUIDE--- + Korean guide.` },
         ]
-        const retryTimeout = setTimeout(() => abort.abort(), 45000)
+        const retryTimeout = setTimeout(() => { fixTimedOut = true; abort.abort() }, CODE_FIX_MS)
         let fixAxiosRes
         try {
           fixAxiosRes = await axios.post(`${MODEL_BASE}/chat/completions`, {
             model: MODEL, ...modelExtra(), messages: fixMessages, temperature: 0.05, max_tokens: 2500,
           }, {
             headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-            timeout: 43000,
+            timeout: Math.max(1000, CODE_FIX_MS - 2000),
             signal: abort.signal as AbortSignal,
           })
         } finally { clearTimeout(retryTimeout) }
         const fix = splitOutput((fixAxiosRes.data.choices[0].message.content as string).trim(), guide)
         skidlCode = fix.code
         guide = fix.guide
+        fixRun = true
         outputPath = await runSkidl(skidlCode)
       } catch (retryErr) {
+        if (clientClosed) return res.end()
+        // a model failure it knows (no credit, busy, refused key, unreachable) is said as everywhere else
+        const said = modelFailure(retryErr)
+        const message = fixRun ? CODE_FIX_FAILED
+          : fixTimedOut || said?.status === 504 ? CODE_FIX_TIMEOUT
+          : said?.text ?? CODE_FIX_NO_ANSWER
         res.write(sse('error', JSON.stringify({
-          message: 'skidl execution error',
+          message,
           detail: (retryErr as Error).message,
           code: skidlCode,
         })))
