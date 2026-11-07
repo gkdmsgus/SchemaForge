@@ -87,6 +87,20 @@ const near = (a: number | null, b: number | null) => (a == null || b == null ? a
     && states(timed('4u7')) === states(timed('4.7uF')) && pick(timed('4u7'), 'op_555')?.summary === pick(timed('4.7uF'), 'op_555')?.summary
     && is(timed('100MF'), 'op_555', 'unknown', 'U1', /단위가 필요합니다/),
     `${show(sensed('R10'), 'op_drive')} / ${show(timed('4u7'), 'op_555')} / ${show(timed('100MF'), 'op_555')}`)
+  // an empty value reaches the netlist and the board as the reference (server/index.ts graphToNetlist), and R1 reads like
+  // 0.1 Ω: on the finished board a resistor with no value read as 70 A through the LED and 490 W, not as no value
+  const limited = (ref: string, value: string) => circuit([['BT1', 'Battery', '9V'], [ref, 'R', value], ['D1', 'LED', 'RED']],
+    [['VCC', 'BT1.1', `${ref}.1`], ['A', `${ref}.2`, 'D1.1'], ['GND', 'D1.2', 'BT1.2']])
+  const onBoard = (g: NetGraph) => operatingChecks(fromBoard({ style: null, parts: g.components.map(c => {
+    const pads = g.nets.flatMap(n => n.nodes.filter(nd => nd.ref === c.ref).map(nd => ({ num: nd.pin, net: n.name })))
+    return { ref: c.ref, part: c.name, value: c.value, pads, pad_pins: Object.fromEntries(pads.map(p => [p.num, Number(p.num)])) }
+  }) } as unknown as BoardModel))
+  const asWritten = limited('R1', 'R1'), asTenth = limited('R10', 'R10'), other = limited('R3', 'R10')
+  check('O1c a resistor whose value is its own reference has no value, on the schematic and the board; R10 on another part is 0.1 Ω',
+    states(onBoard(asWritten)) === states(run(limited('R1', ''))) && is(onBoard(asWritten), 'op_led', 'unknown', 'D1', /값/) && !pick(onBoard(asWritten), 'op_rpower')
+    && is(run(asWritten), 'op_led', 'unknown', 'D1') && is(onBoard(asTenth), 'op_led', 'unknown', 'D1')
+    && is(onBoard(other), 'op_led', 'error', 'D1', /R3 0\.1 Ω/) && is(run(other), 'op_led', 'error', 'D1', /R3 0\.1 Ω/),
+    `${show(onBoard(asWritten), 'op_led')} / ${show(onBoard(asWritten), 'op_rpower')} / ${show(onBoard(other), 'op_led')}`)
 }
 
 // O2. parts table: every limit has a number and a source, nothing left as a placeholder ──

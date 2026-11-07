@@ -60,11 +60,16 @@ export interface OpCircuit {
 
 const pinKey = (ref: string, pin: number) => `${ref}.${pin}`
 const FURNITURE = new Set(['MountingHole', 'TestPoint'])
+/**
+ * A part's value as the checks read it. An empty value reaches the netlist, and so the board, as the part's reference
+ * (server/index.ts graphToNetlist), and a resistor's reads like a value: R1 is no 0.1 Ω. No value, as on the schematic.
+ */
+const partValue = (ref: string, value: unknown) => { const v = String(value ?? ''); return v === ref ? '' : v }
 
 /** The schematic graph (before a PCB exists); style = the SMD/THT choice the PCB will use. */
 export function fromGraph(g: NetGraph, style: 'smd' | 'tht' | null = null): OpCircuit {
   const parts = (g.components || []).filter(c => c.name && !FURNITURE.has(c.name))
-    .map(c => ({ ref: c.ref, part: c.name!, value: String(c.value ?? '') }))
+    .map(c => ({ ref: c.ref, part: c.name!, value: partValue(c.ref, c.value) }))
   const known = new Set(parts.map(p => p.ref))
   const pins = new Map<string, string>()
   for (const n of g.nets || []) for (const nd of n.nodes || []) {
@@ -82,7 +87,7 @@ export function fromBoard(b: BoardModel): OpCircuit {
     if (pin != null && pd.net) pins.set(pinKey(p.ref, pin), pd.net)
   }
   return {
-    parts: real.map(p => ({ ref: p.ref, part: p.part, value: String(p.value ?? '') })), pins, style: b.style ?? null,
+    parts: real.map(p => ({ ref: p.ref, part: p.part, value: partValue(p.ref, p.value) })), pins, style: b.style ?? null,
     missing: real.filter(p => !p.pad_pins).map(p => p.ref),
   }
 }
