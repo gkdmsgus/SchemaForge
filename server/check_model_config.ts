@@ -91,6 +91,10 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   })
 })
 
+// How long a started server may take to answer /health. It answers in about 1 s here, idle or with every core busy
+// (0.8-1.0 s, 2026-11-07); 30 s failed D9 once while other work held the PC (about 76% CPU). A server that
+// starts costs nothing more, and one that exited is not waited for.
+const START_MS = 60000
 async function startServer(env: Record<string, string>) {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
@@ -102,7 +106,7 @@ async function startServer(env: Record<string, string>) {
   proc.stdout!.on('data', (d: Buffer) => { log += d.toString() })
   proc.stderr!.on('data', (d: Buffer) => { log += d.toString() })
   let up = false
-  for (let t0 = Date.now(); !up && Date.now() - t0 < 30000; await new Promise(r => setTimeout(r, 300))) {
+  for (let t0 = Date.now(); !up && Date.now() - t0 < START_MS && proc.exitCode === null; await new Promise(r => setTimeout(r, 300))) {
     up = await fetch(base + '/health').then(r => r.ok, () => false)
   }
   return { proc, base, up, log: () => log }
@@ -172,7 +176,7 @@ async function main() {
     SF_MODEL: 'grok-4.3', SF_MODEL_MINI: 'grok-mini-test', SF_REASONING_EFFORT: 'none',
   })
   try {
-    if (!grok.up) return check('L0 server with the Grok settings', false, `did not start in 30 s: ${grok.log().trim().slice(-400)}`)
+    if (!grok.up) return check('L0 server with the Grok settings', false, `did not start (limit ${START_MS / 1000} s): ${grok.log().trim().slice(-400)}`)
     const health = await fetch(grok.base + '/health').then(r => r.json() as Promise<Health>)
     check('L1 /health names the model and who runs it', health.model === 'Grok 4.3' && health.provider === '127.0.0.1',
       `${health.model} · ${health.provider}`)

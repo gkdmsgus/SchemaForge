@@ -5,7 +5,7 @@
 // D12 the built app's cache headers, on a small dist/ of its own.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { request } from 'http'
 import { createServer } from 'net'
@@ -96,6 +96,17 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   })
 })
 
+// How long a started server may take to answer /health. It answers in about 1 s here, idle or with every core busy
+// (0.8-1.0 s, 2026-11-07); 30 s failed D9 once while other work held the PC (about 76% CPU). A server that
+// starts costs nothing more, and one that exited is not waited for.
+const START_MS = 60000
+async function upIn(base: string, proc: ChildProcess) {
+  for (const t0 = Date.now(); Date.now() - t0 < START_MS && proc.exitCode === null; await new Promise(r => setTimeout(r, 300))) {
+    if (await fetch(base + '/health').then(r => r.ok, () => false)) return true
+  }
+  return false
+}
+
 async function live() {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
@@ -115,11 +126,7 @@ async function live() {
     request({ host: '127.0.0.1', port, path }, r => { r.resume(); resolve(r.statusCode ?? 0) }).on('error', reject).end()
   })
   try {
-    let up = false
-    for (let t0 = Date.now(); !up && Date.now() - t0 < 30000; await new Promise(r => setTimeout(r, 300))) {
-      up = await fetch(base + '/health').then(r => r.ok, () => false)
-    }
-    if (!up) return check('D9 production server', false, `did not start in 30 s on port ${port}: ${stderr.trim().slice(-400)}`)
+    if (!(await upIn(base, proc))) return check('D9 production server', false, `did not start (limit ${START_MS / 1000} s) on port ${port}: ${stderr.trim().slice(-400)}`)
     const demo = await fetch(base + '/demo_result/led')
     type Graph = { components: { ref: string; value: string }[]; nets: unknown[] }
     const demoBody = demo.ok ? await demo.json() as { filename?: string; graph?: Graph } : {}
@@ -229,10 +236,7 @@ async function cacheHeaders() {
   })
   try {
     const base = `http://127.0.0.1:${port}`
-    let up = false
-    for (let t0 = Date.now(); !up && Date.now() - t0 < 30000; await new Promise(r => setTimeout(r, 300))) {
-      up = await fetch(base + '/health').then(r => r.ok, () => false)
-    }
+    const up = await upIn(base, proc)
     const cache = async (path: string) => {
       const r = await fetch(base + path)
       return `${r.status} ${r.headers.get('cache-control')}`

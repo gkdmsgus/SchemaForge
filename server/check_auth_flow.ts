@@ -263,6 +263,10 @@ const freePort = () => new Promise<number>((resolve, reject) => {
 })
 
 /** index.ts on a free port (an empty value is kept: dotenv never overrides one) */
+// How long a started server may take to answer /health. It answers in about 1 s here, idle or with every core busy
+// (0.8-1.0 s, 2026-11-07); 30 s failed D9 once while other work held the PC (about 76% CPU). A server that
+// starts costs nothing more, and one that exited is not waited for.
+const START_MS = 60000
 async function startServer(env: Record<string, string>) {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
@@ -275,7 +279,7 @@ async function startServer(env: Record<string, string>) {
   proc.stderr!.on('data', (d: Buffer) => { log += d.toString() })
   proc.on('exit', code => { log += ` [exited ${code}]` })
   let up = false
-  for (let t0 = Date.now(); !up && Date.now() - t0 < 30000; await new Promise(r => setTimeout(r, 300))) {
+  for (let t0 = Date.now(); !up && Date.now() - t0 < START_MS && proc.exitCode === null; await new Promise(r => setTimeout(r, 300))) {
     up = await fetch(base + '/health').then(r => r.ok, () => false)
   }
   return { proc, base, up, log: () => log }
@@ -541,7 +545,7 @@ async function main() {
     OPENAI_API_KEY: 'sk-mock', OPENAI_BASE_URL: `${mockUrl}/openai/v1`,
   })
   try {
-    if (!prod.up) return check('A0 production server on the mock Supabase', false, `did not start in 30 s: ${prod.log().trim().slice(-400)}`)
+    if (!prod.up) return check('A0 production server on the mock Supabase', false, `did not start (limit ${START_MS / 1000} s): ${prod.log().trim().slice(-400)}`)
     base = prod.base
     await flow()
   } finally {
@@ -550,7 +554,7 @@ async function main() {
   }
   const dev = await startServer({ NODE_ENV: 'development', SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '' })
   try {
-    if (!dev.up) return check('A22 development server', false, `did not start in 30 s: ${dev.log().trim().slice(-400)}`)
+    if (!dev.up) return check('A22 development server', false, `did not start (limit ${START_MS / 1000} s): ${dev.log().trim().slice(-400)}`)
     base = dev.base
     await devFlow()
   } finally {
