@@ -6,9 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  // dist: the build. .claude: local tool settings and session worktrees (whole copies of the repository).
+  // dist: the build, in any folder (a stray server/dist gave lint 460 errors, review of 2026-11-07). .claude: local tool settings and session worktrees (whole copies of the repository).
   // server/pcb/footprints: KiCad's vendor files, copied as they are. scripts/bench-results: benchmark output.
-  globalIgnores(['dist', '.claude', 'server/pcb/footprints', 'scripts/bench-results']),
+  globalIgnores(['**/dist', '.claude', 'server/pcb/footprints', 'scripts/bench-results']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [

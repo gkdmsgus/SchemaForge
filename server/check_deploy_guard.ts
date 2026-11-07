@@ -3,7 +3,7 @@
 // in production mode with no Supabase: the demo and its gerbers stay open; model calls, code runs and the
 // password-free sign-in are refused; a ".." folder does not leave outputs/. D10 render.yaml (read as text). D11 a port in use, D11b one
 // Windows reserved (Windows only).
-// D12 the built app's cache headers, on a small dist/ of its own.
+// D12 the built app's cache headers, on a small dist/ of its own. D13 a build in any folder stays out of the image and lint.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -277,9 +277,31 @@ async function cacheHeaders() {
   }
 }
 
+// D13. a build left anywhere in the checkout stays out of the image and of lint: a stray server/dist went into the image
+//      (.dockerignore's 'dist' is the root's only) and was served there before the image's own build (index.ts takes cwd/dist
+//      first), and npm run lint read its 460 errors (review of 2026-11-07). .dockerignore read as Docker reads it, lint by ESLint
+async function buildOutput() {
+  const root = join(process.cwd(), '..')
+  // each line a path pattern from the context's root: * within a name, **/ any folders; a folder that matches takes its contents
+  const rules = readFileSync(join(root, '.dockerignore'), 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'))
+  const esc = (x: string) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+  const asRe = (p: string) => new RegExp(`^${p.replace(/\/+$/, '').split('**/').map(part => part.split('*').map(esc).join('[^/]*')).join('(?:.*/)?')}(?:/.*)?$`)
+  const dockerSkips = (path: string) => rules.reduce((out, r) => (asRe(r.replace(/^!/, '')).test(path) ? !r.startsWith('!') : out), false)
+  const docker = { 'server/dist/index.html': true, 'dist/assets/index-abc.js': true, 'server/.env': true, 'server/index.ts': false, 'src/main.tsx': false }
+  const dockerWrong = Object.entries(docker).filter(([path, skip]) => dockerSkips(path) !== skip).map(([path]) => path)
+  const { ESLint } = await import('eslint')
+  const lint = new ESLint({ cwd: root })
+  const lintFiles = { 'server/dist/assets/index-abc.js': true, 'dist/assets/index-abc.js': true, 'server/index.ts': false, 'src/App.tsx': false }
+  const lintWrong: string[] = []
+  for (const [path, skip] of Object.entries(lintFiles)) if (await lint.isPathIgnored(join(root, path)) !== skip) lintWrong.push(path)
+  check('D13 a build anywhere stays out of the image and of lint', !dockerWrong.length && !lintWrong.length,
+    `image takes or drops wrongly: ${dockerWrong.join(', ') || 'none'}; lint: ${lintWrong.join(', ') || 'none'}`)
+}
+
 // exitCode, not process.exit(): exiting with fetch's sockets still open crashed Node on Windows (0xC0000409)
 live().catch(e => check('D9 production server', false, (e as Error).message))
   .then(portTaken).catch(e => check('D11 a port in use', false, (e as Error).message))
   .then(portReserved).catch(e => check('D11b a reserved port', false, (e as Error).message))
   .then(cacheHeaders).catch(e => check('D12 cache headers', false, (e as Error).message))
+  .then(buildOutput).catch(e => check('D13 a build anywhere', false, (e as Error).message))
   .finally(() => { process.exitCode = ok ? 0 : 1 })

@@ -4,10 +4,12 @@
 **/.env
 **/.env.*
 
-# Rebuilt inside the image
+# Rebuilt inside the image. A build left in any folder too: a stray server/dist went in and was served before the
+# image's own (review of 2026-11-07)
 node_modules
 **/node_modules
 dist
+**/dist
 
 # Local-only
 .git
