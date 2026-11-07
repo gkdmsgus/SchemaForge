@@ -162,7 +162,7 @@ export default function Header({
             onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber-fill)' }}
           >로그인</button>
         )}
-        <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="Settings" />
+        <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="설정" />
       </div>
     </header>
   );

@@ -140,7 +140,7 @@ export async function run(rec) {
 
   await rec.shot('S02', '설정', async () => {
     await rec.caption('설정에서 질문 단계와 계획 단계를 켜고 끌 수 있습니다')
-    await rec.press(page.locator("button[aria-label='Settings']"))
+    await rec.press(page.locator("button[aria-label='설정']"))
     await page.getByRole('heading', { name: '설정' }).waitFor({ timeout: 5000 })
     for (const t of ['자동 재시도', '모호한 프롬프트 되묻기', '설계 계획 미리보기']) await rec.hover(page.getByText(t, { exact: true }).first(), 900)
     await rec.press(page.locator("button[aria-label='닫기']").first())
