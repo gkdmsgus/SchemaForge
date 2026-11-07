@@ -246,6 +246,9 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState<Pos>({ x: 0, y: 0 })
   const panDragRef = useRef<PanDrag | null>(null)
+  // the hand drawn while the schematic is dragged: state, as the ref alone drew nothing new on release (it stayed grabbing
+  // until something else drew the schematic again), and nothing on the press before the first move
+  const [panning, setPanning] = useState(false)
   const didPanRef = useRef(false)
   const [positions, setPositions] = useState<Record<string, Pos>>({})
   const [selected, setSelected] = useState<string | null>(null)
@@ -432,6 +435,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     }
     if (e.button === 1 || e.altKey || e.button === 0) {
       panDragRef.current = { lastX: e.clientX, lastY: e.clientY }
+      setPanning(true)
       didPanRef.current = false
       try { svgRef.current?.setPointerCapture(e.pointerId) } catch (_) {}
       e.preventDefault()
@@ -478,6 +482,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   }
 
   function onSvgPointerUp(e: React.PointerEvent) {
+    setPanning(false)
     if (wireDragRef.current) {
       const captured = wireDragRef.current.captured
       wireDragRef.current = null
@@ -784,7 +789,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
           width="100%" height="100%"
           style={{
             display:'block', userSelect:'none', touchAction:'none',
-            cursor: (wireState || reconnectState) ? 'crosshair' : (panDragRef.current ? 'grabbing' : 'default'),
+            cursor: (wireState || reconnectState) ? 'crosshair' : (panning ? 'grabbing' : 'default'),
           }}
           onPointerMove={onSvgPointerMove}
           onPointerDown={onSvgPointerDown}

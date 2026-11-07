@@ -27,7 +27,8 @@
 // being typed goes up on a press on the empty schematic or on a pin (those presses are cancelled, so the browser moved no focus:
 // the panel closed with the value on the part and nowhere else, no "● 수정됨", the BOM and the PCB without it), S24 an IC keeps
 // the pin of a deleted wire when that was its highest (S16 cannot tell: the demos' highest IC pins are on power nets, drawn with
-// no wire to pick, so here the supply has another name).
+// no wire to pick, so here the supply has another name), S25 a drag on the empty schematic shows the grabbing hand from the press,
+// and letting go gives the arrow back at once (it stayed a grabbing hand until something else drew the schematic again).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -783,6 +784,23 @@ try {
   await p24.waitForTimeout(600)
   const gone24 = await p24.getByText("'SUPPLY_A' 삭제됨").isVisible(), after24 = await pins24()
   check('S24 an IC keeps the pin of a deleted wire, its highest', before24 === 8 && gone24 && after24 === 8, `U1 ${before24}→${after24} pins, SUPPLY_A deleted ${gone24}`)
+
+  // S25: a press in the schematic's bottom left corner, away from the parts (S23's empty spot), held, moved, let go
+  const p25 = await editorPage('led')
+  const svg25 = p25.locator('svg:has(g[data-comp])').first()
+  const hand25 = () => svg25.evaluate(el => getComputedStyle(el).cursor)
+  const b25 = await svg25.boundingBox()
+  await p25.mouse.move(b25.x + 6, b25.y + b25.height - 6)
+  await p25.mouse.down()
+  await p25.waitForTimeout(150)
+  const pressed25 = await hand25()
+  await p25.mouse.move(b25.x + 40, b25.y + b25.height - 30, { steps: 4 })
+  const moving25 = await hand25()
+  await p25.mouse.up()
+  await p25.waitForTimeout(200)
+  const released25 = await hand25()
+  check('S25 a drag on the empty schematic shows the grabbing hand from the press, and the arrow is back on release',
+    pressed25 === 'grabbing' && moving25 === 'grabbing' && released25 === 'default', `pressed ${pressed25}, moving ${moving25}, after ${released25}`)
 } finally {
   await browser.close()
 }
