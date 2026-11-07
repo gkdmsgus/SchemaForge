@@ -131,6 +131,8 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   const traceDragRef = useRef<TraceDragState | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const panDragRef = useRef<PanState | null>(null)
+  // the hand drawn while the board is dragged: state, as the ref alone drew nothing new on release (it stayed grabbing)
+  const [panning, setPanning] = useState(false)
   const didPanRef = useRef(false)
 
   const comps: ComponentEntry[] = graph?.components || []
@@ -139,13 +141,17 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   const nets: NetEntry[] = graph?.nets || []
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const onWheelRef = useRef<((e: WheelEvent) => void) | null>(null)
+  // Ctrl/⌘ + wheel zooms: a listener that is not passive, so it can keep the page from zooming instead
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const handler = (e: WheelEvent) => onWheelRef.current?.(e)
-    el.addEventListener('wheel', handler, { passive: false })
-    return () => el.removeEventListener('wheel', handler)
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      setZoom(z => Math.min(4, Math.max(0.25, z * (e.deltaY > 0 ? 0.9 : 1.1))))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
   const footprints = useMemo((): Record<string, Footprint> => {
@@ -191,6 +197,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   function onSvgPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (e.button === 0 || e.button === 1) {
       panDragRef.current = { lastX: e.clientX, lastY: e.clientY }
+      setPanning(true)
       didPanRef.current = false
       try { svgRef.current?.setPointerCapture(e.pointerId) } catch (_) {}
       e.preventDefault()
@@ -237,6 +244,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   }
 
   function onSvgPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    setPanning(false)
     const td = traceDragRef.current
     if (td) {
       const captured = td.captured
@@ -253,13 +261,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
     panDragRef.current = null
     try { svgRef.current?.releasePointerCapture(e.pointerId) } catch (_) {}
   }
-
-  function onWheel(e: WheelEvent) {
-    if (!e.ctrlKey && !e.metaKey) return
-    e.preventDefault()
-    setZoom(z => Math.min(4, Math.max(0.25, z * (e.deltaY > 0 ? 0.9 : 1.1))))
-  }
-  onWheelRef.current = onWheel
 
   // Board outline
   const PAD = 30
@@ -336,7 +337,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
           ref={svgRef}
           width="100%" height="100%"
           style={{ display:'block', userSelect:'none', touchAction:'none', background: PCB_GREEN_DARK,
-            cursor: panDragRef.current ? 'grabbing' : 'grab' }}
+            cursor: panning ? 'grabbing' : 'grab' }}
           onPointerDown={onSvgPointerDown}
           onPointerMove={onSvgPointerMove}
           onPointerUp={e => onSvgPointerUp(e)}

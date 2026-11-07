@@ -3,7 +3,8 @@
 // the BOM, the checks and the next PCB kept the trace (the defect fixed in the schematic: review of 2026-11-07).
 // K1 the PCB tab shows the sketch, its note and its traces, K2 a trace pressed opens its panel, and nothing in the
 // sketch is named 삭제 (if something is, it is pressed, as a person would), K3 after that the sketch has as many traces
-// as before, no "● 수정됨" and no 되돌리기.
+// as before, no "● 수정됨" and no 되돌리기. K4 dragging the empty board shows the grabbing hand, and letting go gives the
+// open hand back at once (it stayed a grabbing hand until something else drew the sketch again), K5 Ctrl + wheel zooms.
 // Needs the vite dev server (npm run dev) and the demo route of its API; no PCB is built.
 // Usage: node scripts/check_pcb_sketch.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -51,6 +52,32 @@ try {
   const undo = await sketch.locator('button', { hasText: '되돌리기' }).count()
   check('K3 after that the sketch keeps every trace, with no "● 수정됨" and no 되돌리기', after === before && marked === 0 && undo === 0,
     `traces ${before}→${after}, 수정됨 ${marked}, 되돌리기 ${undo}`)
+
+  // K4: a drag on the board, away from the parts and the traces (the board's top left corner)
+  const svg = page.locator('svg:has(g[data-trace])').first()
+  const cursor = () => svg.evaluate(el => getComputedStyle(el).cursor)
+  const scale = () => page.locator('svg:has(g[data-trace]) > g').first().getAttribute('transform')
+  const box = await svg.boundingBox()
+  const x0 = box.x + 40, y0 = box.y + 40
+  await page.mouse.move(x0, y0)
+  await page.mouse.down()
+  await page.mouse.move(x0 + 30, y0 + 20, { steps: 4 })
+  const during = await cursor()
+  await page.mouse.up()
+  await page.waitForTimeout(200)
+  const released = await cursor()
+  check('K4 a drag on the board shows the grabbing hand, and letting go gives the open hand back', during === 'grabbing' && released === 'grab',
+    `during ${during}, after ${released}`)
+
+  // K5
+  const before5 = await scale()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.keyboard.down('Control')
+  await page.mouse.wheel(0, -200)
+  await page.keyboard.up('Control')
+  await page.waitForTimeout(300)
+  const after5 = await scale()
+  check('K5 Ctrl + wheel zooms the sketch', /scale\(1\)/.test(before5 ?? '') && /scale\(1\.1\)/.test(after5 ?? ''), `${before5} → ${after5}`)
   check('page errors', errors.length === 0, errors.join(' | '))
 } finally {
   await browser.close()
