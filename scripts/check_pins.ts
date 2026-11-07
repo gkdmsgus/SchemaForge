@@ -1,6 +1,8 @@
-// Checks P1-P3: what the deploy images install is fixed, so a build next month runs what was tested today.
-// P1 every line of requirements.txt is one exact version, P2 each Python the images run gets each package once, with
-// skidl and numpy among them, P3 both Dockerfiles install that file.
+// Checks P1-P4: what the deploy images install and what the checks run on is fixed, so a build next month runs what was
+// tested today. P1 every line of requirements.txt is one exact version, P2 each Python the images run gets each package
+// once, with skidl and numpy among them, P3 both Dockerfiles install that file, P4 the root's tsx is the server's, in
+// package.json and in the lock (npm test's scripts/ steps ran whatever npx found or fetched: 4.23.15 beside the server's
+// 4.23.13, and on a fresh clone with an empty npm cache they did not start).
 // No server, no Docker (what the images really hold is read with pip freeze: README, 배포).
 // Usage: npx tsx scripts/check_pins.ts   → exit 0 only if all pass
 import fs from 'node:fs'
@@ -33,6 +35,15 @@ for (const minor of [10, 13]) {
 for (const f of ['Dockerfile', 'Dockerfile.jetson']) {
   const text = read(f)
   check(`P3 ${f} installs requirements.txt`, /^COPY requirements\.txt /m.test(text) && /pip install [^\n]*-r requirements\.txt/.test(text))
+}
+
+// P4
+{
+  const lockedTsx = (f: string): string | undefined => JSON.parse(read(f)).packages?.['node_modules/tsx']?.version
+  const server = lockedTsx('server/package-lock.json')
+  const declared = JSON.parse(read('package.json')).devDependencies?.tsx, locked = lockedTsx('package-lock.json')
+  check('P4 the root runs the tsx the server has', !!server && declared === server && locked === server,
+    `server ${server}, root package.json ${declared}, root lock ${locked}`)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall pin checks passed')
