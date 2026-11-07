@@ -11,7 +11,8 @@ import { readFileSync } from 'fs'
 import { createServer } from 'http'
 import { createServer as createNetServer, type AddressInfo } from 'net'
 import { join } from 'path'
-import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_TIMEOUT_MS, modelClient, modelFailure, modelLabel, modelProvider } from './model'
+import OpenAI from 'openai'
+import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_SILENT, MODEL_TIMEOUT_MS, modelClient, modelFailure, modelLabel, modelProvider } from './model'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -151,6 +152,17 @@ async function main() {
   check('L8 model client: 60 s, one retry, used by every call site', client.timeout === 60000 && client.maxRetries === 1
     && MODEL_TIMEOUT_MS === 60000 && MODEL_RETRIES === 1 && own.length === 0,
     `timeout ${client.timeout} ms, retries ${client.maxRetries}${own.length ? `; its own client: ${own.join(', ')}` : ''}`)
+
+  // L8c. a call the SDK gives up on is told in words: with those limits a stalled model's "Request timed out." reached
+  // the AI rounds list, which is Korean (21b in pcb/check_ai_loop.py). The real SDK, a port that never answers, a short limit
+  const silent = createServer(() => { /* never answers */ })
+  await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', () => resolve()))
+  const quick = new OpenAI({ apiKey: 'check-only', baseURL: `http://127.0.0.1:${(silent.address() as AddressInfo).port}/v1`, timeout: 200, maxRetries: 0 })
+  const gaveUp = await quick.chat.completions.create({ model: 'fake', messages: [] }).catch((e: unknown) => e)
+  silent.closeAllConnections()
+  silent.close()
+  const told = modelFailure(gaveUp)
+  check('L8c a stalled call is told in words', told?.text === MODEL_SILENT && told.status === 504, told?.text ?? String(gaveUp))
 
   await new Promise<void>(resolve => mock.listen(0, '127.0.0.1', () => resolve()))
   const mockBase = `http://127.0.0.1:${(mock.address() as AddressInfo).port}/v1`

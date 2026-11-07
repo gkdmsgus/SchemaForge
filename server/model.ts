@@ -35,14 +35,17 @@ const DEMO = '데모(?demo=motor)는 그대로 쓸 수 있습니다.'
 export const MODEL_NO_CREDIT = `AI 모델 사용 한도(크레딧)가 다 떨어져 지금은 회로 생성과 AI 편집을 할 수 없습니다. 운영자가 결제 한도를 채우면 다시 됩니다. ${DEMO}`
 export const MODEL_BUSY = 'AI 모델에 요청이 몰려 잠시 거절됐습니다. 1분쯤 뒤에 다시 시도해 주세요.'
 export const MODEL_KEY_REFUSED = `서버의 AI 모델 키가 거절됐습니다. 운영자가 키를 확인해야 합니다. ${DEMO}`
+export const MODEL_SILENT = 'AI 모델이 응답하지 않습니다. 잠시 뒤에 다시 시도해 주세요.'
 
 /**
  * A failed model call in words for the screen, with the HTTP status to answer with, or null when it is not one of
  * these (the caller keeps its own message). OpenAI answers 429 with code insufficient_quota when the credit is gone
  * (the screen showed "Request failed with status code 429"), and 429 with rate_limit_exceeded when busy; xAI says
  * "credits" in the message. Reads the OpenAI SDK's APIError (status, code, error) and axios's error (response).
+ * A call the SDK gave up on is one too: at MODEL_TIMEOUT_MS its "Request timed out." got as far as the AI rounds list.
  */
 export function modelFailure(e: unknown): { status: number; text: string } | null {
+  if (e instanceof OpenAI.APIConnectionTimeoutError) return { status: 504, text: MODEL_SILENT }
   type Body = { code?: unknown; type?: unknown; message?: unknown }
   const err = (e ?? {}) as { status?: number; code?: unknown; type?: unknown; message?: unknown; error?: Body;
     response?: { status?: number; data?: { error?: Body | string } } }
