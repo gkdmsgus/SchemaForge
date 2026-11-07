@@ -15,6 +15,7 @@ import {
   type OpResult, type OpRule, type OpState,
 } from '../src/lib/operatingCheck.ts'
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
+import { PIN_NAMES } from '../src/lib/humanReview.ts'
 import { SPECS } from '../src/lib/partSpecs.ts'
 import type { BoardModel, NetGraph } from '../src/types.ts'
 import { parseNetlist } from '../server/netlist.ts'
@@ -1647,13 +1648,36 @@ function verdictProblems(rs: OpResult[]): string[] {
     ['npn_relay', 'relay_bad', 'op_flyback', /거꾸로/],
     ['ne555_blink', 'ne555_bad', 'op_555', /동작 범위/],
   ]
+  // the same circuits with every pin saved by name, as an older edit saved them (LED A/K, Q_NPN B/C/E, NE555 TRIG, Relay
+  // COIL1, R p1): 2026-11-08 they had no pins here, and 검사할 부품 없음 showed as a pass
+  const named = (g: NetGraph): NetGraph => ({ ...g, nets: g.nets.map(n => ({ ...n, nodes: n.nodes.map(nd => {
+    const part = g.components.find(c => c.ref === nd.ref)?.name ?? ''
+    return { ...nd, pin: PIN_NAMES[part]?.[Number(nd.pin) - 1] ?? `p${nd.pin}` }
+  }) })) })
+  const byName: string[] = []
+  let led: NetGraph | null = null
   for (const [good, bad, rule, why] of pairs) {
-    const g = operatingChecks(fromGraph(netOf(good), 'smd')), b = operatingChecks(fromGraph(netOf(bad), 'smd'))
+    const gg = netOf(good), bb = netOf(bad)
+    if (good === 'led_basic') led = gg
+    const g = operatingChecks(fromGraph(gg, 'smd')), b = operatingChecks(fromGraph(bb, 'smd'))
     const goodOk = g.length > 0 && g.every(r => r.state === 'pass')
     const badOk = is(b, rule, 'error', undefined, why)
     check(`O11 demo ${good} passes, ${bad} fails on ${rule}`, goodOk && badOk,
       `${operatingHeadline(g).text} / ${operatingHeadline(b).text}: ${show(b, rule)}`)
+    for (const [name, net, rs] of [[good, gg, g], [bad, bb, b]] as const) {
+      const n = named(net)
+      if (n.nets.every(x => x.nodes.every(nd => /^\d+$/.test(nd.pin)))) byName.push(`${name}: no pin renamed`)
+      else if (full(operatingChecks(fromGraph(n, 'smd'))) !== full(rs)) byName.push(`${name}: ${operatingHeadline(operatingChecks(fromGraph(n, 'smd'))).text}`)
+    }
   }
+  // a name the pin-name table does not know is not guessed: 판단 불가 for the circuit, never a pass
+  const unknown = led && variant(named(led), c => {
+    c.nets.flatMap(x => x.nodes).find(nd => nd.pin === 'A' && c.components.find(p => p.ref === nd.ref)?.name === 'LED')!.pin = 'ANODE'
+  })
+  const u = unknown ? operatingChecks(fromGraph(unknown, 'smd')) : []
+  check('O11b the demos with every pin saved by name give the numbered verdicts; a name the table does not know is 판단 불가',
+    !byName.length && u.length === 1 && u[0].rule === 'op_data' && u[0].state === 'unknown' && operatingHeadline(u).state === 'unknown',
+    `${byName.join(' | ')}${u.length ? ` · unknown name: ${operatingHeadline(u).text}` : ''}`)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
