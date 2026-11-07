@@ -329,8 +329,8 @@ export default function ResultPanel({
     handGraphs.current.add(next)
     if (effectiveGraph) pushGraphHistory(effectiveGraph)
     setLocalGraph(next)
-    updateSavedResultChat(lastPrompt, chatMessages, next)
     saveToSession({ graph: next })
+    updateSavedResultChat(lastPrompt, chatMessages, next)
   }
 
   function undoGraph() {
@@ -338,8 +338,8 @@ export default function ResultPanel({
     if (!restored) return
     setGraphHistory(prev => prev.slice(0, -1))
     setLocalGraph(restored)
-    updateSavedResultChat(lastPrompt, chatMessages, restored)
     saveToSession({ graph: restored })
+    updateSavedResultChat(lastPrompt, chatMessages, restored)
   }
 
   /** 초기화: back to the circuit as generated (or as last saved, for a session opened from history; a saved AI edit stays one) */
@@ -349,8 +349,8 @@ export default function ResultPanel({
     setLocalGraph(savedEdit)
     setGraphHistory([])
     if (changed && back) {
-      updateSavedResultChat(lastPrompt, chatMessages, back)
       saveToSession({ graph: back })
+      updateSavedResultChat(lastPrompt, chatMessages, back)
     }
   }
 
