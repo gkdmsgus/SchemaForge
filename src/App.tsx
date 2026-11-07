@@ -340,11 +340,18 @@ export default function App() {
       if (stale()) return
       setPlan(null)
       executeGenerate(prompt)
+    } finally {
+      // answered: nothing on its way (runGenerate waits for this one)
+      if (planAbort.current === abort) planAbort.current = null
     }
   }
 
   async function runGenerate(p: string, typeKey?: string, skipCache = false) {
-    if (!p.trim() || loading || prepareAbort.current) return
+    // also for a second click that lands before the screen changed: with no questions step it asked for the plan again
+    if (!p.trim() || loading || prepareAbort.current || planAbort.current) return
+    // an offer for the last description goes: left under these steps, its 불러오기 opened that circuit and the steps ran
+    // on behind it, and their generation took the screen; its 새로 생성 did nothing (2026-11-07)
+    setPendingCached(null)
 
     // 로그인 필요: 모달 열고 로그인 후 자동 재개
     if (!authRef.current) {
@@ -457,6 +464,9 @@ export default function App() {
           plan: approvedPlan.current?.prompt === p ? approvedPlan.current.plan : undefined }),
         signal: abort.signal,
       })
+      // refused, and stopped while its body was read (a 401's, to see whether it can be renewed): nothing to say any more,
+      // and the login window would have gone on with the generation after the login (2026-11-07)
+      if (!res.ok && seq !== loadSeq.current) return
       if (res.status === 401) {
         // the login ran out or is missing: log in again, and this prompt is generated right after (no error box)
         authExpired({ prompt: p, direct: true })
@@ -466,6 +476,7 @@ export default function App() {
       }
       if (!res.ok) {
         const why = await errorText(res)
+        if (seq !== loadSeq.current) return
         // a refusal (a deployed server keeps generation for listed accounts) is said as the server wrote it
         setError(res.status === 403 ? { text: why, refused: true } : { text: `서버 오류 (${res.status}): ${why}` })
         setProgress(null)

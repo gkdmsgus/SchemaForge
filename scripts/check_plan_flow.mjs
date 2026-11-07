@@ -10,7 +10,11 @@
 // P8 while /clarify is asked the screen says so with a 취소, and a double click asks once (the form stayed as it was, so
 // a second click sent the questions and the plan again, four model calls), P9 that 취소 stops the steps and leaves the form
 // as typed, P10 two clicks that reach the generation leave one running, which 취소 stops (the first ran on unseen and its
-// result came up after the cancel: review of 2026-11-06).
+// result came up after the cancel: review of 2026-11-06), P11 an offer of a saved result goes when another description is
+// asked about (under the questions step its 불러오기 opened the saved circuit and the steps ran on, and that generation then
+// took the screen; its 새로 생성 did nothing), P12 a generation stopped too late for its failure (500, 403, 401) says nothing
+// and asks for no login, on the home screen the person went back to, P13 with no questions step (a circuit type picked,
+// or the questions off) a double click asks for one plan (the second one aborted the first, whose model call ran on).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -222,6 +226,47 @@ try {
     check(`P10 of two generations one stays, and 취소 leaves none to come up later (${how})`,
       backHome && !popped && p10.held.stopped === (c === ctx ? 2 : 0), `${p10.held.generations} sent, ${p10.held.stopped} stopped, home ${backHome}, result came up ${popped}`)
   }
+
+  // P11: the first description has a saved result, so its offer is up; the second one is being asked about
+  const p11 = await settled({ clarify: true, plan: false }, /\/clarify$/)(ctx)
+  await p11.p.evaluate(result => localStorage.setItem('sf_saved_results', JSON.stringify([{ id: 1, name: 'a', prompt: '저장된 전원 회로', result, time: Date.now() }])), demo)
+  await home(p11.p).fill('저장된 전원 회로')
+  await p11.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  const open11 = p11.p.getByRole('button', { name: '불러오기', exact: true })
+  await open11.waitFor({ timeout: 5000 })
+  await home(p11.p).fill('다른 설명의 전원 회로')
+  await p11.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p11.p.getByTestId('preparing').waitFor({ timeout: 5000 })
+  const offerStays = await shows(open11)
+  check('P11 an offer of a saved result goes when another description is asked about', !offerStays, `offer under the questions step ${offerStays}`)
+  p11.held.release()
+
+  // P12: the stop does nothing, as when it comes while the refused answer's body is being read
+  for (const [status, body] of [[500, { error: 'check' }], [403, { error: 'check' }], [401, { error: 'check', code: 'login_required' }]]) {
+    let answer12
+    const answered12 = new Promise(r => { answer12 = r })
+    const p12 = await holding(lateCtx, r => json(r, PLAN), async r => {
+      await answered12
+      await r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {})
+    })
+    await p12.p.addInitScript(() => localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false })))
+    await p12.p.goto(BASE, { waitUntil: 'networkidle' })
+    await submit(p12.p, '늦게 거절되는 전원 회로')
+    await p12.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 10000 })
+    await p12.p.getByRole('button', { name: '취소', exact: true }).click()
+    await home(p12.p).waitFor({ timeout: 5000 })
+    answer12()
+    await p12.p.waitForTimeout(500)
+    const box = await shows(p12.p.getByText(/check|서버 오류/).first()), login = await shows(p12.p.locator('input[type=password]').first())
+    check(`P12 a generation stopped too late for its ${status} says nothing on the home screen`, !box && !login && await shows(home(p12.p)), `error box ${box}, login ${login}`)
+  }
+
+  // P13
+  const p13 = await settled({ clarify: false, plan: true }, /\/plan$/)(ctx)
+  await home(p13.p).fill('두 번 눌린 계획의 전원 회로')
+  await makeTwice(p13.p)
+  const came13 = await approve(p13.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('P13 with no questions step a double click asks for one plan', came13 && p13.held.plans === 1 && p13.held.stopped === 0, `/plan ${p13.held.plans}, stopped ${p13.held.stopped}, plan shown ${came13}`)
 } finally {
   await browser.close()
 }
