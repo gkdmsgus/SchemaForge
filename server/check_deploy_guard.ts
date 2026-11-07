@@ -68,6 +68,20 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
   && !/basename\(req\.params/.test(src),
   guarded.length || uncalled.length ? `not guarded: ${guarded.join(', ')}; still there: ${uncalled.join(', ')}` : '')
 
+// D8b. the board stream's reasons are Korean sentences with what to do, which the screen shows as they are: it showed
+//      only "오류", and they were English or the generator's traceback with the server's paths (review of 2026-11-07)
+{
+  const boardRoute = src.slice(src.indexOf("app.post('/generate_pcb_stream'"), src.indexOf('// ── GET /download_pcb'))
+  const sayings = [...(/const PCB_SAYS = \{([^}]*)\}/.exec(src)?.[1] ?? '').matchAll(/^\s*(\w+): '([^']*)',?\s*$/gm)].map(m => ({ key: m[1], text: m[2] }))
+  const reasons = [...boardRoute.matchAll(/\berror: ([^{}]+?)\s*\}/g)].map(m => m[1].trim())
+  const said = (r: string) => !/stderr|message|String\(/.test(r) && [...r.matchAll(/'([^']*)'/g)].every(q => /[가-힣]/.test(q[1]))
+    && ([...r.matchAll(/PCB_SAYS\.(\w+)/g)].every(k => sayings.some(s => s.key === k[1])) && (/PCB_SAYS\.\w+/.test(r) || /'[^']*[가-힣]/.test(r)))
+  const unsaid = reasons.filter(r => !said(r))
+  const plain = sayings.filter(s => !/[가-힣]/.test(s.text) || !/재시도|주세요|확인/.test(s.text)).map(s => s.key)
+  check('D8b the board stream says why in Korean, with what to do; no traceback or English reason', reasons.length >= 9 && sayings.length >= 9
+    && !unsaid.length && !plain.length, `${reasons.length} reasons, ${sayings.length} sentences${unsaid.length ? `; not in words: ${unsaid.join(' | ')}` : ''}${plain.length ? `; no step to take: ${plain.join(', ')}` : ''}`)
+}
+
 // D10. render.yaml (the Render Blueprint, read as text): every secret is declared with sync: false and no value, the
 //      plan is free, the health check is a route the server has, and PORT is the one Render routes to
 {
@@ -187,6 +201,18 @@ async function live() {
       answers.every(a => a.status === 400 && /json/.test(a.type) && /부품이 하나도 없는/.test(said(a.text)) && !/Traceback|\.py\b/.test(a.text))
       && emptyErc.erc?.some(f => f.rule === 'no_ground') === true,
       `${answers.map(a => `${a.status} ${said(a.text) || a.text.slice(0, 80).replace(/\s+/g, ' ')}`).join(' | ')}; /erc_graph ${JSON.stringify(emptyErc.erc?.map(f => f.rule))}`)
+
+    // D9e. a tab open across a restart asks for files the server no longer has: its gerbers said "PCB file not found." in
+    //      the 거버 button's title, and its board "Netlist file not found." (review of 2026-11-07). In Korean, and
+    //      board_gone so the screen builds the board again instead of asking for the gerbers again
+    const gerberGone = await post('/generate_gerber', { pcbFilename: 'gone_check.kicad_pcb' })
+    const gerberSaid = await gerberGone.json().catch(() => ({})) as { error?: string; code?: string }
+    const boardGone = await post('/generate_pcb_stream', { filename: 'gone_check.net' })
+    const boardSaid = await boardGone.json().catch(() => ({})) as { error?: string }
+    check('D9e files gone after a restart: the gerbers and the board say so in Korean, the gerbers with board_gone',
+      gerberGone.status === 404 && gerberSaid.code === 'board_gone' && /남아 있지 않습니다/.test(gerberSaid.error ?? '')
+      && boardGone.status === 404 && /남아 있지 않습니다/.test(boardSaid.error ?? ''),
+      `gerber ${gerberGone.status} ${gerberSaid.code ?? '(no code)'} "${gerberSaid.error}" | board ${boardGone.status} "${boardSaid.error}"`)
 
     // D9c. a BOM price search spends the operator's Mouser quota, one call per line: a visitor is told refused and keeps
     //      the search links, before any key is read (review of 2026-11-06)

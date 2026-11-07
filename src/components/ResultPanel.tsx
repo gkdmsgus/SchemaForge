@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import {
-  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText,
+  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText, restoreNetlist,
   type AuthUser, type SessionPatch,
 } from '../api'
 import CircuitCanvas from './CircuitCanvas'
@@ -57,6 +57,17 @@ function updateSavedResult(prompt: string, patch: Pick<GenerateResult, 'code' | 
   } catch { /* storage full or blocked: the edit stays in memory */ }
 }
 
+/**
+ * A board that was not made, and why, in words the screen shows as they are (the server's reason, or one of these):
+ * the screen showed only "오류" and 재시도 (review of 2026-11-07). Anything else is a lost connection.
+ */
+class PcbFailed extends Error {}
+const PCB_CUT_OFF = '기판을 만드는 중에 서버와의 연결이 끊겼습니다. 재시도를 눌러 다시 만들어 주세요.'
+const PCB_NO_FILE = '이 회로에는 기판을 만들 파일이 없습니다. 회로를 다시 만든 뒤 PCB를 생성해 주세요.'
+/** the server's reason when it wrote one in words, else what the status says (a proxy page between restarts) */
+const pcbRefused = (why: string, status: number) => (/[가-힣]/.test(why) ? why
+  : `서버가 기판 요청에 답하지 못했습니다 (HTTP ${status}). 잠시 뒤에 재시도를 눌러 주세요.`)
+
 /** Drops checks that describe a previous netlist (the generation step may attach `erc`). */
 function withoutErc(r: GenerateResult): GenerateResult {
   const { erc: _previous, ...rest } = r as GenerateResult & { erc?: unknown }
@@ -89,6 +100,8 @@ export default function ResultPanel({
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatBoxRef = useRef<HTMLTextAreaElement>(null)
   const [pcbStatus, setPcbStatus] = useState<string | null>(null)
+  // why the last board was not made (pcbStatus 'error'), shown over the board
+  const [pcbError, setPcbError] = useState('')
   // why the AI rounds were refused (a deployed server keeps them for listed accounts); the board was built without.
   // login: the refusal was 401 (no login, or it ran out), so the chip says to log in
   const [aiNote, setAiNote] = useState<{ text: string; login: boolean } | null>(null)
@@ -105,6 +118,8 @@ export default function ResultPanel({
   const [gerberStatus, setGerberStatus] = useState<string | null>(null)
   const [gerberInfo, setGerberInfo] = useState<GerberInfo | null>(null)
   const [gerberError, setGerberError] = useState('')
+  // the server no longer has the board file (a restart, or old files swept): the board is built again, not the gerbers
+  const [gerberGone, setGerberGone] = useState(false)
   // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
   const gerberReq = useRef(0)
   // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
@@ -341,7 +356,7 @@ export default function ResultPanel({
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
-  async function generatePCB(opts: { style?: 'smd' | 'tht'; ai?: boolean } = {}) {
+  async function generatePCB(opts: { style?: 'smd' | 'tht'; ai?: boolean; restored?: boolean } = {}) {
     const style = opts.style ?? pcbStyle, ai = opts.ai ?? useAi
     if (opts.style) setPcbStyle(opts.style)
     if (opts.ai != null) setUseAi(opts.ai)
@@ -354,10 +369,11 @@ export default function ResultPanel({
     const body = localGraph
       ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai }
       : result?.filename ? { filename: result.filename, style, ai } : null
-    if (!body) { setPcbStatus('error'); return }
+    if (!body) { setPcbError(PCB_NO_FILE); setPcbStatus('error'); return }
 
     setPcbSource({ graph: effectiveGraph, style })
     setPcbStatus('loading')
+    setPcbError('')
     // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
     if (window.innerWidth < 1280) { setEditorOpen(false); setSidebarOpen(false) }
     setBoard({ parts: [], frames: [], routes: [], target: null, final: null, drc: null, ai: [], status: 'streaming' })
@@ -385,7 +401,17 @@ export default function ResultPanel({
         if (login) onAuthExpired?.()
         return generatePCB({ style, ai: false })
       }
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+      if (res.status === 404 && 'filename' in body && !opts.restored && result?.filename && result.graph) {
+        // its netlist file is gone too (a restart, or old files swept): written again from this circuit, as for a session
+        // opened from history, and asked once more. A filename is sent only when the circuit on screen is the file's
+        const written = await restoreNetlist(result.filename, result.graph).catch(() => false)
+        if (abort.signal.aborted) return
+        if (written) return generatePCB({ style, ai, restored: true })
+      }
+      if (!res.ok || !res.body) {
+        const why = await errorText(res)
+        throw new PcbFailed(pcbRefused(why, res.status))
+      }
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
@@ -413,12 +439,13 @@ export default function ResultPanel({
             setPcbSummary(data.summary || null)
             setPcbStatus('done')
             done = true
-          } else if (ev === 'error') throw new Error(data.error)
+          } else if (ev === 'error') throw new PcbFailed(typeof data.error === 'string' && data.error ? data.error : PCB_CUT_OFF)
         }
       }
-      if (!done) throw new Error('stream ended without a result')
+      if (!done) throw new PcbFailed(PCB_CUT_OFF)
     } catch (e) {
       if ((e as Error).name === 'AbortError') return
+      setPcbError(e instanceof PcbFailed ? e.message : PCB_CUT_OFF)
       setBoard(b => b && { ...b, status: 'error' })
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
@@ -475,6 +502,7 @@ export default function ResultPanel({
     if (!pcbFilename) return
     const req = ++gerberReq.current
     setGerberStatus('loading')
+    setGerberGone(false)
     try {
       const res = await fetch(`${API}/generate_gerber`, {
         method: 'POST',
@@ -482,6 +510,7 @@ export default function ResultPanel({
         body: JSON.stringify({ pcbFilename }),
       })
       const data = await res.json()
+      if (data.code === 'board_gone' && req === gerberReq.current) setGerberGone(true)
       if (data.error) throw new Error(data.error)
       if (req !== gerberReq.current) return
       setGerberInfo({ dir: data.gerberDir as string, files: data.files || [], zip: data.zip as string | undefined })
@@ -981,12 +1010,15 @@ export default function ResultPanel({
                       ↓ 거버 zip{fabIssues.length ? ' · 확인 필요' : ''}
                     </a>
                   : <StatusChip tone={fabIssues.length ? 'warn' : 'ok'} title={fabIssues.length ? fabWarning(fabIssues) : undefined}>거버 완료</StatusChip>)}
-                {gerberStatus === 'error' && (
-                  <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
-                    style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>
-                )}
+                {/* the board file gone: 거버 다시 would be refused the same way, so the board is built again */}
+                {gerberStatus === 'error' && (gerberGone
+                  ? <button onClick={() => generatePCB()} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 PCB를 다시 만듭니다`}
+                      style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>PCB 다시 생성</button>
+                  : <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
+                      style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>)}
               </>}
-              {pcbStatus === 'error' && <button onClick={() => generatePCB()} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
+              {pcbStatus === 'error' && <button onClick={() => generatePCB()} data-testid="pcb-retry"
+                title={pcbError ? `${pcbError}\n눌러서 다시 만듭니다` : undefined} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
             </div>
           </div>
 
@@ -999,6 +1031,13 @@ export default function ResultPanel({
                   : `부품 방식이 바뀌었습니다. 이 기판은 ${pcbSource.style.toUpperCase()} 부품으로 만든 것입니다.`}
               </span>
               <button onClick={() => generatePCB()} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
+            </div>
+          )}
+          {viewMode !== 'schematic' && pcbStatus === 'error' && pcbError && (
+            <div role="alert" data-testid="pcb-error" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+              background: 'var(--sf-bg-2)', borderBottom: '1px solid var(--sf-danger)', color: 'var(--sf-danger)', fontSize: 11, lineHeight: 1.5 }}>
+              <span style={{ flex: 1 }}><strong>기판을 만들지 못했습니다.</strong> {pcbError}</span>
+              <button onClick={() => generatePCB()} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>재시도</button>
             </div>
           )}
           {viewMode !== 'schematic' && pcbStatus === 'done' && !pcbStale && pcbSummary && pcbSummary.warnings.length > 0 && (() => {

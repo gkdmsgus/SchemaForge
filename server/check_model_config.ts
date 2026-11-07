@@ -1,5 +1,5 @@
-// Checks L1-L8: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
-// prompt's part and spec rules as sent (L2b). A mock OpenAI-compatible API runs on a local port and
+// Checks L1-L9: the model provider settings (model.ts), a failed model call told in words (L6b, L7), the plan
+// prompt's part and spec rules as sent (L2b), and circuit code that does not run told in words (L9). A mock OpenAI-compatible API runs on a local port and
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
 // reasoning effort: circuit code (/generate, which called api.openai.com by name before), questions, plan, AI
@@ -32,6 +32,8 @@ let failWith: { status: number; error: Record<string, string>; retry?: boolean }
 let editArgs: { args: string; finish: string } | null = null
 // set for L4e: the AI editor's stream sends one piece and stays open; closed once the server lets go of it
 let editHold: { closed: boolean } | null = null
+// set for L9: the circuit code /generate gets, and the code its fix call gets (null: the fix call is never answered)
+let codeAnswer: { first: string; fix: string | null } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
 
@@ -75,9 +77,13 @@ const mock = createServer((rq, rs) => {
       rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`)
       return rs.end('data: [DONE]\n\n')
     }
-    const content = body.response_format?.type === 'json_object'
+    const json = body.response_format?.type === 'json_object'
+    const fixing = /The code above failed/.test(String(body.messages?.at(-1)?.content ?? ''))
+    if (!json && codeAnswer && fixing && codeAnswer.fix === null) return   // held open: the server's limit ends it
+    const code = !json && codeAnswer ? (fixing ? codeAnswer.fix : codeAnswer.first) : CIRCUIT
+    const content = json
       ? '{"clear":true,"title":"LED","summary":"s","topology":"t","specs":[],"parts":[],"risks":[]}'
-      : `${CIRCUIT}\n---GUIDE---\n안내`
+      : `${code}\n---GUIDE---\n안내`
     rs.writeHead(200, { 'Content-Type': 'application/json' })
     rs.end(JSON.stringify({
       id: 'c', object: 'chat.completion', created: 0, model: body.model,
@@ -206,6 +212,8 @@ async function main() {
     NODE_ENV: 'development', SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_AI_STUB: '',
     OPENAI_API_KEY: 'xai-test-key', OPENAI_BASE_URL: mockBase,
     SF_MODEL: 'grok-4.3', SF_MODEL_MINI: 'grok-mini-test', SF_REASONING_EFFORT: 'none',
+    // L9c: the fix call's limit, 45 s otherwise
+    SF_CODE_FIX_MS: '3000',
   })
   try {
     if (!grok.up) return check('L0 server with the Grok settings', false, `did not start (limit ${START_MS / 1000} s): ${grok.log().trim().slice(-400)}`)
@@ -366,6 +374,32 @@ async function main() {
     check('L7c the questions: a known model failure is told (429 busy), any other is "no questions"', busyAsk.status === 429
       && busyAskBody.error === MODEL_BUSY && downAsk.status === 200 && downAskBody.clear === true,
       `busy ${busyAsk.status} ${JSON.stringify(busyAskBody).slice(0, 60)} | 500 ${downAsk.status} ${JSON.stringify(downAskBody)}`)
+
+    // L9. circuit code that does not run is told in Korean with what to do: the error box showed "skidl execution error"
+    // (review of 2026-11-07). L9a with 자동 재시도 off, L9b the fixed code fails too, L9c the fix call outlasts its limit
+    const BROKEN = "from skidl import *\nraise RuntimeError('check: this circuit does not run')"
+    const failedRun = async (autoFix: boolean, fix: string | null) => {
+      codeAnswer = { first: BROKEN, fix }
+      n = seen.length
+      const t0 = Date.now()
+      try {
+        const text = await (await post(grok.base, '/generate', { description: 'LED 하나를 켜는 회로', autoFix })).text()
+        const m = /event: error\ndata: (.+)/.exec(text)
+        const message = m ? String((JSON.parse(m[1]) as { message?: string }).message ?? '') : `(no error event) ${text.slice(-120)}`
+        return { message, calls: at(n).length, seconds: Math.round((Date.now() - t0) / 100) / 10 }
+      } finally { codeAnswer = null }
+    }
+    const inWords = (s: string) => /[가-힣]/.test(s) && !/skidl|error|Traceback|timeout/i.test(s) && /재시도를/.test(s)
+    const noFix = await failedRun(false, BROKEN)
+    check('L9a code that does not run, 자동 재시도 off: said in Korean, and that it was not fixed',
+      inWords(noFix.message) && /자동 재시도/.test(noFix.message) && noFix.calls === 1, `${noFix.calls} call(s): ${noFix.message}`)
+    const fixFailed = await failedRun(true, BROKEN)
+    check('L9b the fixed code does not run either: said in Korean',
+      inWords(fixFailed.message) && /고친 코드도 실행되지 않았습니다/.test(fixFailed.message) && fixFailed.calls === 2, `${fixFailed.calls} call(s): ${fixFailed.message}`)
+    const fixLate = await failedRun(true, null)
+    check('L9c the fix call outlasts its limit: said in Korean, at the limit',
+      inWords(fixLate.message) && /정해진 시간/.test(fixLate.message) && fixLate.calls === 2 && fixLate.seconds < 20,
+      `${fixLate.calls} call(s) in ${fixLate.seconds} s: ${fixLate.message}`)
   } finally {
     await stopServer(grok.proc)
   }

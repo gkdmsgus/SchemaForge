@@ -956,6 +956,17 @@ export function approvedPlanText(plan: unknown): string {
   return lines.join('\n').slice(0, 4000)
 }
 
+/** how long the model gets to send a failed circuit's code back fixed. The checks shorten it (check_model_config.ts L9c) */
+const CODE_FIX_MS = Number(process.env.SF_CODE_FIX_MS) || 45000
+
+// A circuit code that did not run, in words for the error box: the screen showed "skidl execution error" (review of
+// 2026-11-07). What happened, then what to do; the traceback stays in detail, which the screen does not show
+const CODE_FAILED = 'AI가 만든 회로 코드가 실행되지 않았습니다.'
+const CODE_NO_FIX = `${CODE_FAILED} 설정의 '자동 재시도'가 꺼져 있어 고치지 않았습니다. 재시도를 누르면 회로를 처음부터 다시 만듭니다.`
+const CODE_FIX_FAILED = `${CODE_FAILED} 한 번 고쳐 봤지만 고친 코드도 실행되지 않았습니다. 재시도를 누르면 회로를 처음부터 다시 만듭니다.`
+const CODE_FIX_TIMEOUT = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델이 정해진 시간 안에 답하지 않았습니다. 잠시 뒤에 재시도를 눌러 주세요.`
+const CODE_FIX_NO_ANSWER = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델에게서 고친 코드를 받지 못했습니다. 잠시 뒤에 재시도를 눌러 주세요.`
+
 app.post('/generate', optionalAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
@@ -1038,13 +1049,16 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
       if (abort.signal.aborted) return res.end()
       if (!autoFix) {
         res.write(sse('error', JSON.stringify({
-          message: 'skidl execution error',
+          message: CODE_NO_FIX,
           detail: (firstErr as Error).message,
           code: skidlCode,
         })))
         return res.end()
       }
       res.write(sse('status', '🔧 Fixing code and retrying...'))
+      // the fixed code came and was run: a failure now is the code's, before it the model call's
+      let fixRun = false
+      let fixTimedOut = false
       try {
         const fixMessages = [
           { role: 'system' as const, content: SYSTEM_PROMPT },
@@ -1052,24 +1066,31 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
           { role: 'assistant' as const, content: raw },
           { role: 'user' as const, content: `The code above failed:\n${(firstErr as Error).message}\n\nFix and output corrected code + ---GUIDE--- + Korean guide.` },
         ]
-        const retryTimeout = setTimeout(() => abort.abort(), 45000)
+        const retryTimeout = setTimeout(() => { fixTimedOut = true; abort.abort() }, CODE_FIX_MS)
         let fixAxiosRes
         try {
           fixAxiosRes = await axios.post(`${MODEL_BASE}/chat/completions`, {
             model: MODEL, ...modelExtra(), messages: fixMessages, temperature: 0.05, max_tokens: 2500,
           }, {
             headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-            timeout: 43000,
+            timeout: Math.max(1000, CODE_FIX_MS - 2000),
             signal: abort.signal as AbortSignal,
           })
         } finally { clearTimeout(retryTimeout) }
         const fix = splitOutput((fixAxiosRes.data.choices[0].message.content as string).trim(), guide)
         skidlCode = fix.code
         guide = fix.guide
+        fixRun = true
         outputPath = await runSkidl(skidlCode)
       } catch (retryErr) {
+        if (clientClosed) return res.end()
+        // a model failure it knows (no credit, busy, refused key, unreachable) is said as everywhere else
+        const said = modelFailure(retryErr)
+        const message = fixRun ? CODE_FIX_FAILED
+          : fixTimedOut || said?.status === 504 ? CODE_FIX_TIMEOUT
+          : said?.text ?? CODE_FIX_NO_ANSWER
         res.write(sse('error', JSON.stringify({
-          message: 'skidl execution error',
+          message,
           detail: (retryErr as Error).message,
           code: skidlCode,
         })))
@@ -1427,6 +1448,23 @@ const AI_BUDGET_MS = Number(process.env.SF_AI_BUDGET_MS) || 420000
  */
 const boardRuns = new Map<string, { abort: AbortController; ended: Promise<void> }>()
 
+/**
+ * Why a board was not made, as the screen shows it (ResultPanel's banner): what happened, then what to do. The screen
+ * showed only "오류" (review of 2026-11-07), and the reasons were English or the generator's traceback with the
+ * server's paths. The traceback goes to the server's log.
+ */
+const PCB_SAYS = {
+  badGraph: '회로 내용을 읽지 못해 기판을 만들 수 없습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  netGone: '서버에 이 회로의 파일이 남아 있지 않습니다. 서버가 다시 시작되거나 오래된 파일을 정리하면 지워집니다. 회로를 다시 만든 뒤 PCB를 생성해 주세요.',
+  replaced: '같은 기판을 다른 창에서 새로 만들기 시작해서 여기서는 멈췄습니다. 그 창에서 결과를 보거나, 재시도를 누르면 여기서 다시 만듭니다.',
+  slow: '부품 배치와 배선이 정해진 시간 안에 끝나지 않아 멈췄습니다. 재시도를 눌러 주세요. 되풀이되면 부품 수를 줄여 보세요.',
+  drcSlow: 'KiCad 규칙 검사(DRC)가 정해진 시간 안에 끝나지 않아 멈췄습니다. 재시도를 눌러 다시 만들어 주세요.',
+  crashed: '기판을 만드는 프로그램이 오류로 멈췄습니다. 재시도를 눌러 보고, 같으면 회로의 부품 값과 연결을 확인해 주세요.',
+  noResult: '기판을 만드는 프로그램이 결과 없이 끝났습니다. 재시도를 눌러 다시 만들어 주세요.',
+  noPython: '서버에서 기판을 만드는 프로그램을 실행하지 못했습니다. 운영자가 서버 설치(python)를 확인해야 합니다.',
+  checkFailed: '완성된 기판을 검사하다가 서버 오류가 나서 멈췄습니다. 재시도를 눌러 다시 만들어 주세요.',
+}
+
 app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   const { filename, graph, baseName, style, ai } = req.body || {}
   if (ai === true) {
@@ -1438,7 +1476,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   // cleaned as /erc_graph does: a value like 0.1" passed the netlist check there and the generator died on it here
   // (IndexError, review of 2026-11-06)
   const clean = graph ? cleanGraph(graph) : null
-  if (graph && !clean) return res.status(400).json({ error: 'graph with components and nets required' })
+  if (graph && !clean) return res.status(400).json({ error: PCB_SAYS.badGraph })
   // a graph with no part left: the generator died on it and the SSE error carried its traceback, server paths and all
   // (review of 2026-11-07). Answered before anything runs; /erc_graph still checks such a graph (no_ground)
   if (clean && !clean.components.length) return res.status(400).json({ error: '부품이 하나도 없는 회로라 기판을 만들 수 없습니다.' })
@@ -1451,10 +1489,10 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
     pcbFilename = netFilename.replace('.net', '.kicad_pcb')
   } else if (filename) {
     netPath = join(OUTPUTS_DIR, basename(filename as string))
-    if (!existsSync(netPath)) return res.status(404).json({ error: 'Netlist file not found.' })
+    if (!existsSync(netPath)) return res.status(404).json({ error: PCB_SAYS.netGone })
     pcbFilename = basename(filename as string, '.net') + '.kicad_pcb'
   } else {
-    return res.status(400).json({ error: 'filename or graph required' })
+    return res.status(400).json({ error: PCB_SAYS.badGraph })
   }
   const pcbPath = join(OUTPUTS_DIR, pcbFilename)
 
@@ -1490,7 +1528,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   }
   res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); abort.abort('closed') } })
   abort.signal.addEventListener('abort', () => {
-    if (abort.signal.reason === 'replaced') end('error', { error: '같은 기판을 새로 만들기 시작해서 이 작업은 멈췄습니다.' })
+    if (abort.signal.reason === 'replaced') end('error', { error: PCB_SAYS.replaced })
   })
 
   previous?.abort.abort('replaced')
@@ -1503,7 +1541,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   // the run ends when python has and the DRC and AI rounds after its done line have
   let checked: Promise<void> = Promise.resolve()
   void new Promise<void>(r => { proc.once('close', () => r()); proc.once('error', () => r()) }).then(() => checked).finally(leave)
-  timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
+  timer = setTimeout(() => { proc.kill(); end('error', { error: PCB_SAYS.slow }) }, 60000)
 
   proc.stdout.on('data', (d: Buffer) => {
     buf += d.toString()
@@ -1524,7 +1562,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
           clearTimeout(timer)
           timer = setTimeout(() => {
             abort.abort('budget')
-            if (!useAi) end('error', { error: 'DRC timed out' })
+            if (!useAi) end('error', { error: PCB_SAYS.drcSlow })
           }, useAi ? AI_BUDGET_MS : 120000)
           checked = runDrc(pcbPath, abort.signal).then(async drc => {
             if (finished) return
@@ -1540,17 +1578,24 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
               }
             }
             end('done', { ...final, pcbFilename, drc: lastDrc })
-          }).catch(e => end('error', { error: (e as Error).message }))
+          }).catch(e => {
+            console.error(`[pcb] ${pcbFilename}: check after the board failed:`, e)
+            end('error', { error: PCB_SAYS.checkFailed })
+          })
         } else res.write(sse(ev.type, line))
       } catch { /* not an event line */ }
     }
   })
   proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-  proc.on('error', (e: Error) => end('error', { error: e.message }))
+  proc.on('error', (e: Error) => {
+    console.error(`[pcb] ${pcbFilename}: the generator did not start:`, e.message)
+    end('error', { error: PCB_SAYS.noPython })
+  })
   proc.on('close', (code: number | null) => {
     if (awaitingDrc) return          // the done event is on its way out after DRC
-    if (code !== 0) end('error', { error: stderr || 'PCB generation failed' })
-    else end('error', { error: 'PCB generator ended without a result' })
+    // a run stopped (timer, replaced, the visitor left) has said why already: end() keeps the first word
+    if (code !== 0 && !finished) console.error(`[pcb] ${pcbFilename}: the generator exited ${code}: ${stderr.trim().slice(-2000)}`)
+    end('error', { error: code !== 0 ? PCB_SAYS.crashed : PCB_SAYS.noResult })
   })
 })
 
@@ -1688,7 +1733,11 @@ app.post('/generate_gerber', async (req: Request, res: Response) => {
   if (!pcbFilename) return res.status(400).json({ error: 'No PCB filename provided.' })
 
   const pcbPath = join(OUTPUTS_DIR, basename(pcbFilename as string))
-  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'PCB file not found.' })
+  // an old tab's board after a restart or the sweep of old files: its tooltip said "PCB file not found." (review of
+  // 2026-11-07). board_gone: the screen offers to build the board again (its netlist is written again if it went too)
+  if (!existsSync(pcbPath)) {
+    return res.status(404).json({ error: '서버에 이 기판 파일이 남아 있지 않습니다. 서버가 다시 시작되거나 오래된 파일을 정리하면 지워집니다. PCB를 다시 생성한 뒤 거버를 만들어 주세요.', code: 'board_gone' })
+  }
 
   const gerberDir = join(OUTPUTS_DIR, basename(pcbFilename as string, '.kicad_pcb') + '_gerber')
   // fab_export.py empties the folder first, so a second request for the same board waits for the running one
