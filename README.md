@@ -335,7 +335,7 @@ npx tsc --noEmit             # 화면 타입 검사
 cd server && npm run typecheck
 npm run lint
 ```
-두 tsconfig 모두 `noUnusedLocals`를 켜 두어 쓰지 않는 import·변수·함수는 타입 검사에서 걸린다. `npm run lint`는 .ts·.tsx도 typescript-eslint로 읽는다. 권장 규칙에 React 훅 규칙 두 개(조건 안의 훅은 오류, 빠진 의존성은 경고)를 더했고, 끈 규칙은 `eslint.config.js`에 이유를 적었다. CI(`.github/workflows/check.yml`)도 같은 명령을 돌린다.
+두 tsconfig 모두 `noUnusedLocals`를 켜 두어 쓰지 않는 import·변수·함수는 타입 검사에서 걸린다. `npm run lint`는 .ts·.tsx도 typescript-eslint로 읽고, 브라우저 검사와 투어 스크립트(`scripts/**/*.mjs`)도 .js와 같은 규칙으로 읽는다. 권장 규칙에 React 훅 규칙 두 개(조건 안의 훅은 오류, 빠진 의존성은 경고)를 더했고, 끈 규칙은 `eslint.config.js`에 이유를 적었다. CI(`.github/workflows/check.yml`)도 같은 명령을 돌린다.
 
 ## 데모 영상 녹화
 

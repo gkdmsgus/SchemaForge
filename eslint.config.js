@@ -10,7 +10,7 @@ export default defineConfig([
   // server/pcb/footprints: KiCad's vendor files, copied as they are. scripts/bench-results: benchmark output.
   globalIgnores(['**/dist', '.claude', 'server/pcb/footprints', 'scripts/bench-results']),
   {
-    files: ['**/*.{js,jsx}'],
+    files: ['**/*.{js,jsx,mjs}'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,

@@ -339,7 +339,7 @@ try {
   const v14 = await onResult(never)
   const chat14 = { sent: 0, stopped: 0 }
   v14.p.on('requestfailed', r => { if (/\/chat_edit$/.test(r.url())) chat14.stopped++ })
-  await v14.p.route(/\/chat_edit$/, r => { chat14.sent++; return never() })
+  await v14.p.route(/\/chat_edit$/, () => { chat14.sent++; return never() })
   const ask14 = async () => {
     await v14.p.getByTestId('chat-input').fill('R1 값을 2k로 바꿔줘')
     await v14.p.getByTestId('chat-input').press('Enter')
