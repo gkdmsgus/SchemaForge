@@ -12,11 +12,11 @@
 ## 명령
 ```bash
 npm run dev            # 화면 3000 + API 8002 (vite 프록시는 server/.env 의 PORT를 따른다. 없으면 코드 기본값 8002)
-npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → 배포 서버 차단 → 데모 넷리스트 캐시 → 배포 서버의 outputs 정리 → 로그인·기록(가짜 Supabase) → 모델 설정(가짜 OpenAI 호환 API) → 검사용 기판 만들기(데모 4개 × 2방식, 없을 때만) → Code 탭·BOM·배치하기·방향 확인·경고 해결책·API 클라이언트 → 기판 10개 × 20항목 (몇 분 걸림, KiCad 필요)
+npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → 배포 서버 차단 → 데모 넷리스트 캐시 → 배포 서버의 outputs 정리 → 로그인·기록(가짜 Supabase) → 모델 설정(가짜 OpenAI 호환 API) → 버전 고정·스타일시트·npm test 목록 → 검사용 기판 만들기(데모 4개 × 2방식, 기판마다 그 넷리스트, 없을 때만) → Code 탭·BOM·배치하기·방향 확인·경고 해결책·동작 검사·기판 검사 목록·회로 검사·3D 도형·API 클라이언트 → 기판 10개 × 20항목 → AI 다듬기 루프(가짜 모델) (대략 8분, KiCad 필요). 브라우저·Docker 검사는 넣지 않는다 (목록은 `scripts/check_test_chain.ts`)
 npm run test:types     # 타입만 (빠름)
 npm run lint
 ```
-데모(키 없이): `http://localhost:3000/?demo=motor` (`led`, `ne555`, `relay`). AI 루프 검사는 `SF_AI_STUB=1`로 모델 없이 (`README.md` 검사 절).
+데모(키 없이): `http://localhost:3000/?demo=motor` (`led`, `ne555`, `relay`). AI 다듬기 루프 검사(`server/pcb/check_ai_loop.py`)는 고정 제안(`SF_AI_STUB=1`)과 가짜 모델로 돌아 `npm test`에 들어 있다 (`README.md` 검사 절).
 
 ## 지킬 것
 - **AI는 제안만, 적용·판정·되돌리기는 코드가 한다.** 점수 순서(`server/ai_layout.ts`의 `better()`: DRC 오류 → 미배선 → 겹침 → 기판 밖 → 디커플링 거리(1 mm 이상 변하면 그것으로 판정, 소수 1자리로 보이게 늘면 거절) → 좁은 전원선 → 선 길이(HPWL, 0.1 mm) → 비아 → 트랙 길이(0.1 mm) → 보이게 준 디커플링)를 바꾸면 `server/check_ai_layout.ts`에 검사 항목을 같이 추가한다
