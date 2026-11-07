@@ -244,7 +244,7 @@ npm run test:browser     # 서버를 스스로 띄우고 끈다. 몇 개만: npm
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
 ```
-배포된 서버를 브라우저로 쓰는 9항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지. 주소를 바꾸면 로컬 컨테이너(DEPLOY.md 4절의 `http://localhost:8114`)에도 쓸 수 있다.
+배포된 서버를 브라우저로 쓰는 10항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지, 첫 화면·데모 기판·3D 뷰어·PDF·웹 글꼴을 쓰는 동안 Content-Security-Policy 위반이 없고 글꼴이 하나 이상 받아지는지(사이트의 CSP는 앞의 Caddy가 붙인다. 빠진 출처는 콘솔 한 줄만 남기고 그 파일을 막으므로, 콘솔 문구와 `securitypolicyviolation` 이벤트를 함께 모은다). 주소를 바꾸면 로컬 컨테이너(DEPLOY.md 4절의 `http://localhost:8114`)에도 쓸 수 있다.
 
 ```bash
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
