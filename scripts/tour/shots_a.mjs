@@ -72,7 +72,7 @@ export async function run(rec) {
     await rec.press(page.locator("button[aria-label='메뉴']"))
     await page.getByText('저장된 회로가 없습니다').waitFor({ timeout: 5000 })
     await rec.pause(2000)
-    await rec.press(btn('×', true).first())
+    await rec.press(btn('서랍 닫기', true))
   })
 
   await rec.shot('A7', '모터 데모 열기', async () => {
