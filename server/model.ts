@@ -5,6 +5,7 @@
 //   SF_REASONING_EFFORT  sent as reasoning_effort when set: Grok models reason first and the reasoning counts
 //                        against the answer's tokens; grok-4.3 takes "none"
 
+import axios from 'axios'
 import OpenAI from 'openai'
 
 export const MODEL_BASE = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
@@ -36,16 +37,28 @@ export const MODEL_NO_CREDIT = `AI 모델 사용 한도(크레딧)가 다 떨어
 export const MODEL_BUSY = 'AI 모델에 요청이 몰려 잠시 거절됐습니다. 1분쯤 뒤에 다시 시도해 주세요.'
 export const MODEL_KEY_REFUSED = `서버의 AI 모델 키가 거절됐습니다. 운영자가 키를 확인해야 합니다. ${DEMO}`
 export const MODEL_SILENT = 'AI 모델이 응답하지 않습니다. 잠시 뒤에 다시 시도해 주세요.'
+export const MODEL_UNREACHABLE = 'AI 모델 서버에 연결하지 못했습니다. 잠시 뒤에 다시 시도해 주세요.'
+
+/** axios's codes for a call that got no answer: gave up waiting, or the connection did not hold */
+const AXIOS_SILENT = new Set(['ECONNABORTED', 'ETIMEDOUT'])
+const AXIOS_UNREACHABLE = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE'])
 
 /**
  * A failed model call in words for the screen, with the HTTP status to answer with, or null when it is not one of
  * these (the caller keeps its own message). OpenAI answers 429 with code insufficient_quota when the credit is gone
  * (the screen showed "Request failed with status code 429"), and 429 with rate_limit_exceeded when busy; xAI says
  * "credits" in the message. Reads the OpenAI SDK's APIError (status, code, error) and axios's error (response).
- * A call the SDK gave up on is one too: at MODEL_TIMEOUT_MS its "Request timed out." got as far as the AI rounds list.
+ * A call that got no answer is one too: at MODEL_TIMEOUT_MS the SDK's "Request timed out." got as far as the AI rounds
+ * list, and its "Connection error.", axios's "timeout of 88000ms exceeded" and "socket hang up" reached the screen
+ * (review of 2026-11-07). An aborted call is not one: the caller stopped it and says why.
  */
 export function modelFailure(e: unknown): { status: number; text: string } | null {
   if (e instanceof OpenAI.APIConnectionTimeoutError) return { status: 504, text: MODEL_SILENT }
+  if (e instanceof OpenAI.APIConnectionError) return { status: 503, text: MODEL_UNREACHABLE }
+  if (axios.isAxiosError(e) && !e.response && e.code !== 'ERR_CANCELED') {
+    if (AXIOS_SILENT.has(e.code ?? '')) return { status: 504, text: MODEL_SILENT }
+    if (AXIOS_UNREACHABLE.has(e.code ?? '') || /socket hang up/i.test(e.message)) return { status: 503, text: MODEL_UNREACHABLE }
+  }
   type Body = { code?: unknown; type?: unknown; message?: unknown }
   const err = (e ?? {}) as { status?: number; code?: unknown; type?: unknown; message?: unknown; error?: Body;
     response?: { status?: number; data?: { error?: Body | string } } }

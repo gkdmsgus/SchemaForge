@@ -11,8 +11,12 @@ import { readFileSync } from 'fs'
 import { createServer } from 'http'
 import { createServer as createNetServer, type AddressInfo } from 'net'
 import { join } from 'path'
+import axios from 'axios'
 import OpenAI from 'openai'
-import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_SILENT, MODEL_TIMEOUT_MS, modelClient, modelFailure, modelLabel, modelProvider } from './model'
+import {
+  MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_SILENT, MODEL_TIMEOUT_MS, MODEL_UNREACHABLE, modelClient, modelFailure,
+  modelLabel, modelProvider,
+} from './model'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -167,6 +171,34 @@ async function main() {
   silent.close()
   const told = modelFailure(gaveUp)
   check('L8c a stalled call is told in words', told?.text === MODEL_SILENT && told.status === 504, told?.text ?? String(gaveUp))
+
+  // L8d. the other ways a model call fails before any answer, told in words too: /generate's axios gave up at its 88 s
+  // limit with "Server error: timeout of 88000ms exceeded", a model that hung up gave "socket hang up", and the SDK's
+  // "Connection error." reached the plan and the AI rounds list (review of 2026-11-07). Real errors from real clients
+  const hangUp = createNetServer(s => s.destroy())
+  await new Promise<void>(resolve => hangUp.listen(0, '127.0.0.1', () => resolve()))
+  const shut = createNetServer()
+  await new Promise<void>(resolve => shut.listen(0, '127.0.0.1', () => resolve()))
+  const shutPort = (shut.address() as AddressInfo).port
+  await new Promise<void>(resolve => shut.close(() => resolve()))
+  const at = (server: { address(): unknown }) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', () => resolve()))
+  const viaAxios = (base: string, timeout = 2000) => axios.post(`${base}/v1/chat/completions`, {}, { timeout }).catch((e: unknown) => e)
+  const viaSdk = (base: string) => new OpenAI({ apiKey: 'check-only', baseURL: `${base}/v1`, timeout: 2000, maxRetries: 0 })
+    .chat.completions.create({ model: 'fake', messages: [] }).catch((e: unknown) => e)
+  const failures = {
+    axiosTimeout: [await viaAxios(at(silent), 200), 504, MODEL_SILENT],
+    axiosHangUp: [await viaAxios(at(hangUp)), 503, MODEL_UNREACHABLE],
+    axiosRefused: [await viaAxios(`http://127.0.0.1:${shutPort}`), 503, MODEL_UNREACHABLE],
+    sdkHangUp: [await viaSdk(at(hangUp)), 503, MODEL_UNREACHABLE],
+    sdkRefused: [await viaSdk(`http://127.0.0.1:${shutPort}`), 503, MODEL_UNREACHABLE],
+  } as const
+  silent.closeAllConnections()
+  silent.close()
+  hangUp.close()
+  const wrong = Object.entries(failures).filter(([, [e, status, text]]) => modelFailure(e)?.status !== status || modelFailure(e)?.text !== text)
+  check('L8d a model that hangs up, refuses the connection or outlasts axios is told in words', wrong.length === 0,
+    wrong.map(([k, [e]]) => `${k}: ${modelFailure(e)?.text ?? (e as Error)?.message}`).join(' | '))
 
   await new Promise<void>(resolve => mock.listen(0, '127.0.0.1', () => resolve()))
   const mockBase = `http://127.0.0.1:${(mock.address() as AddressInfo).port}/v1`
