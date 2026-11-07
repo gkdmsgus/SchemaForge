@@ -21,20 +21,6 @@
   --pixel-shadow-sm: 1px 1px 0px rgba(0,0,0,.6);
 }
 
-// ── Mixin: 라이트 테마 오버라이드 ──
-@mixin light {
-  [data-theme="light"] & {
-    @content;
-  }
-}
-
-// root-level light override (body, html 등)
-@mixin light-root {
-  [data-theme="light"] {
-    @content;
-  }
-}
-
 // ── Mixin: 픽셀 박스 hover ──
 @mixin pixel-hover($color: var(--cyan)) {
   &:hover {

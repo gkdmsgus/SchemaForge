@@ -127,10 +127,6 @@ export default function App() {
   // a slower answer for the one before (a history load, a session save) does not land on it
   const loadSeq = useRef(0)
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', 'light')
-  }, [])
-
   // Development/demo entry point: /?demo=motor opens a real checked-in test
   // circuit without requiring an OpenAI key. PCB generation still uses the
   // same server stream and BoardView as a normal generated circuit.

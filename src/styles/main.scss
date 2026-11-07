@@ -2,39 +2,26 @@
 // Sass + PostCSS(autoprefixer) 기반 스타일 시스템
 //
 // 파일 구조:
+//   _sf-tokens   - 디자인 토큰 (--sf-*), 글꼴, 타입 역할
 //   _variables   - CSS 변수, mixin
 //   _base        - 리셋, body, 레이아웃
 //   _card        - 카드, 섹션 타이틀
 //   _header      - 헤더, 로고, 배지
-//   _buttons     - 생성 버튼, 홈 버튼
-//   _wizard      - 카테고리, 회로 목록, 미리보기
-//   _qa          - Q&A 챗, 옵션, 정보 패널
-//   _history     - 이력 패널
-//   _favorites   - 즐겨찾기
-//   _progress    - 진행 바, 스켈레톤
-//   _result      - 결과 화면 공통
+//   _progress    - 진행 바, 스켈레톤, 화면 코드가 이름으로 쓰는 pulse·fadeIn
 //   _code        - Code 탭 (줄 번호·편집), KiCad 안내
 //   _bom         - BOM 탭
-//   _settings    - 설정 패널
-//   _pixels      - 픽셀 장식, 애니메이션
 //   _responsive  - 반응형 미디어쿼리
+//   _home        - 첫 화면, 약관 페이지
+//   _flow        - 되묻기, 계획 검토, 생성 중 화면
 
 @import 'sf-tokens';   // 새 디자인 시스템 토큰 (--sf-*) — 기존 토큰과 공존
 @import 'variables';
 @import 'base';
 @import 'card';
 @import 'header';
-@import 'buttons';
-@import 'wizard';
-@import 'qa';
-@import 'history';
-@import 'favorites';
 @import 'progress';
-@import 'result';
 @import 'code';
 @import 'bom';
-@import 'settings';
-@import 'pixels';
 @import 'responsive';
 @import 'home';
 @import 'flow';

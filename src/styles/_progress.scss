@@ -1,5 +1,6 @@
 // ── Progress / Steps ────────────────────────────────────────
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes glowPulse {
   0%,100% { box-shadow: 0 0 0 var(--cyan); }
   50%     { box-shadow: 0 0 8px var(--cyan); }
