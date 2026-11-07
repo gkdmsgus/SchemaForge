@@ -52,6 +52,15 @@ export function corsOrigin(g: Guard, frontendUrl: string | undefined): CorsOrigi
   return only ? (origin, done) => done(null, origin === only) : null
 }
 
+/**
+ * The commit this server runs, for /health: SF_COMMIT (the Jetson image's build argument), else RENDER_GIT_COMMIT (Render
+ * sets it), else 'unknown'; 7 characters. Nothing said which commit ran: Render served an old front end after "Deploy
+ * succeeded" and the checks passed it (2026-11-01).
+ */
+export function runningCommit(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.SF_COMMIT?.trim() || env.RENDER_GIT_COMMIT?.trim() || 'unknown').slice(0, 7)
+}
+
 /** the password-free sign-in kept for development is never on a deployed server */
 export function localLoginRefusal(g: Guard): string | null {
   return g.deployed && !g.supabase ? `이 서버의 로그인은 아직 열려 있지 않습니다. ${DEMO}` : null

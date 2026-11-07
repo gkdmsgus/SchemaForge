@@ -5,6 +5,7 @@
 // Windows reserved (Windows only).
 // D12 the built app's cache headers, on a small dist/ of its own. D13 a build in any folder stays out of the image and lint.
 // D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
+// D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT).
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -13,7 +14,7 @@ import { request } from 'http'
 import { createServer } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName } from './deploy_guard'
+import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, runningCommit, safeName } from './deploy_guard'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -68,6 +69,14 @@ check('D7 names from requests', safeName('..') === null && safeName('.') === nul
   check('D14 CORS: development any or FRONTEND_URL; deployed none, or FRONTEND_URL only', corsOrigin(dev, undefined) === true
     && corsOrigin(dev, 'http://localhost:3000') === 'http://localhost:3000' && corsOrigin(bare, undefined) === null
     && corsOrigin(bare, ' ') === null && typeof one === 'function' && allow.join() === 'true,false,false', `FRONTEND_URL only: ${allow.join(', ')}`)
+}
+
+// D15. the commit /health names: SF_COMMIT, else Render's RENDER_GIT_COMMIT, else 'unknown'; 7 characters. Render served
+//      an old front end after "Deploy succeeded" and nothing said which commit ran (2026-11-01)
+{
+  const said = [runningCommit({ SF_COMMIT: '0123456789abcdef', RENDER_GIT_COMMIT: 'fedcba9876543210' }),
+    runningCommit({ RENDER_GIT_COMMIT: 'fedcba9876543210' }), runningCommit({ SF_COMMIT: ' ', RENDER_GIT_COMMIT: '' }), runningCommit({})]
+  check('D15 the running commit: SF_COMMIT, else RENDER_GIT_COMMIT, else unknown', said.join() === '0123456,fedcba9,unknown,unknown', said.join(', '))
 }
 
 // D8. index.ts (read as text): each route that runs code or calls the model goes through the guard
@@ -151,7 +160,7 @@ async function live() {
   const proc = spawn(process.execPath, [join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'index.ts'], {
     // SF_OUTPUTS_SWEEP off: this server runs in the checkout, whose outputs/ holds the checks' fixtures
     env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '',
-           SF_OUTPUTS_SWEEP: '', FRONTEND_URL: '' },
+           SF_OUTPUTS_SWEEP: '', FRONTEND_URL: '', SF_COMMIT: '0123456789abcdef', RENDER_GIT_COMMIT: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let stderr = ''
@@ -248,6 +257,10 @@ async function live() {
     const preflight = await headers(port, 'OPTIONS', '/generate_pcb_stream',
       { ...evil, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' })
     const allowed = (h: Record<string, unknown>) => Object.keys(h).filter(k => k.startsWith('access-control-allow-'))
+    // D9g. the commit it runs, from SF_COMMIT (D15)
+    const health = await (await fetch(base + '/health')).json() as { commit?: string }
+    check('D9g /health names the commit, from SF_COMMIT', health.commit === '0123456', `commit ${health.commit}`)
+
     check('D9f CORS, no FRONTEND_URL: no allow header for another site', !allowed(plain.headers).length && !allowed(preflight.headers).length,
       `GET /health ${plain.status} [${allowed(plain.headers).map(k => `${k}: ${plain.headers[k]}`).join('; ')}] · OPTIONS ${preflight.status} [${allowed(preflight.headers).join(', ')}]`)
   } finally {
@@ -313,7 +326,7 @@ async function cacheHeaders() {
   const proc = spawn(process.execPath, [join(here, 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(here, 'index.ts')], {
     // FRONTEND_URL with a trailing /, as it may be written (D12b)
     cwd, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '',
-                FRONTEND_URL: 'https://app.example/' },
+                FRONTEND_URL: 'https://app.example/', SF_COMMIT: '', RENDER_GIT_COMMIT: 'fedcba9876543210' },
     stdio: 'ignore',
   })
   try {
@@ -335,6 +348,9 @@ async function cacheHeaders() {
       return `${h['access-control-allow-origin'] ?? '-'} ${h['access-control-allow-credentials'] ?? '-'}`
     }
     const app = await cors('https://app.example'), evil = await cors('https://evil.example')
+    // D12c. Render's commit when no SF_COMMIT is given (D15)
+    const commit = up ? (await (await fetch(base + '/health')).json() as { commit?: string }).commit : 'server did not start'
+    check('D12c /health names the commit, from RENDER_GIT_COMMIT', commit === 'fedcba9', `commit ${commit}`)
     check('D12b CORS, FRONTEND_URL set: that page only', app === 'https://app.example true' && evil === '- -',
       `app.example: ${app} | evil.example: ${evil}`)
   } finally {

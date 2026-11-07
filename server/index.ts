@@ -16,7 +16,7 @@ import {
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
-import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
+import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, runningCommit, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
@@ -1822,9 +1822,11 @@ let kicadVersion: string | null = null
   proc.on('close', (code: number | null) => { kicadVersion = code === 0 ? out.trim() || null : null })
 }
 
+const COMMIT = runningCommit()
+
 app.get('/health', (_req: Request, res: Response) => {
-  // model: the circuit model's name for the screen (never the key), provider: who runs it
-  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
+  // model: the circuit model's name for the screen (never the key), provider: who runs it, commit: deploy_guard.ts
+  res.json({ status: 'ok', version: '2.0.0', commit: COMMIT, db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
     model: modelLabel(MODEL), provider: modelProvider() })
 })
 
