@@ -38,6 +38,20 @@ PIN_TYPES = {
     'NE555': {'3': 'OUTPUT'},
     'OpAmp': {'3': 'OUTPUT'},
 }
+# The supply-input pins that want a capacitor to ground beside them, by symbol pin: the pins a template marks PWRIN, less
+# its ground pin. Apart from PIN_TYPES and from pintype, so a netlist with pintype and one written from a graph find the
+# same (server/check_erc_repair.ts E26); E28 compares this with the templates in server/index.ts.
+SUPPLY_PINS = {
+    'NE555': ['8'],
+    'REG': ['3'],
+    'OpAmp': ['4', '5'],
+}
+
+
+def is_ground(name):
+    """a ground net by its name: GND, AGND, DGND, PGND, or GND_x / x_GND"""
+    n = (name or '').upper()
+    return n in ('GND', 'AGND', 'DGND', 'PGND') or n.startswith('GND_') or n.endswith('_GND')
 
 
 def pin_of(part, pad):
@@ -130,5 +144,36 @@ def check(components, nets, parts=None):
                 'message': f"넷 '{n['name']}'에 출력 핀이 {len(outs)}개 (" +
                            ', '.join(f"{o['ref']}.{o['pin']}" for o in outs) + ") 있습니다 — 출력끼리 충돌",
                 'refs': [node_ref(o) for o in outs], 'net': n['name']})
+
+    # 6. an IC supply pin with no capacitor from its net to ground: the chip's sudden current then comes down the long
+    #    supply track and its voltage dips. A warning: the circuit may still run. Which pins: SUPPLY_PINS.
+    net_of = {(nd['ref'], str(nd['pin'])): n for n in nets for nd in n['nodes']}
+    pins_of = {}
+    for n in nets:
+        for nd in n['nodes']:
+            pins_of.setdefault(nd['ref'], {})[str(nd['pin'])] = n['name']
+
+    def bypassed(n):
+        """a C or CP with one pin on this net and another on a ground net"""
+        return any(part_of.get(nd['ref']) in ('C', 'CP') and
+                   any(is_ground(m) for pin, m in pins_of.get(nd['ref'], {}).items() if pin != str(nd['pin']))
+                   for nd in n['nodes'])
+
+    for c in components:
+        for sym in SUPPLY_PINS.get(c.get('part', ''), []):
+            n = net_of.get((c['ref'], sym))
+            if n is None or is_ground(n['name']) or bypassed(n):
+                continue
+            ref = node_ref({'ref': c['ref'], 'pin': sym})
+            names = PIN_NAMES.get(c['part']) or []
+            name = names[int(sym) - 1] if int(sym) <= len(names) else None
+            # on the board: the pin and its pad, as the other findings say it; else the symbol pin
+            label = pin_label(by_ref[c['ref']], ref['pin']) if 'sym' in ref else (f"{name} 핀({sym}번)" if name else f"{sym}번 핀")
+            todo = ('레귤레이터 데이터시트가 권하는 입력 커패시터를 이 핀과 GND 사이에' if c['part'] == 'REG'
+                    else '0.1 µF 커패시터를 이 핀과 GND 사이에')
+            findings.append({
+                'rule': 'no_bypass', 'severity': 'warning',
+                'message': f"{c['ref']}의 {label} 옆에 GND로 가는 커패시터가 없습니다. {todo} {c['ref']} 가까이 달아야 합니다",
+                'refs': [ref], 'net': n['name']})
 
     return findings

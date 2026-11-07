@@ -84,7 +84,7 @@ export function errorKeys(findings: ErcFinding[]): string[] {
 /** Korean names of the rules, for notes the user reads */
 export const RULE_LABEL: Record<string, string> = {
   floating_pin: '연결 안 된 핀', single_pin_net: '한 핀짜리 넷', no_ground: 'GND 없음',
-  unpowered_rail: '공급원 없는 전원 넷', output_conflict: '출력 충돌',
+  unpowered_rail: '공급원 없는 전원 넷', output_conflict: '출력 충돌', no_bypass: 'IC 전원 커패시터 없음',
 }
 /** "floating_pin U1.4" → "연결 안 된 핀 U1.4" */
 const keyLabel = (k: string) => k.replace(/^(\w+)/, r => RULE_LABEL[r] ?? r)
