@@ -2,7 +2,7 @@
 // Uses the NE555 board from test_circuits (generated into a temp dir).
 // Usage (from server/): npx tsx check_ai_layout.ts   — exit 0 only if all pass
 import { execFileSync } from 'child_process'
-import { copyFileSync, mkdtempSync, readFileSync } from 'fs'
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { better, clashText, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, parseOhms, precheck, precheckNote, type Overrides } from './ai_layout'
@@ -233,6 +233,23 @@ check('35b a rating after the value', rated.length === 0 && !netsWith('680 1/4W'
   && parseOhms('0.1 1W') === 0.1 && parseOhms('680 1/4W') === 680 && parseOhms('1k 1%') === 1000 && parseOhms('R10') === 0.1 && parseOhms('10mR') === 0.01
   && Number.isNaN(parseOhms('100nF 16V')),
   rated.length ? `GND missing with ${rated.join(' | ')}` : `0.1 1W -> ${parseOhms('0.1 1W')}, 680 1/4W -> ${parseOhms('680 1/4W')}, 10mR -> ${parseOhms('10mR')}`)
+
+// 35c. a resistor with no value: index.ts graphToNetlist writes an empty value as the part's reference, so the board says
+//      R2 = 'R2', which parseOhms reads as 0.2 ohm: the value-less resistor was a shunt and GND joined the narrow-power
+//      count of better() (review of 2026-11-07). Its own reference is no value, on a board made from such a netlist; 'R3'
+//      on R2 is still 0.3 ohm, and R10 written 'R10' is no value either
+const noValueNet = join(work, 'novalue.net')
+writeFileSync(noValueNet, readFileSync(join(work, 'nmos_motor.net'), 'utf8').replace(/(\(comp\s*\(ref\s+"R2"\)\s*\(value\s+")[^"]*"/, '$1R2"'))
+execFileSync('python', ['-c', "import sys; sys.path.insert(0, 'pcb'); from board import generate; generate(sys.argv[1], sys.argv[2], 'smd')",
+  noValueNet, join(work, 'novalue.kicad_pcb')], { cwd: process.cwd() })
+const noValue = rb('novalue')
+const noValueNets = heavyPowerNets(noValue).map(h => h.net)
+const ownRef = clone(); Object.assign(ownRef.parts.find((p: { ref: string }) => p.ref === 'R2'), { ref: 'R10', value: 'R10' })
+const ownRefNets = heavyPowerNets(ownRef).map(h => h.net)
+check('35c a resistor whose value is its own reference is no shunt', noValue.parts.find((p: { ref: string }) => p.ref === 'R2')?.value === 'R2'
+  && !noValueNets.includes('GND') && noValueNets.includes('+12V') && !ownRefNets.includes('GND') && netsWith('R3').includes('GND')
+  && metricsOf({}, 0, noValue).powerWidth === 3,
+  `board R2 '${noValue.parts.find((p: { ref: string }) => p.ref === 'R2')?.value}' -> [${noValueNets}], powerWidth ${metricsOf({}, 0, noValue).powerWidth}; R10 'R10' -> [${ownRefNets}]; R2 'R3' -> GND ${netsWith('R3').includes('GND')}`)
 
 // 36. widening all four clears the count, is judged better, and the board passes KiCad DRC
 const motorDrc = drcOf(motor[1].pcb)

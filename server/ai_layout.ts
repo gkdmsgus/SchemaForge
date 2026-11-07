@@ -191,6 +191,13 @@ export const SHUNT_MAX_OHMS = 1
 export const MAX_PATH_HOPS = 4
 
 /**
+ * A part's value, or '' when it has none. An empty value reaches the netlist, and so the board, as the part's reference
+ * (index.ts graphToNetlist), and a resistor's reads like a value: 'R2' is no 0.2 ohm shunt (src/lib/operatingCheck.ts
+ * partValue, the same reading on the screen).
+ */
+const valueOf = (p: { ref: string; value: string }) => (p.value === p.ref ? '' : p.value ?? '')
+
+/**
  * Pads of a part through which load current flows, or null when the part does not pass load current
  * (gate resistors, pull-ups, LEDs, diodes...). Transistors conduct between their non-control pins.
  */
@@ -201,7 +208,7 @@ function conductingPads(p: BoardPart): BoardPart['pads'] | null {
     if (ctrl === undefined || !pins) return p.pads            // unknown transistor or old board: every pad
     return p.pads.filter(pd => pins[pd.num] !== ctrl)
   }
-  if (/^R\d/i.test(p.ref) && parseOhms(p.value) <= SHUNT_MAX_OHMS) return p.pads
+  if (/^R\d/i.test(p.ref) && parseOhms(valueOf(p)) <= SHUNT_MAX_OHMS) return p.pads
   if (/^(L|F)\d/i.test(p.ref)) return p.pads
   return null
 }
@@ -380,7 +387,7 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
   board.parts.forEach(p => p.pads.forEach(pd => { if (pd.net) netPins[pd.net] = (netPins[pd.net] || 0) + 1 }))
   const parts = board.parts
     .map(p => {
-      let line = `${p.ref}(${p.value || p.part}) at ${p.x.toFixed(1)},${p.y.toFixed(1)} rot ${p.rot}`
+      let line = `${p.ref}(${valueOf(p) || p.part}) at ${p.x.toFixed(1)},${p.y.toFixed(1)} rot ${p.rot}`
       const cy = areaOf(p)
       if (cy) {
         line += `, keep-out ${cy[0].toFixed(1)},${cy[1].toFixed(1)} to ${cy[2].toFixed(1)},${cy[3].toFixed(1)}` +
