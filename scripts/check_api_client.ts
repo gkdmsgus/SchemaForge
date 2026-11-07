@@ -186,5 +186,20 @@ check('every request above went to a path on this page\'s own address', everyUrl
 const source = (f: string) => fs.readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')
 check('api.ts and modelName.ts read no build setting', !/import\.meta\.env/.test(source('api.ts')) && !/import\.meta\.env/.test(source('lib/modelName.ts')))
 
+// The dev server's proxy (vite.config.ts, read as text) against the server's routes (server/index.ts): vite sends a path
+// to the first prefix it starts with, so a prefix no route reaches first does nothing ('/generate_gerber' after
+// '/generate', '/test' after '/test_code'), and a route no prefix starts fails in dev only
+const root = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')
+const viteConfig = root('vite.config.ts')
+const prefixes = [...viteConfig.slice(viteConfig.indexOf('proxy:')).matchAll(/^ {6}'(\/[^']*)':/gm)].map(m => m[1])
+const routes = [...root('server/index.ts').matchAll(/^app\.(?:get|post|patch|put|delete)\('(\/[^']*)'/gm)].map(m => m[1])
+  .filter(r => r !== '/{*path}')   // the page itself, which vite serves in dev
+const firstPrefix = (r: string) => prefixes.find(p => r.startsWith(p))
+const used = new Set(routes.map(firstPrefix))
+const unused = prefixes.filter(p => !used.has(p)), unserved = routes.filter(r => !firstPrefix(r))
+check('the dev proxy: every prefix is the one some server route goes through, and every route has one',
+  prefixes.length > 10 && routes.length > 20 && !unused.length && !unserved.length,
+  JSON.stringify({ prefixes: prefixes.length, routes: routes.length, unused, unserved }))
+
 console.log(failed ? `\n${failed} FAILED` : '\nall api client checks passed')
 process.exitCode = failed ? 1 : 0

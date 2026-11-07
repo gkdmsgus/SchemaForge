@@ -9,6 +9,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    // vite sends a path to the first prefix it starts with: '/generate' also serves /generate_pcb_stream and
+    // /generate_gerber, '/download' also /download_pcb and /download_gerber_file (scripts/check_api_client.ts)
     proxy: {
       '/generate': {
         target: API,
@@ -24,13 +26,10 @@ export default defineConfig({
       },
       '/board_model': API,
       '/download': API,
-      '/download_pcb': API,
-      '/generate_gerber': API,
       '/mouser_search': API,
       '/erc_graph': API,
       '/netlist': API,
       '/test_code': API,
-      '/test': API,
       '/chat_edit': {
         target: API,
         changeOrigin: true,

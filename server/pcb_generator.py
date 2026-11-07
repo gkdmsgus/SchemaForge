@@ -5,7 +5,11 @@ library footprints, nets on every pad, force-directed placement and a board
 outline — plus a <name>.board.json model for the browser. No KiCad needed.
 
 Usage: python pcb_generator.py <input.net> <output.kicad_pcb>
-                               [--style smd|tht] [--placer force|shelf] [--stream]
+                               [--style smd|tht] [--placer force|shelf|fixed]
+                               [--overrides <file.json>] [--stream]
+--overrides names a JSON file {"parts": {ref: [x, y, rot]}, "net_width": {net: mm}}: --placer fixed keeps each part
+listed in "parts" at that spot (the AI layout loop, server/ai_layout.ts), and "net_width" widens those nets' tracks
+with any placer.
 Without --stream the last stdout line is a JSON summary.
 With --stream every stdout line is a JSON event:
   {"type":"parts", "parts":[...local geometry...], "nets":[...]}

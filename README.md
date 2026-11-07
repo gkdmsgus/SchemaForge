@@ -197,7 +197,7 @@ cd server && npx tsx check_model_config.ts
 ```bash
 npx tsx scripts/check_api_client.ts
 ```
-화면 쪽 API 클라이언트 37항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다.
+화면 쪽 API 클라이언트 38항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다. 개발 서버의 프록시(`vite.config.ts`)도 본다. vite는 경로가 처음으로 맞는 앞부분 하나로 보내므로, 어느 서버 경로도 먼저 닿지 않는 항목(`/generate` 뒤의 `/generate_gerber`)이 없고 모든 서버 경로에 항목이 있는지 확인한다.
 
 ```bash
 npx tsx scripts/check_pins.ts
