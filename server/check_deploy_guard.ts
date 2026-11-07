@@ -68,6 +68,20 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
   && !/basename\(req\.params/.test(src),
   guarded.length || uncalled.length ? `not guarded: ${guarded.join(', ')}; still there: ${uncalled.join(', ')}` : '')
 
+// D8b. the board stream's reasons are Korean sentences with what to do, which the screen shows as they are: it showed
+//      only "오류", and they were English or the generator's traceback with the server's paths (review of 2026-11-07)
+{
+  const boardRoute = src.slice(src.indexOf("app.post('/generate_pcb_stream'"), src.indexOf('// ── GET /download_pcb'))
+  const sayings = [...(/const PCB_SAYS = \{([^}]*)\}/.exec(src)?.[1] ?? '').matchAll(/^\s*(\w+): '([^']*)',?\s*$/gm)].map(m => ({ key: m[1], text: m[2] }))
+  const reasons = [...boardRoute.matchAll(/\berror: ([^{}]+?)\s*\}/g)].map(m => m[1].trim())
+  const said = (r: string) => !/stderr|message|String\(/.test(r) && [...r.matchAll(/'([^']*)'/g)].every(q => /[가-힣]/.test(q[1]))
+    && ([...r.matchAll(/PCB_SAYS\.(\w+)/g)].every(k => sayings.some(s => s.key === k[1])) && (/PCB_SAYS\.\w+/.test(r) || /'[^']*[가-힣]/.test(r)))
+  const unsaid = reasons.filter(r => !said(r))
+  const plain = sayings.filter(s => !/[가-힣]/.test(s.text) || !/재시도|주세요|확인/.test(s.text)).map(s => s.key)
+  check('D8b the board stream says why in Korean, with what to do; no traceback or English reason', reasons.length >= 9 && sayings.length >= 9
+    && !unsaid.length && !plain.length, `${reasons.length} reasons, ${sayings.length} sentences${unsaid.length ? `; not in words: ${unsaid.join(' | ')}` : ''}${plain.length ? `; no step to take: ${plain.join(', ')}` : ''}`)
+}
+
 // D10. render.yaml (the Render Blueprint, read as text): every secret is declared with sync: false and no value, the
 //      plan is free, the health check is a route the server has, and PORT is the one Render routes to
 {

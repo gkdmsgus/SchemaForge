@@ -13,6 +13,8 @@
 // the PCB tab and goes to the 2D drawing in 배치하기 (the error boundary took the whole screen: review of 2026-11-06),
 // B10b there 배치하기 and its 3D button ask for a reload (they said the button tries again, which asks for nothing: the
 // lazy import keeps its failure, review of 2026-11-07), B10c a 3D model that did not load keeps the retry, which asks again.
+// B11 a board stopped because the same board was started in another window says why over the board, with what to do (it
+// showed only "오류" and 재시도: review of 2026-11-07).
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -248,6 +250,27 @@ try {
   check('B10c a 3D model that did not load keeps the retry, and the 3D button asks for it again',
     flatGlb && /다시 시도/.test(panelGlb) && /다시 시도/.test(titleGlb ?? '') && !/새로고침/.test(panelGlb) && models > before10,
     `2D note ${flatGlb}, button "${titleGlb}", model asked ${before10} then ${models}`)
+
+  // B11: the other window is this script, asking for the same netlist once the page's run has started (its answer's
+  // headers are out: the server holds the run by then), so the page's run is the one the server stops ('replaced')
+  const twice = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  let other = null
+  twice.on('response', r => {
+    if (other || !/\/generate_pcb_stream$/.test(r.url())) return
+    other = fetch(`${BASE}/generate_pcb_stream`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: r.request().postData() })
+      .then(res => res.text(), e => `failed: ${e.message}`)
+  })
+  await twice.goto(`${BASE}/?demo=led`, { waitUntil: 'networkidle' })
+  await twice.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+  const banner11 = twice.getByTestId('pcb-error')
+  const said11 = await banner11.waitFor({ timeout: 60000 }).then(() => banner11.innerText(), () => '')
+  const title11 = await twice.getByTestId('pcb-retry').getAttribute('title', { timeout: 5000 }).catch(() => null)
+  const otherBoard = other ? await other : '(never asked)'
+  if (SHOTS) await twice.screenshot({ path: `${SHOTS}/board_replaced.png` })
+  check('B11 a board stopped by the same board in another window says why over the board, with what to do',
+    /다른 창/.test(said11) && /재시도/.test(said11) && /다른 창/.test(title11 ?? '') && /event: done/.test(otherBoard),
+    `banner "${said11.replace(/\s+/g, ' ')}", 재시도 title ${title11 ? 'says why' : 'none'}, the other window ${/event: done/.test(otherBoard) ? 'got its board' : otherBoard.slice(-120)}`)
+  await twice.context().close()
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
