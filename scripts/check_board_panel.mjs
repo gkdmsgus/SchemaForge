@@ -207,7 +207,12 @@ try {
   // B10
   const stale = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
   let gone = 0
-  await stale.route(/\/assets\/KiCad3DViewer-[^/]*\.js$/, r => { gone++; return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>app</title>' }) })
+  // the built file's name, or the module the vite dev server sends for it (it has no assets/ name, so on npm run dev this
+  // check asked for nothing and failed, review of 2026-11-07)
+  await stale.route(/\/assets\/KiCad3DViewer-[^/]*\.js$|\/src\/components\/KiCad3DViewer\.tsx(\?.*)?$/, r => {
+    gone++
+    return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>app</title>' })
+  })
   await stale.route(/\/generate_pcb_stream$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: builtBoard }))
   await stale.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
   await stale.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
