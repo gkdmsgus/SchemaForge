@@ -219,7 +219,7 @@ npx tsx scripts/check_styles.ts
 ```bash
 npx tsx scripts/check_test_chain.ts
 ```
-`npm test` 목록 2항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
+`npm test` 목록 3항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지, `CLAUDE.md`와 `AGENTS.md`가 같은 글인지(줄 끝 CRLF·LF는 같게 본다) 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
 
 ```bash
 npx tsx scripts/check_jetson_run.ts

@@ -25,4 +25,5 @@ npm run lint
 - 코드를 바꾸면 같은 작업 안에서 `npm test`(최소 `npm run test:types`)를 돌리고 결과를 보고한다. 화면을 바꾸면 데모 URL로 직접 확인한다
 - `server/.env`, 키 값은 커밋하지 않는다. 배포 이미지에 `.env`가 들어가지 않게 `.dockerignore` 유지
 - 커밋은 작게(대략 300줄 이하), 기능과 그 검사를 같은 커밋에. 푸시는 사용자 확인 후
+- `CLAUDE.md`와 `AGENTS.md`는 같은 글이다. 하나를 고치면 다른 하나도 똑같이 고친다 (`scripts/check_test_chain.ts` T3이 본다)
 - 데모 기판은 제작용이 아니다 (README "알려진 제약": 트랜지스터 핀 배열, 모터 전류 정격)

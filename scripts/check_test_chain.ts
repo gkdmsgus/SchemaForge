@@ -1,8 +1,9 @@
-// Checks T1-T2 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
+// Checks T1-T3 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
 // server/ and server/pcb/ is a step of the chain or is named below as staying out, with the reason. check_operating,
 // check_board_checks and check_circuit_validation stood beside the chain, so their checks did not run when the code they
 // guard changed (sweep of 2026-11-07). T2 the checks that read the check boards in server/outputs run after
-// make_check_boards, which makes those boards on a fresh clone.
+// make_check_boards, which makes those boards on a fresh clone. T3 CLAUDE.md and AGENTS.md, the same guide for two
+// kinds of agent, say the same, so an edit to one alone fails here instead of leaving the other with the old rule.
 // Usage: npx tsx scripts/check_test_chain.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
@@ -58,6 +59,18 @@ const made = steps.indexOf('scripts/make_check_boards.ts')
 const early = BOARD_READERS.filter(f => !(steps.indexOf(f) > made))
 check('T2 the checks that read the check boards run after make_check_boards', made >= 0 && !early.length,
   made < 0 ? 'make_check_boards is not in the chain' : early.length ? `before it or missing: ${early.join(', ')}` : `${BOARD_READERS.length} readers`)
+
+// T3: one guide read by two kinds of agent. Line ends aside (a Windows checkout has CRLF), the two files are the same
+{
+  const read = (f: string) => fs.existsSync(path.join(ROOT, f)) ? fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n') : null
+  const [claude, agents] = [read('CLAUDE.md'), read('AGENTS.md')]
+  const a = (claude ?? '').split('\n'), b = (agents ?? '').split('\n')
+  const at = a.findIndex((l, i) => l !== b[i])
+  const first = at >= 0 ? at : a.length !== b.length ? Math.min(a.length, b.length) : -1
+  check('T3 CLAUDE.md and AGENTS.md are the same', claude !== null && agents !== null && claude === agents,
+    claude === null || agents === null ? `missing: ${[claude === null && 'CLAUDE.md', agents === null && 'AGENTS.md'].filter(Boolean).join(', ')}`
+      : first >= 0 ? `first difference on line ${first + 1}` : `${a.length} lines`)
+}
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
 process.exit(failed ? 1 : 0)
