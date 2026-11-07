@@ -1848,6 +1848,31 @@ if (existsSync(distPath)) {
   })
 }
 
+// ── What no route could take ───────────────────────────────────────
+// Express's own pages showed the stack in development (a broken JSON body: "SyntaxError ... at JSON.parse", with the
+// server's paths) and English words in production. A Korean sentence instead; a server error goes to the log.
+// check_inputs.ts I1
+const REQUEST_SAYS = {
+  notFound: '이 서버에 없는 주소입니다. 주소를 확인해 주세요.',
+  badBody: '요청 내용을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  tooBig: '요청 내용이 너무 큽니다. 회로의 부품 수를 줄여 다시 시도해 주세요.',
+  badPath: '주소를 읽지 못했습니다. 주소를 확인해 주세요.',
+  failed: '서버 오류로 요청을 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+}
+
+app.use((_req: Request, res: Response) => { res.status(404).json({ error: REQUEST_SAYS.notFound }) })
+
+// four arguments: Express tells an error handler by its length
+app.use((err: { type?: string; status?: number; statusCode?: number }, req: Request, res: Response, _next: NextFunction) => {
+  const status = Number(err?.status ?? err?.statusCode) || 500
+  if (status >= 500) console.error(`[server] ${req.method} ${req.path}:`, err)
+  if (res.headersSent) return res.end()
+  if (status === 413) return res.status(413).json({ error: REQUEST_SAYS.tooBig })
+  // body-parser's errors carry a type (entity.parse.failed, ...); a %-escape the router could not decode has none
+  if (status >= 400 && status < 500) return res.status(status).json({ error: err?.type ? REQUEST_SAYS.badBody : REQUEST_SAYS.badPath })
+  res.status(500).json({ error: REQUEST_SAYS.failed })
+})
+
 // the development port (the images set PORT=8002, Render 10000): 8080 and then 8002 sat in a range Windows had reserved
 // on the development PC (7989-8088), where they failed with EACCES (review of 2026-11-07)
 const PORT = Number(process.env.PORT) || 8113

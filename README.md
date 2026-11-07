@@ -207,6 +207,11 @@ cd server && npx tsx check_kicad_config.ts
 개발 PC의 DRC 라이브러리 표 4항목 (KiCad와 python·skidl 필요). 개발 서버는 시작할 때 임시 폴더에 `server/pcb/footprints` 사본만 담은 풋프린트 라이브러리 표를 만들고, DRC만 이 표를 읽는다(`KICAD_CONFIG_HOME`, 배포 이미지와 같은 표. 이미 `KICAD_CONFIG_HOME`이 있으면 그것을 쓴다). 이 PC의 표는 설치된 KiCad 라이브러리 전체를 읽어 DRC 한 번이 대략 10초·1.4 GB였고, 이 표로는 대략 1초·160 MB에 같은 결과가 나왔다. 라이브러리 이름에 `.pretty`가 붙지 않는지, 데모 기판의 DRC에 `lib_footprint_issues`가 없는지, 그 DRC가 정말 이 표를 읽는지(표를 비우면 부품마다 `lib_footprint_issues`가 나오는지), `run_checks.py`가 같은 표를 쓰는지 확인한다. 3D와 거버 내보내기는 그대로다.
 
 ```bash
+cd server && npx tsx check_inputs.ts
+```
+잘못된 요청에 서버가 하는 답 1항목. 개발 모드와 배포 모드 서버를 직접 띄워 요청을 보내고, 정해진 상태 코드(400·404·413)와 함께 한국어 문장이 JSON으로 오는지, 답 어디에도 스택이나 서버 경로가 없는지 본다. 깨진 JSON, 100 kB가 넘는 본문, 읽을 수 없는 %-이스케이프, 없는 주소를 보낸다(Express 기본 화면은 개발 모드에서 스택과 서버 경로를, 배포 모드에서 영어를 보였다). 모델·Supabase·Mouser는 부르지 않는다.
+
+```bash
 npx tsx scripts/check_api_client.ts
 ```
 화면 쪽 API 클라이언트 40항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다. 개발 서버의 프록시(`vite.config.ts`)도 본다. vite는 경로가 처음으로 맞는 앞부분 하나로 보내므로, 어느 서버 경로도 먼저 닿지 않는 항목(`/generate` 뒤의 `/generate_gerber`)이 없고 모든 서버 경로에 항목이 있는지 확인한다. 개발 포트(프록시의 기본값, 서버 기본값, `.env.example`)가 하나이고 Windows가 잡아 둔 7989-8088 밖인지, 두 이미지가 내보내는 포트를 `PORT`로 정하는지도 본다. 미리보기 도구처럼 vite만 `PORT=3000`(vite 자기 포트)을 받고 떠도 프록시가 API 포트로 가는지는 `vite.config.ts`를 실제로 읽어 확인한다.
