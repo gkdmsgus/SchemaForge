@@ -1418,7 +1418,8 @@ interface Sink {
   /** what pulls it down, when its drop is not known ("트랜지스터", "U1 출력") */
   by?: string
 }
-interface Heat { p: number; why: string; cause?: string }
+/** `label`: where the resistor is, said before its reference in the summary ("Q1 아래 전류 감지 저항 R2") */
+interface Heat { p: number; why: string; cause?: string; label?: string }
 
 function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => Sink | null, heat: (r: OpPart, h: Heat) => void): OpResult[] {
   const out: OpResult[] = []
@@ -1817,7 +1818,8 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
 }
 
 /** resistor heating wherever the current through it is known */
-function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: OpPart; h: Heat }>): OpResult[] {
+function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: OpPart; h: Heat }>, ledFailed: (ref: string) => boolean): OpResult[] {
+  const pr = resPower(x.style)
   const add = (r: OpPart, h: Heat) => { const cur = heats.get(r.ref); if (!cur || h.p > cur.h.p) heats.set(r.ref, { r, h }) }
   for (const sw of switches) {
     if (!sw.grounded) continue
@@ -1831,6 +1833,27 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
         add(sw.drive.r, { p: i * i * sw.drive.ohms, why: `구동 ${V(top)}${assumed}가 ${sw.drive.r.ref}+${sw.pull.r.ref}에 걸려 ${mA(i)}` })
         add(sw.pull.r, { p: i * i * sw.pull.ohms, why: `구동 ${V(top)}${assumed}가 ${sw.drive.r.ref}+${sw.pull.r.ref}에 걸려 ${mA(i)}` })
       }
+    }
+    // the current-sense resistor under the emitter/source carries the whole load current (a BJT's base current too):
+    // P = I² × R at the largest load current; with the load's current unknown, at the part's rated current (more than
+    // that is the switch's own fault), as the gate drive reckons it, so no second 판단 불가 line comes of it
+    const sense = sw.sense.ref ? x.part(sw.sense.ref) : undefined
+    if (sense && sw.sense.ohms > 0) {
+      const lim = sw.bjt ? sw.bjt.ic_max : sw.mos!.id_max
+      const known = loadsKnown(sw.loads)
+      const iL = known ? loadI(sw.loads, 0) : lim.v
+      const iB = sw.kind === 'bjt' && sw.drive && top > 0 && sw.drive.ohms > 0 ? top / sw.drive.ohms : 0
+      const i = iL + iB
+      const where = `${sw.q.ref} 아래 전류 감지 저항 ${sense.ref}`
+      const base = iB > 0 ? ` + 베이스 최대 ${mA(iB)}` : ''
+      // an LED string over its rating draws the current that heats it: with that LED at its rating it would not be near
+      // the rating, so the heat follows the LED (one fault, counted once), as the switch's overload does
+      const capped = capLeds(sw.loads)
+      const iCapped = known && loadsKnown(capped) ? loadI(capped, 0) + iB : null
+      const cause = iCapped != null && iCapped ** 2 * sw.sense.ohms < NEAR * pr.p_max.v ? overLed(sw.loads, ledFailed) : undefined
+      add(sense, { p: i * i * sw.sense.ohms, label: where, ...(cause ? { cause } : {}), why: known
+        ? `${where}: 부하 최대 ${mA(iL)}${base}가 모두 지나 P = I² × R = (${mA(i)})² × ${ohm(sw.sense.ohms)}`
+        : `${where}: 부하 전류를 몰라 ${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(iL)}${base}로 계산 P = I² × R = (${mA(i)})² × ${ohm(sw.sense.ohms)} (${cite(lim)})` })
     }
   }
   // between two fixed voltages, or a fixed voltage and a 555 output (which swings from 0 V to its high level)
@@ -1878,15 +1901,15 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
       if (o) add(r, { p: (vcc.v * 2 / 3) ** 2 / o, why: `${u.ref} 방전 중 커패시터 전압 최대 VCC의 2/3` })
     }
   }
-  const pr = resPower(x.style)
   const out: OpResult[] = []
   for (const { r, h } of heats.values()) {
     const [a, b] = two(h.p, pr.p_max.v, W)
     const detail = [h.why, `정격 ${W(pr.p_max.v)}: ${cite(pr.p_max)}${x.style ? '' : ' (PCB 전이라 정격이 작은 SMD 기준)'}`]
     const res = (state: OpState, summary: string) => out.push({ rule: 'op_rpower', ref: r.ref, state, summary, detail, ...(h.cause && state !== 'pass' ? { cause: h.cause } : {}) })
-    if (atLeast(h.p, pr.p_max.v)) res('error', `${r.ref} 발열 ${a} ≥ 정격 ${b}`)
-    else if (atLeast(h.p, NEAR * pr.p_max.v)) res('warn', `${r.ref} 발열 ${a}로 정격 ${b}에 가깝습니다`)
-    else res('pass', `${r.ref} 발열 최대 ${W(h.p)} (정격 ${W(pr.p_max.v)})`)
+    const who = h.label ?? r.ref
+    if (atLeast(h.p, pr.p_max.v)) res('error', `${who} 발열 ${a} ≥ 정격 ${b}`)
+    else if (atLeast(h.p, NEAR * pr.p_max.v)) res('warn', `${who} 발열 ${a}로 정격 ${b}에 가깝습니다`)
+    else res('pass', `${who} 발열 최대 ${W(h.p)} (정격 ${W(pr.p_max.v)})`)
   }
   return out
 }
@@ -2377,7 +2400,7 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   run('op_relay', () => checkRelays(x, sinkOf, pulled, noPull, flybackFailed))
   run('op_drive', () => switches.map(s => s.result))
   run('op_switch', () => checkSwitchLimits(switches, ledFailed))
-  run('op_rpower', () => checkResistorPower(x, switches, heats))
+  run('op_rpower', () => checkResistorPower(x, switches, heats, ledFailed))
   run('op_555', () => check555(x, reversedCaps))
   run('op_reg', () => checkRegs(x, reversedCaps))
   return { out, pulled, noPull }

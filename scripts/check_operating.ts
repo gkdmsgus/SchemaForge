@@ -205,6 +205,25 @@ const motor = circuit(
   check('O5c gate fed from +5V: fully on, no pull-down needed', is(l, 'op_drive', 'pass', 'Q1'), show(l, 'op_drive'))
   const low = variant(load, c => { c.nets.find(n => n.name === '+5V')!.name = '+1V8' })
   check('O5d 1.8 V gate < 2.5 V threshold', is(run(low), 'op_drive', 'error', 'Q1', /켜지지 않을 수 있습니다/), show(run(low), 'op_drive'))
+  // the sense resistor under Q1 carries the motor current: 2 A through 0.1 Ω is 2² × 0.1 = 0.4 W, over the 0805's 125 mW and
+  // the THT 250 mW (docs/fabrication-guide.md found it by hand); 0.1 A is 1 mW; with no current on the motor, at most
+  // 2N7002's ID 115 mA flows: 0.115² × 0.1 = 1.32 mW, a pass with that basis, not a second 판단 불가 (2026-11-08: no R2 line)
+  const amps = (v: string, style: 'smd' | 'tht' | null = null) => run(variant(motor, setValue('J2', v)), style)
+  const r2 = (rs: OpResult[]) => pick(rs, 'op_rpower', 'R2')
+  const where = /^Q1 아래 전류 감지 저항 R2 발열/
+  check('O5e the sense resistor R2 under Q1 is heated by the motor current: 2 A error (400 mW, SMD and THT), 0.1 A pass (1 mW), no current: ID 115 mA (1.32 mW)',
+    is(amps('MOTOR 12V 2A'), 'op_rpower', 'error', 'R2', /400 mW ≥ 정격 125 mW/) && is(amps('MOTOR 12V 2A', 'tht'), 'op_rpower', 'error', 'R2', /400 mW ≥ 정격 250 mW/)
+    && is(amps('MOTOR 12V 0.1A'), 'op_rpower', 'pass', 'R2', /최대 1 mW/) && is(run(motor), 'op_rpower', 'pass', 'R2', /최대 1\.32 mW/)
+    && !!r2(run(motor))?.detail.some(d => /ID 최대 115 mA/.test(d))
+    && [amps('MOTOR 12V 2A'), amps('MOTOR 12V 0.1A'), run(motor)].every(rs => where.test(r2(rs)?.summary ?? '')),
+    [show(amps('MOTOR 12V 2A'), 'op_rpower', 'R2'), show(amps('MOTOR 12V 0.1A'), 'op_rpower', 'R2'), show(run(motor), 'op_rpower', 'R2'), r2(run(motor))?.detail[0] ?? ''].join(' / '))
+  // under an NPN's emitter the base current goes through it too: the relay coil's 79.4 mA plus at most 5 V ÷ R1 1 kΩ = 5 mA
+  // of base, (84.4 mA)² × 1 Ω = 7.12 mW
+  const npn = run(circuit(
+    [['J1', 'Conn_01x03', 'PWR_IN'], ['R1', 'R', '1k'], ['Q1', 'Q_NPN', '2N3904'], ['D1', 'D', '1N4148'], ['K1', 'Relay', '5V'], ['R2', 'R', '1']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['IN', 'J1.2', 'R1.1'], ['GND', 'J1.3', 'R2.2'], ['BASE', 'R1.2', 'Q1.1'], ['COIL_LOW', 'Q1.2', 'K1.2', 'D1.1'], ['SENSE', 'Q1.3', 'R2.1']]))
+  check('O5f the emitter sense resistor under an NPN carries the base current too', is(npn, 'op_rpower', 'pass', 'R2', /^Q1 아래 전류 감지 저항 R2/)
+    && !!r2(npn)?.detail.some(d => /\+ 베이스 최대 5 mA/.test(d)), `${show(npn, 'op_rpower', 'R2')} · ${r2(npn)?.detail[0]}`)
 }
 
 // O6. 555 timer ─────────────────────────────────────────────────────────────────
