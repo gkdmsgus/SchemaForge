@@ -456,6 +456,14 @@ async function flow() {
   check('A15b Mouser search: b refused, a passes', mb.status === 200 && mb.body.refused === true && mb.body.available === false
     && ma.status === 400 && !ma.body.refused, `b ${brief(mb)} | a ${brief(ma)}`)
 
+  // A15c. a token that no longer checks out is "log in again" there too, as on /clarify (A13), so the BOM's authFetch
+  // renews it and asks again: a listed account whose token had run out (about an hour on Supabase) was told it needs a
+  // listed account, and nothing renewed it (review of 2026-11-07). Supabase down is A20
+  const mExp = await call('POST', '/mouser_search', { token: expired, body: { components: [] } })
+  const mBad = await call('POST', '/mouser_search', { token: 'garbage', body: { components: [] } })
+  check('A15c Mouser search with an expired or garbage token: 401 auth_expired', [mExp, mBad].every(r => r.status === 401 && r.body.code === 'auth_expired'
+    && r.body.error === EXPIRED && !r.body.refused), `${brief(mExp)} | ${brief(mBad)}`)
+
   // A16. /auth/me says before anything is typed whether this account may generate here
   const meA = await call('GET', '/auth/me', { token: A })
   const meB = await call('GET', '/auth/me', { token: B })
@@ -491,6 +499,7 @@ async function flow() {
     me: await call('GET', '/auth/me', { token: A }),
     sessions: await call('GET', '/sessions', { token: A }),
     clarify: await call('POST', '/clarify', { token: A, body: { description: 'LED' } }),
+    mouser: await call('POST', '/mouser_search', { token: A, body: { components: [] } }),
   }
   check('A20 Supabase down: 503', Object.values(down).every(r => r.status === 503 && r.body.error === DOWN),
     Object.entries(down).map(([k, r]) => `${k} ${r.status}`).join(', '))

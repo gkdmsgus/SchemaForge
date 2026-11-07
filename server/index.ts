@@ -1587,8 +1587,11 @@ function mouserKeyword(q: MouserQuery): string {
 
 app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   // one call per line on the operator's key, and its quota is the listed accounts' too: a visitor is told refused and
-  // the BOM keeps its search links (open to anyone before, review of 2026-11-06)
-  if (memberRefusal(GUARD, req.user)) return res.json({ available: false, refused: true, results: [] })
+  // the BOM keeps its search links (open to anyone before, review of 2026-11-06). A token that failed to check is told why
+  // as on the other guarded routes, so the BOM renews it (401 auth_expired) or says Supabase is down (503): a listed
+  // account whose token had run out was told it needs a listed account, and nothing renewed it (review of 2026-11-07)
+  const refusal = memberRefusal(GUARD, req.user)
+  if (refusal) return req.authFailed ? refuse(req, res, refusal) : res.json({ available: false, refused: true, results: [] })
   const { components } = req.body || {}
   if (!Array.isArray(components) || !components.length) return res.status(400).json({ error: 'No components' })
   if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `Too many components (max ${MOUSER_MAX_LINES})` })
