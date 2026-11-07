@@ -1,10 +1,11 @@
-// Checks T1-T3 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
+// Checks T1-T4 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
 // server/ and server/pcb/ is a step of the chain or is named below as staying out, with the reason. check_operating,
 // check_board_checks and check_circuit_validation stood beside the chain, so their checks did not run when the code they
 // guard changed (sweep of 2026-11-07). T2 the checks that read the check boards in server/outputs run after
 // make_check_boards, which makes those boards on a fresh clone. T3 npm run test:browser (scripts/run_browser_checks.ts)
 // runs every check that stays out for a browser, check_3d's viewer items too, and not check_live: the browser checks were
-// run one by one by hand, each "with npm run dev on".
+// run one by one by hand, each "with npm run dev on". T4 CLAUDE.md and AGENTS.md, the same guide for two
+// kinds of agent, say the same, so an edit to one alone fails here instead of leaving the other with the old rule.
 // Usage: npx tsx scripts/check_test_chain.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
@@ -79,6 +80,18 @@ check('T3 npm run test:browser runs every browser check, check_3d with BASE, not
   + (notRun.length ? ` · out for a browser but not run: ${notRun.join(', ')}` : '')
   + (notForBrowser.length ? ` · run but not out for a browser: ${notForBrowser.join(', ')}` : '')
   + (runs.includes('scripts/check_3d.ts') ? '' : ' · check_3d is not run with BASE'))
+
+// T4: one guide read by two kinds of agent. Line ends aside (a Windows checkout has CRLF), the two files are the same
+{
+  const read = (f: string) => fs.existsSync(path.join(ROOT, f)) ? fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n') : null
+  const [claude, agents] = [read('CLAUDE.md'), read('AGENTS.md')]
+  const a = (claude ?? '').split('\n'), b = (agents ?? '').split('\n')
+  const at = a.findIndex((l, i) => l !== b[i])
+  const first = at >= 0 ? at : a.length !== b.length ? Math.min(a.length, b.length) : -1
+  check('T4 CLAUDE.md and AGENTS.md are the same', claude !== null && agents !== null && claude === agents,
+    claude === null || agents === null ? `missing: ${[claude === null && 'CLAUDE.md', agents === null && 'AGENTS.md'].filter(Boolean).join(', ')}`
+      : first >= 0 ? `first difference on line ${first + 1}` : `${a.length} lines`)
+}
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
 process.exit(failed ? 1 : 0)

@@ -12,7 +12,7 @@
 ## 명령
 ```bash
 npm run dev            # 화면 3000 + API 8113 (vite 프록시는 server/.env 의 PORT를 따른다. 없으면 코드 기본값 8113. 배포 이미지는 8002)
-npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → 배포 서버 차단 → 무거운 작업 자리 → 데모 넷리스트 캐시 → 배포 서버의 outputs 정리 → 로그인·기록(가짜 Supabase) → 모델 설정(가짜 OpenAI 호환 API) → DRC 라이브러리 표 → 잘못된 요청의 답 → 버전 고정·스타일시트·로그인 창·약관과 처리방침·npm test 목록 → 검사용 기판 만들기(데모 4개 × 2방식, 기판마다 그 넷리스트, 없을 때만) → Code 탭·BOM·배치하기·방향 확인·경고 해결책·동작 검사·기판 검사 목록·회로 검사·3D 도형·API 클라이언트 → 기판 10개 × 20항목 → AI 다듬기 루프(가짜 모델) (대략 8분, KiCad 필요). 브라우저·Docker 검사는 넣지 않는다 (목록은 `scripts/check_test_chain.ts`)
+npm test               # 모델 없이 도는 검사 전부: 타입(화면·서버) → AI 판정 규칙 → ERC 자동 수정 판정 → 배포 서버 차단 → 무거운 작업 자리 → 데모 넷리스트 캐시 → 배포 서버의 outputs 정리 → 로그인·기록(가짜 Supabase) → 모델 설정(가짜 OpenAI 호환 API) → DRC 라이브러리 표 → 잘못된 요청의 답 → 버전 고정·스타일시트·로그인 창·약관과 처리방침·npm test 목록·젯슨 배포 스크립트 → 검사용 기판 만들기(데모 4개 × 2방식, 기판마다 그 넷리스트, 없을 때만) → Code 탭·BOM·배치하기·방향 확인·경고 해결책·동작 검사·기판 검사 목록·회로 검사·3D 도형·API 클라이언트 → 기판 10개 × 20항목 → AI 다듬기 루프(가짜 모델) (대략 8분, KiCad 필요). 브라우저·Docker 검사는 넣지 않는다 (목록은 `scripts/check_test_chain.ts`)
 npm run test:types     # 타입만 (빠름)
 npm run test:browser   # 브라우저 검사 전부(scripts/check_*.mjs 중 check_live 빼고 전부 + check_3d의 뷰어 항목)를 OS가 준 빈 포트에 키 없이 띄운 vite·API로 돌리고 둘 다 끈다 (대략 10분, KiCad 필요, npm test 밖). 몇 개만: npm run test:browser -- drawer pcb_sketch
 npm run lint
@@ -26,4 +26,5 @@ npm run lint
 - 코드를 바꾸면 같은 작업 안에서 `npm test`(최소 `npm run test:types`)를 돌리고 결과를 보고한다. 화면을 바꾸면 데모 URL로 직접 확인한다
 - `server/.env`, 키 값은 커밋하지 않는다. 배포 이미지에 `.env`가 들어가지 않게 `.dockerignore` 유지
 - 커밋은 작게(대략 300줄 이하), 기능과 그 검사를 같은 커밋에. 푸시는 사용자 확인 후
+- `CLAUDE.md`와 `AGENTS.md`는 같은 글이다. 하나를 고치면 다른 하나도 똑같이 고친다 (`scripts/check_test_chain.ts` T3이 본다)
 - 데모 기판은 제작용이 아니다 (README "알려진 제약": 트랜지스터 핀 배열, 모터 전류 정격)

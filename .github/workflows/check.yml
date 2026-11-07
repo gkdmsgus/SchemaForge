@@ -21,3 +21,12 @@ jobs:
         working-directory: server
       - run: npm run typecheck
         working-directory: server
+      # the npm test checks that need neither KiCad, python nor a model: a clean Linux clone catches an import whose
+      # case differs from the file's, or a file left out of a commit
+      - run: npx tsx scripts/check_styles.ts
+      - run: npx tsx scripts/check_test_chain.ts
+      - run: npx tsx scripts/check_pins.ts
+      - run: npx tsx scripts/check_api_client.ts
+      - run: npx tsx scripts/check_assembly.ts
+      - run: npx tsx check_outputs_sweep.ts
+        working-directory: server

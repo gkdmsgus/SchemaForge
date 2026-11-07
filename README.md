@@ -64,7 +64,7 @@ flowchart LR
 | 회로 · 기판 | Python, skidl, 직접 구현한 배치(힘 기반) · 배선(A*) · 회로 점검 |
 | 검사 · 출력 | KiCad 10 `kicad-cli` (DRC, 거버, 3D 모델) |
 | 저장 · 인증 | Supabase |
-| 배포 · CI | Docker (공식 KiCad 이미지 기반), Render (무료 인스턴스), GitHub Actions (린트 · 타입 · 빌드) |
+| 배포 · CI | Docker (공식 KiCad 이미지 기반), Render (무료 인스턴스), GitHub Actions (린트 · 타입 · 빌드 · 모델·KiCad·python 없이 도는 검사 6개: 스타일시트, `npm test` 목록, 버전 고정, API 클라이언트, 배치하기, outputs 정리) |
 
 ### 일정과 계획
 시스템 구조 상세, 화면 설명, AI 활용방안, 주 단위 일정은 [docs/project-plan.md](docs/project-plan.md)에 있다.
@@ -205,7 +205,7 @@ cd server && npx tsx check_auth_flow.ts
 ```bash
 cd server && npx tsx check_model_config.ts
 ```
-모델 설정 23항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, 승인한 설계 계획이 회로 요청에 들어가는지, AI 편집 프롬프트가 새 부품에 쓸 비어 있는 기호(C3가 있으면 C4)를 주고 요청에 없는 부품을 지우거나 값·연결을 바꾸지 말라고 하는지, 사용자에게 묻는 답이면 편집을 비우라고 하는지, 모델이 답 문장 없이 끝나거나 편집이 중간에 끊겨도 "완료했습니다"라고 하지 않는지(끊긴 편집은 적용하지 않고 나눠서 요청하라고 하며, 끊긴 답의 이스케이프는 제대로 읽음), `/health`가 화면에 보일 모델 이름을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다. 모델 크레딧이 떨어졌을 때(OpenAI 429 `insufficient_quota`) 계획·회로 생성·AI 편집이 상태 코드 대신 한국어로 알리는지(계획은 503), 질문 단계도 그런 실패는 알리고 다른 실패에는 질문 없이 넘어가는지, 요청이 몰렸을 때(429 `rate_limit_exceeded`) 잠시 뒤 다시 하라고 하는지, OpenAI SDK·axios·xAI가 주는 오류 모양을 모두 같은 안내로 읽는지, 계획 프롬프트에 부품 수 하한과 해당 없는 사양(주파수·효율)이 없고, 회로가 동작하는 데 필요한 부품(LED 직렬 저항, 555 타이밍 부품)은 빠뜨리지 않게 하는지도 본다. 모든 모델 호출이 60초 한도와 재시도 한 번의 같은 클라이언트를 쓰는지, 다시 해 볼 만한 실패는 한 번만 더 묻는지, 답하지 않거나 연결을 끊거나 연결을 받지 않는 모델을 OpenAI SDK와 axios 모두 한국어로 알리는지, 방문자가 떠나면 AI 편집의 모델 스트림이 끊기는지도 본다. 모델이 만든 회로 코드가 실행되지 않을 때(자동 재시도가 꺼져 있을 때, 고친 코드도 실행되지 않을 때, 고치는 호출이 `SF_CODE_FIX_MS` 안에 답하지 않을 때) 오류 상자가 "skidl execution error" 대신 무슨 일이 있었고 무엇을 하면 되는지 한국어로 말하는지도 본다.
+모델 설정 23항목. 가짜 OpenAI 호환 API를 띄우고 실제 서버를 Grok처럼(`OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`) 설정한다. 회로 코드·되묻기·계획·AI 편집 호출이 모두 그 주소로 키·모델 이름·추론 설정을 가지고 가는지, 회로가 끝까지 만들어지는지, 승인한 설계 계획이 회로 요청에 들어가는지, AI 편집 프롬프트가 새 부품에 쓸 비어 있는 기호(C3가 있으면 C4)를 주고 요청에 없는 부품을 지우거나 값·연결을 바꾸지 말라고 하는지, 사용자에게 묻는 답이면 편집을 비우라고 하는지, 모델이 답 문장 없이 끝나거나 편집이 중간에 끊겨도 "완료했습니다"라고 하지 않는지(끊긴 편집은 적용하지 않고 나눠서 요청하라고 하며, 끊긴 답의 이스케이프는 제대로 읽음), `/health`가 화면에 보일 모델 이름과 이미지를 만든 커밋(`SF_COMMIT`)을 주는지, 설정이 없으면 GPT-4o·OpenAI인지 확인한다. 모델 크레딧이 떨어졌을 때(OpenAI 429 `insufficient_quota`) 계획·회로 생성·AI 편집이 상태 코드 대신 한국어로 알리는지(계획은 503), 질문 단계도 그런 실패는 알리고 다른 실패에는 질문 없이 넘어가는지, 요청이 몰렸을 때(429 `rate_limit_exceeded`) 잠시 뒤 다시 하라고 하는지, OpenAI SDK·axios·xAI가 주는 오류 모양을 모두 같은 안내로 읽는지, 계획 프롬프트에 부품 수 하한과 해당 없는 사양(주파수·효율)이 없고, 회로가 동작하는 데 필요한 부품(LED 직렬 저항, 555 타이밍 부품)은 빠뜨리지 않게 하는지도 본다. 모든 모델 호출이 60초 한도와 재시도 한 번의 같은 클라이언트를 쓰는지, 다시 해 볼 만한 실패는 한 번만 더 묻는지, 답하지 않거나 연결을 끊거나 연결을 받지 않는 모델을 OpenAI SDK와 axios 모두 한국어로 알리는지, 방문자가 떠나면 AI 편집의 모델 스트림이 끊기는지도 본다. 모델이 만든 회로 코드가 실행되지 않을 때(자동 재시도가 꺼져 있을 때, 고친 코드도 실행되지 않을 때, 고치는 호출이 `SF_CODE_FIX_MS` 안에 답하지 않을 때) 오류 상자가 "skidl execution error" 대신 무슨 일이 있었고 무엇을 하면 되는지 한국어로 말하는지도 본다.
 
 ```bash
 cd server && npx tsx check_kicad_config.ts
@@ -245,7 +245,12 @@ npx tsx scripts/check_legal.ts
 ```bash
 npx tsx scripts/check_test_chain.ts
 ```
-`npm test` 목록 2항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
+`npm test` 목록 3항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지, `CLAUDE.md`와 `AGENTS.md`가 같은 글인지(줄 끝 CRLF·LF는 같게 본다) 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
+
+```bash
+npx tsx scripts/check_jetson_run.ts
+```
+젯슨 배포 스크립트 10항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). PATH에는 대역 폴더만 두므로(awk·sed 같은 글 도구 몇 개는 그 안에서 진짜를 부른다) 대역이 없는 명령(npm, 진짜 docker)은 실행되지 않고 그 실행이 실패로 남는다. `Dockerfile.jetson`은 글로만 읽는다. 스크립트가 명령을 전체 경로로 부르거나 PATH를 바꾸지 않는지도 본다. 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지, `Dockerfile.jetson`의 `KICAD_EXPECT`(10.0.8)와 다른 KiCad로 뜬 새 이미지를 뜨지 않은 것으로 보는지, `Dockerfile.jetson`의 그 줄 바로 뒤 RUN이 `kicad-cli version`이 그 값과 다르면 exit 1로 빌드를 멈추게 쓰였는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다. 2026-11-08에는 이 검사가 `Dockerfile.jetson`의 첫 RUN(`npm ci`)을 이 PC에서 실행해 작업 폴더들이 함께 쓰는 `node_modules`를 비웠다.
 
 ```bash
 cd server && npx tsx check_demo_cache.ts
@@ -443,6 +448,7 @@ dev/board.html        기판 화면만 따로 띄우는 개발용 페이지
 
 Render 무료 인스턴스(`render.yaml`) + Supabase 기준 순서는 [DEPLOY.md](DEPLOY.md) 참고. 컨테이너에 KiCad가 없으면 DRC·거버·3D가 비활성화된다.
 
+- KiCad 버전은 이미지마다 고정한다. Render 이미지는 10.0.5(`Dockerfile`의 `kicad/kicad:10.0.5`), 젯슨 이미지는 10.0.8(`Dockerfile.jetson`의 `KICAD_EXPECT`: PPA에서 다른 판이 오면 빌드가 멈추고, `scripts/jetson_run.sh`는 `/health`가 그 판을 말해야 뜬 것으로 본다). 같은 회로라도 두 서버의 거버가 바이트까지 같지는 않을 수 있다.
 - 배포 서버(`NODE_ENV=production`)에서는 데모·기판·거버는 누구나 쓰고, 회로 생성·AI 편집·코드 실행은 `ALLOWED_EMAILS`에 있는 계정만 쓴다 (DEPLOY.md 0절).
 - 무료 인스턴스는 CPU 0.1 · 메모리 512 MB다. 같은 제한(`--cpus=0.1 --memory=512m`)으로 묶은 로컬 컨테이너에서 데모 5개와 화면 시험이 통과했고, 데모 하나(넷리스트 → 기판·DRC → 3D → 거버)에 대략 40~60초 걸렸다. 15분 동안 요청이 없으면 잠들고, 다음 요청에 깨는 데 약 1분 걸린다 ([Render 무료 인스턴스](https://render.com/docs/free)).
 - 이미지는 약 4.3 GB(압축 전, gzip 약 0.97 GB)로 KiCad 공식 이미지가 대부분이다.
