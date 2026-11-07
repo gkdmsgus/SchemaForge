@@ -219,7 +219,7 @@ npx tsx scripts/check_styles.ts
 ```bash
 npx tsx scripts/check_auth_modal.ts
 ```
-로그인·가입 창 5항목 (`src/components/AuthModal.tsx`, 브라우저 없이). 이모지, 그라데이션·흐림, 토큰보다 큰 모서리(8 px 초과), 손으로 적은 글꼴 이름(한글이 IBM Plex Sans KR 대신 시스템 글꼴로 나온다), 영어 큰 제목과 근거 없는 최상급("가장 빠른")이 없는지 본다. 다른 화면은 2026-09-17에 이것들을 걷어냈는데 로그인 창만 남아 있었다.
+로그인·가입 창 7항목 (`src/components/AuthModal.tsx`, 브라우저 없이). 이모지, 그라데이션·흐림, 토큰보다 큰 모서리(8 px 초과), 손으로 적은 글꼴 이름(한글이 IBM Plex Sans KR 대신 시스템 글꼴로 나온다), 영어 큰 제목과 근거 없는 최상급("가장 빠른")이 없는지 본다. 다른 화면은 2026-09-17에 이것들을 걷어냈는데 로그인 창만 남아 있었다. 열린 창이 제목으로 이름 붙은 `<dialog>`이고 닫기 버튼에 이름이 있으며 오류 상자가 `role="alert"`인지, 가입 화면에 이용약관·개인정보 처리방침 링크(새 탭)가 있는지도 본다.
 
 ```bash
 npx tsx scripts/check_test_chain.ts
@@ -254,7 +254,7 @@ node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
 ```bash
 node scripts/check_auth_dialog.mjs     # npm run dev 를 켠 채로
 ```
-로그인·가입 창 4항목 (로그인 API는 브라우저 안에서 흉내 낸다). 로그인과 가입 화면 각각에서 그라데이션·흐림·이모지·영어 제목이 없고 모서리가 8 px 이하인지, 크롬이 실제로 그린 글자가 모두 앱 글꼴(Space Grotesk, IBM Plex Sans KR)이고 글자 대비가 4.5:1 이상인지(큰 글자는 3:1) 본다. 글꼴은 fonts.googleapis.com에서 받으므로 인터넷이 없으면 시스템 글꼴로 그려져 실패한다.
+로그인·가입 창 10항목 (로그인 API는 브라우저 안에서 흉내 낸다). 로그인과 가입 화면 각각에서 그라데이션·흐림·이모지·영어 제목이 없고 모서리가 8 px 이하인지, 크롬이 실제로 그린 글자가 모두 앱 글꼴(Space Grotesk, IBM Plex Sans KR)이고 글자 대비가 4.5:1 이상인지(큰 글자는 3:1) 본다. 창이 제목으로 이름 붙은 모달 대화상자 하나인지, 열면 메일 칸에 포커스가 가고 Tab·Shift+Tab 15번씩에도 창 밖으로 나가지 않는지(예전에는 세 번 만에 뒤 화면으로 나갔다), 버튼마다 이름이 있는지, 로그인 실패를 알림(alert)으로 읽어 주는지, Esc와 창 밖 클릭으로 닫히고 포커스가 헤더의 로그인 버튼으로 돌아오는지, 가입 화면에만 이용약관·개인정보 처리방침 링크가 새 탭으로 하나씩 있는지도 본다. 글꼴은 fonts.googleapis.com에서 받으므로 인터넷이 없으면 시스템 글꼴로 그려져 실패한다.
 
 ```bash
 node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로

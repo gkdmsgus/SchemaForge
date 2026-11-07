@@ -3,6 +3,10 @@
 // tokens (8 px at most, circles aside), every glyph from the app's fonts (Space Grotesk, IBM Plex Sans KR) and none from a
 // system font, text at 4.5:1 or more on what is behind it (3:1 when large). Before, the dialog kept the dark gradient
 // panel, '다시 만나요 👋' half in Malgun Gothic and Segoe UI Emoji, and 24 px corners (sweep of 2026-11-08).
+// D3-D7 it is a dialog: one modal dialog named by its title, the focus starts in it and Tab and Shift+Tab stay in it,
+// every button has a name, a failed login is said in an alert, Esc and a click outside close it and the focus goes back
+// to the header's 로그인. Before, Tab left the form after three presses for the home screen behind it.
+// D8 the sign-up form links the terms and the privacy policy, in a new tab; the login form shows no link.
 // Needs the vite dev server (npm run dev) with the fonts reachable (fonts.googleapis.com): a glyph from a system font fails.
 // Usage: node scripts/check_auth_dialog.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -102,9 +106,14 @@ try {
   await page.route(/\/auth\/login$/, r => r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: '메일 주소나 비밀번호가 맞지 않습니다.' }) }))
   await page.goto(BASE, { waitUntil: 'networkidle' })
   const opener = page.getByRole('button', { name: '로그인', exact: true }).first()
+  await opener.evaluate(b => b.setAttribute('data-check-opener', ''))
   const email = page.locator("input[aria-label='이메일']")
   const open = async () => { await opener.click(); await email.waitFor({ timeout: 5000 }); await page.waitForTimeout(400) }
   const signUp = page.locator('.auth-tabs').getByRole('button', { name: '회원가입' })
+  const where = () => page.evaluate(() => {
+    const a = document.activeElement, d = window.authDialog()
+    return { inside: !!d && d.contains(a) && a !== d, what: `${a?.tagName} ${a?.getAttribute('aria-label') || a?.textContent?.trim().slice(0, 12) || ''}` }
+  })
   const settle = async () => { await page.waitForLoadState('networkidle'); await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(300) }
 
   // D1-D2, in both forms
@@ -122,8 +131,65 @@ try {
     check(`D2 ${form}: every glyph from the app's fonts, text at 4.5:1 or more`, fonts.size > 0 && !other.length && !!look && look.texts > 3 && !look.low.length,
       `${[...fonts].map(([f, n]) => `${f} ${n}`).join(', ')}${look?.low.length ? ` · low contrast: ${look.low.join(', ')}` : ''}`)
   }
+  // back to the login form (the dialog stays mounted and keeps its tab), then closed
+  await page.locator('.auth-tabs').getByRole('button', { name: '로그인' }).click()
   await page.keyboard.press('Escape')
   await email.waitFor({ state: 'hidden', timeout: 5000 })
+
+  // D3
+  await open()
+  const dialogs = await page.getByRole('dialog').count()
+  const named = await page.getByRole('dialog', { name: '로그인', exact: true }).count()
+  const modal = await page.evaluate(() => { const d = window.authDialog(); try { return !!d && (d.matches(':modal') || d.getAttribute('aria-modal') === 'true') } catch { return d?.getAttribute('aria-modal') === 'true' } })
+  check('D3 one modal dialog, named 로그인 by its title', dialogs === 1 && named === 1 && modal, JSON.stringify({ dialogs, named, modal }))
+
+  // D4
+  const start = await where()
+  const outside = []
+  for (const key of [...Array(15).fill('Tab'), ...Array(15).fill('Shift+Tab')]) {
+    await page.keyboard.press(key)
+    const w = await where()
+    if (!w.inside) outside.push(`${key}: ${w.what}`)
+  }
+  check('D4 the focus starts on the mail field and 15 Tab and 15 Shift+Tab stay in the dialog',
+    start.inside && /이메일/.test(start.what) && !outside.length, `start ${start.what}${outside.length ? ` · left for ${outside.slice(0, 4).join(', ')}` : ''}`)
+
+  // D5
+  const unnamed = await page.evaluate(() => [...(window.authDialog()?.querySelectorAll('button') ?? [])]
+    .filter(b => !(b.getAttribute('aria-label') || b.textContent.trim() || b.title)).length)
+  const close = await page.getByRole('dialog').getByRole('button', { name: '닫기', exact: true }).count()
+  check('D5 every button in it has a name, the close button is 닫기', unnamed === 0 && close === 1, `unnamed ${unnamed}, 닫기 ${close}`)
+
+  // D6
+  await email.fill('someone@example.com')
+  await page.locator("input[aria-label='비밀번호']").fill('wrong-pass-1')
+  await page.locator('.auth-form button[type=submit]').click()
+  const alert = await page.getByRole('alert').filter({ hasText: '메일 주소나 비밀번호가 맞지 않습니다.' }).waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('D6 a failed login is said in an alert', alert)
+
+  // D7
+  await page.keyboard.press('Escape')
+  const shut = await email.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true, () => false)
+  await page.waitForTimeout(200)
+  const back = await page.evaluate(() => document.activeElement?.hasAttribute('data-check-opener') ?? false)
+  await open()
+  await page.mouse.click(12, 360)
+  const outsideClose = await email.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true, () => false)
+  check('D7 Esc closes it and the focus is back on the header\'s 로그인; a click outside closes it too', shut && back && outsideClose,
+    JSON.stringify({ shut, back, outsideClose }))
+
+  // D8
+  await open()
+  const linksIn = () => page.evaluate(() => [...(window.authDialog()?.querySelectorAll('a') ?? [])]
+    .filter(a => a.getClientRects().length).map(a => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, text: a.textContent.trim() })))
+  const loginLinks = (await linksIn()).length
+  await signUp.click()
+  await page.locator("input[aria-label='비밀번호 확인']").waitFor({ timeout: 5000 })
+  const links = await linksIn()
+  const one = href => links.filter(l => l.href === href && l.target === '_blank' && /noopener/.test(l.rel)).length === 1
+  check('D8 the sign-up form links the terms and the privacy policy once each, in a new tab (the login form none)',
+    loginLinks === 0 && one('/terms') && one('/privacy') && links.find(l => l.href === '/terms')?.text === '이용약관' && links.find(l => l.href === '/privacy')?.text === '개인정보 처리방침',
+    `sign-up ${JSON.stringify(links)} · login ${loginLinks} link(s)`)
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useId, type FormEvent, type ReactNode, type Ref } from 'react'
+import { useState, useEffect, useRef, useId, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref } from 'react'
 import { login, register, saveAuth, type AuthUser } from '../api'
 import Logo from './Logo.tsx'
 import { Button, IconCheck, IconClose, Spinner } from './primitives.tsx'
@@ -19,7 +19,9 @@ type Mode = 'login' | 'register'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 // One plain panel like the settings, from the tokens (2026-11-08): the dark gradient half with its feature cards, the
-// English headline, the emoji and the blur over the page went, as they went from the other screens on 2026-09-17
+// English headline, the emoji and the blur over the page went, as they went from the other screens on 2026-09-17.
+// A modal <dialog> (showModal): the page behind is inert while it is open, Esc closes it, Tab and Shift+Tab go round
+// inside it, and the focus goes back to what opened it (Tab used to leave it after three presses for the home screen).
 export default function AuthModal({ open, onClose, onSuccess, notice = null }: AuthModalProps) {
   const [mode, setMode]         = useState<Mode>('login')
   const [email, setEmail]       = useState('')
@@ -30,6 +32,9 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
   const [loading, setLoading]   = useState(false)
   const [success, setSuccess]   = useState(false)
   const emailRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const titleId = useId()
 
   // a notice opens the login tab (after the mail link, or when the login ran out)
   useEffect(() => {
@@ -46,16 +51,26 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     if (!open) { setPassword(''); setConfirm('') }
   }, [open])
 
+  // opened as a modal once (StrictMode runs this twice: the second finds it open), with what had the focus kept
+  useEffect(() => {
+    const d = dialogRef.current
+    if (!open || !d || d.open) return
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    d.showModal()
+    emailRef.current?.focus()
+  }, [open])
+
+  // closed (by Esc, 닫기, a click outside or a login): the focus goes back to the header's 로그인 or whatever opened it
+  useEffect(() => {
+    if (open) return
+    const opener = openerRef.current
+    openerRef.current = null
+    if (opener?.isConnected) opener.focus()
+  }, [open])
+
   useEffect(() => {
     if (open) setTimeout(() => emailRef.current?.focus(), 100)
   }, [open, mode])
-
-  useEffect(() => {
-    if (!open) return
-    const fn = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', fn)
-    return () => window.removeEventListener('keydown', fn)
-  }, [open, onClose])
 
   if (!open) return null
 
@@ -106,102 +121,133 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     }
   }
 
+  /** Tab from the last control goes to the first and Shift+Tab from the first to the last (not to the browser's bar) */
+  function keepFocusIn(e: KeyboardEvent<HTMLDialogElement>) {
+    if (e.key !== 'Tab') return
+    const all = [...e.currentTarget.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled])')]
+      .filter(el => el.getClientRects().length)
+    const first = all[0], last = all[all.length - 1]
+    if (!first) return
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === e.currentTarget)) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
+
+  /** a click on the dim page around it (the dialog's ::backdrop is the dialog's own box to the click) */
+  function closeOutside(e: MouseEvent<HTMLDialogElement>) {
+    if (e.target !== e.currentTarget) return
+    const r = e.currentTarget.getBoundingClientRect()
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose()
+  }
+
   const isLogin = mode === 'login'
   const emailOk = EMAIL_RE.test(email.trim())
 
   return (
     <>
       <style>{STYLES}</style>
-      <div className="auth-overlay" onClick={onClose}>
-        <div className="auth-card" onClick={e => e.stopPropagation()}>
-          <div className="auth-head">
-            <Logo size={20} />
-            <Button variant="ghost" size="sm" icon={<IconClose size={14} />} onClick={onClose} />
-          </div>
-
-          <div className="auth-tabs">
-            <button type="button" className={`auth-tab ${isLogin ? 'active' : ''}`} onClick={() => switchMode('login')}>로그인</button>
-            <button type="button" className={`auth-tab ${!isLogin ? 'active' : ''}`} onClick={() => switchMode('register')}>회원가입</button>
-          </div>
-
-          <h2 className="auth-title">{isLogin ? '로그인' : '계정 만들기'}</h2>
-          <p className="auth-lead">{isLogin
-            ? '로그인하면 만든 회로가 기록에 남고 즐겨찾기를 쓸 수 있습니다.'
-            : '메일 주소와 비밀번호로 계정을 만듭니다. 만든 회로는 기록에 남고 즐겨찾기를 쓸 수 있습니다.'}</p>
-
-          <form onSubmit={handleSubmit} className="auth-form">
-            <Field
-              ref={emailRef}
-              label="이메일"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={setEmail}
-              placeholder="you@example.com"
-              required
-            />
-            <Field
-              label="비밀번호"
-              type="password"
-              autoComplete={isLogin ? 'current-password' : 'new-password'}
-              value={password}
-              onChange={setPassword}
-              placeholder={isLogin ? '' : '6자 이상'}
-              required
-              minLength={6}
-            />
-            {!isLogin && (
-              <Field
-                label="비밀번호 확인"
-                type="password"
-                autoComplete="new-password"
-                value={confirm}
-                onChange={setConfirm}
-                placeholder="한 번 더 입력"
-                required
-                error={confirm.length > 0 && confirm !== password ? '비밀번호가 일치하지 않습니다.' : ''}
-              />
-            )}
-
-            {!isLogin && (
-              <div className="auth-checklist">
-                <CheckItem done={emailOk}>메일 주소 형식</CheckItem>
-                <CheckItem done={password.length >= 6}>6자 이상</CheckItem>
-                <CheckItem done={confirm.length > 0 && confirm === password}>비밀번호 일치</CheckItem>
-              </div>
-            )}
-
-            {info && !error && (
-              <div className="auth-info" role="status">{info}</div>
-            )}
-
-            {error && (
-              <div className="auth-error">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                  <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M7 4v3.5M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                </svg>
-                <span>{error}</span>
-              </div>
-            )}
-
-            {/* no password reset yet: the '비밀번호를 잊으셨나요?' link comes back with that flow */}
-            <button
-              type="submit"
-              className={`auth-submit ${success ? 'success' : ''}`}
-              disabled={loading || success}
-            >
-              {success ? (
-                <><IconCheck size={16} /> 로그인했습니다</>
-              ) : loading ? (
-                <><Spinner size={14} /> {isLogin ? '로그인 중' : '계정 만드는 중'}</>
-              ) : (
-                isLogin ? '로그인' : '계정 만들기'
-              )}
-            </button>
-          </form>
+      <dialog
+        ref={dialogRef}
+        className="auth-card"
+        aria-labelledby={titleId}
+        onCancel={e => { e.preventDefault(); onClose() }}
+        onKeyDown={keepFocusIn}
+        onClick={closeOutside}
+      >
+        <div className="auth-head">
+          <Logo size={20} />
+          <Button variant="ghost" size="sm" icon={<IconClose size={14} />} onClick={onClose} aria-label="닫기" />
         </div>
-      </div>
+
+        <div className="auth-tabs">
+          <button type="button" className={`auth-tab ${isLogin ? 'active' : ''}`} aria-pressed={isLogin} onClick={() => switchMode('login')}>로그인</button>
+          <button type="button" className={`auth-tab ${!isLogin ? 'active' : ''}`} aria-pressed={!isLogin} onClick={() => switchMode('register')}>회원가입</button>
+        </div>
+
+        <h2 className="auth-title" id={titleId}>{isLogin ? '로그인' : '계정 만들기'}</h2>
+        <p className="auth-lead">{isLogin
+          ? '로그인하면 만든 회로가 기록에 남고 즐겨찾기를 쓸 수 있습니다.'
+          : '메일 주소와 비밀번호로 계정을 만듭니다. 만든 회로는 기록에 남고 즐겨찾기를 쓸 수 있습니다.'}</p>
+
+        <form onSubmit={handleSubmit} className="auth-form">
+          <Field
+            ref={emailRef}
+            label="이메일"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={setEmail}
+            placeholder="you@example.com"
+            required
+          />
+          <Field
+            label="비밀번호"
+            type="password"
+            autoComplete={isLogin ? 'current-password' : 'new-password'}
+            value={password}
+            onChange={setPassword}
+            placeholder={isLogin ? '' : '6자 이상'}
+            required
+            minLength={6}
+          />
+          {!isLogin && (
+            <Field
+              label="비밀번호 확인"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={setConfirm}
+              placeholder="한 번 더 입력"
+              required
+              error={confirm.length > 0 && confirm !== password ? '비밀번호가 일치하지 않습니다.' : ''}
+            />
+          )}
+
+          {!isLogin && (
+            <div className="auth-checklist">
+              <CheckItem done={emailOk}>메일 주소 형식</CheckItem>
+              <CheckItem done={password.length >= 6}>6자 이상</CheckItem>
+              <CheckItem done={confirm.length > 0 && confirm === password}>비밀번호 일치</CheckItem>
+            </div>
+          )}
+
+          {info && !error && (
+            <div className="auth-info" role="status">{info}</div>
+          )}
+
+          {error && (
+            <div className="auth-error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M7 4v3.5M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* a sentence of fact, no box to tick (whether the law asks for more is not settled: the user decides) */}
+          {!isLogin && (
+            <p className="auth-terms">
+              가입하면 <a href="/terms" target="_blank" rel="noopener">이용약관</a>이 적용되고, 개인정보는{' '}
+              <a href="/privacy" target="_blank" rel="noopener">개인정보 처리방침</a>에 따라 처리됩니다.
+            </p>
+          )}
+
+          {/* no password reset yet: the '비밀번호를 잊으셨나요?' link comes back with that flow */}
+          <button
+            type="submit"
+            className={`auth-submit ${success ? 'success' : ''}`}
+            disabled={loading || success}
+          >
+            {success ? (
+              <><IconCheck size={16} /> 로그인했습니다</>
+            ) : loading ? (
+              <><Spinner size={14} /> {isLogin ? '로그인 중' : '계정 만드는 중'}</>
+            ) : (
+              isLogin ? '로그인' : '계정 만들기'
+            )}
+          </button>
+        </form>
+      </dialog>
     </>
   )
 }
@@ -250,16 +296,10 @@ function CheckItem({ done, children }: { done: boolean; children: ReactNode }) {
 // ── Styles (tokens from src/styles/_sf-tokens.scss) ───────────────
 
 const STYLES = `
-.auth-overlay {
-  position: fixed; inset: 0; z-index: 200;
-  background: rgba(26, 22, 17, 0.45);
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-  animation: authFadeIn var(--sf-dur-fast) var(--sf-ease);
-}
 .auth-card {
-  width: 100%; max-width: 400px;
-  max-height: calc(100vh - 40px); overflow: auto;
+  width: calc(100% - 24px); max-width: 400px;
+  max-height: calc(100% - 24px); overflow: auto;
+  margin: auto;
   background: var(--sf-bg-2);
   border: 1px solid var(--sf-line-strong);
   border-radius: var(--sf-r-lg);
@@ -267,7 +307,9 @@ const STYLES = `
   padding: 16px 24px 24px;
   font-family: var(--sf-font-sans);
   color: var(--sf-fg);
+  animation: authFadeIn var(--sf-dur-fast) var(--sf-ease);
 }
+.auth-card::backdrop { background: rgba(26, 22, 17, 0.45); }
 .auth-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 16px;
@@ -327,6 +369,13 @@ const STYLES = `
 .auth-input.invalid:focus { box-shadow: 0 0 0 1px var(--sf-danger); }
 .auth-field-error { font-size: 12px; color: var(--sf-danger); }
 
+/* ── Sign-up: the terms and the privacy policy ── */
+.auth-terms {
+  margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--sf-fg-muted);
+  word-break: keep-all;
+}
+.auth-terms a { color: var(--sf-fg); text-decoration: underline; text-underline-offset: 2px; }
+
 /* ── Sign-up checklist ── */
 .auth-checklist { display: flex; gap: 14px; flex-wrap: wrap; margin-top: -4px; }
 .auth-check-item {
@@ -370,7 +419,6 @@ const STYLES = `
 @keyframes authFadeIn { from { opacity: 0 } to { opacity: 1 } }
 
 @media (max-width: 480px) {
-  .auth-overlay { padding: 12px; }
   .auth-card { padding: 12px 16px 20px; }
 }
 `
