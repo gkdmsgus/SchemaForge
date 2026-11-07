@@ -214,7 +214,7 @@ npx tsx scripts/check_pins.ts
 ```bash
 npx tsx scripts/check_styles.ts
 ```
-스타일시트 3항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다).
+스타일시트 4항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다). 고정폭 글꼴 묶음이 시스템 글꼴보다 앞에 페이지가 불러오는 한글 웹 글꼴을 두는지도 본다(없으면 Windows가 고정폭 줄의 한글을 굴림체로 채운다).
 
 ```bash
 npx tsx scripts/check_test_chain.ts

@@ -44,7 +44,8 @@ $sf-line-trace:   #b0a484;
 $sf-danger:       #b04826;
 
 $sf-font-sans: 'Space Grotesk', 'IBM Plex Sans KR', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-$sf-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+// Plex Sans KR sets the Hangul in mono lines: after the system fonts, Windows filled it with GulimChe (check_styles S4)
+$sf-font-mono: 'IBM Plex Mono', 'IBM Plex Sans KR', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
 // ── Webfonts ────────────────────────────────────────────────────────────────
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap');

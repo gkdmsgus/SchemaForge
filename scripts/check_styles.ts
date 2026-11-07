@@ -1,7 +1,8 @@
-// Checks S1-S3 on the style sheets, with no browser. S1 every partial in src/styles is imported by main.scss, and no
+// Checks S1-S4 on the style sheets, with no browser. S1 every partial in src/styles is imported by main.scss, and no
 // plain .css file sits in src unimported (three did, 3,600 lines, for months: sweep of 2026-11-07), S2 main.scss compiles,
 // S3 every animation named in a style sheet or in the screens' code has its @keyframes: a missing one gives no error and
 // the part simply stops moving (the schematic's pop-up fade and the diff pulse lean on names from the sheets).
+// S4 the mono font stack sets Hangul with a Korean web font the page loads, not the system's GulimChe.
 // Usage: npx tsx scripts/check_styles.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
@@ -53,6 +54,23 @@ for (const n of namesIn(css)) named.set(n, 'the style sheets')
 for (const { f, text } of code) for (const n of namesIn(text)) named.set(n, path.basename(f))
 const missing = [...named].filter(([n]) => !defined.has(n)).map(([n, f]) => `${n} (${f})`)
 check('S3 every animation has its @keyframes', named.size > 3 && !missing.length, missing.length ? missing.join(', ') : `${named.size} names, ${defined.size} defined`)
+
+// the families of a font stack, without quotes, and the web fonts index.html asks Google Fonts for
+const families = (stack: string) => stack.split(',').map(f => f.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+const tokenOf = (name: string) => new RegExp(`--sf-${name}:\\s*([^;]+);`).exec(css)?.[1].trim() ?? ''
+const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
+const webFonts = new Set([...html.matchAll(/href="https:\/\/fonts\.googleapis\.com\/css2\?([^"]+)"/g)]
+  .flatMap(m => [...m[1].matchAll(/family=([^:&]+)/g)].map(f => decodeURIComponent(f[1].replace(/\+/g, ' ')))))
+
+// S4. Hangul in a mono line is set by the first family that has it: with none loaded before the system ones, Windows
+// filled it from 'monospace' with GulimChe (설정 '자동 재시도', the 배치하기 tab: CDP font check of 2026-11-08)
+{
+  const mono = families(tokenOf('font-mono'))
+  const firstSystem = mono.findIndex(f => !webFonts.has(f))
+  const hangul = mono.slice(0, firstSystem < 0 ? mono.length : firstSystem).filter(f => / KR$/.test(f))
+  check('S4 the mono stack sets Hangul with a loaded Korean web font before any system font', hangul.length > 0,
+    `${mono.join(', ') || 'no --sf-font-mono'} · loaded: ${[...webFonts].join(', ')}`)
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nall style checks passed')
 process.exitCode = failed ? 1 : 0
