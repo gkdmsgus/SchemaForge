@@ -169,7 +169,7 @@ Windows는 포트를 100개씩 묶어 자기 몫으로 잡아 둘 수 있고(Hyp
 
 ## 검사
 
-`npm test`가 아래 검사 중 모델 없이 도는 것을 모두 차례로 돌린다 (깨끗한 체크아웃에서 대략 8분, KiCad 필요). 앞 검사가 실패하면 거기서 멈춘다. 브라우저로 화면을 쓰는 검사(`npm run dev`를 켠 채로), 배포 이미지 검사(Docker), 배포된 서버 검사는 넣지 않는다. 어느 검사가 어느 쪽인지는 `scripts/check_test_chain.ts`가 목록으로 지킨다. 기판을 읽는 검사가 쓰는 검사용 기판은 `scripts/make_check_boards.ts`가 데모 회로 4개를 SMD·THT로 만들어 `server/outputs/`에 기판마다 그 넷리스트와 함께 둔다(없거나 생성기보다 오래됐을 때만).
+`npm test`가 아래 검사 중 모델 없이 도는 것을 모두 차례로 돌린다 (깨끗한 체크아웃에서 대략 8분, KiCad 필요). 앞 검사가 실패하면 거기서 멈춘다. 브라우저로 화면을 쓰는 검사(`npm run test:browser`가 따로 돌린다), 배포 이미지 검사(Docker), 배포된 서버 검사는 넣지 않는다. 어느 검사가 어느 쪽인지는 `scripts/check_test_chain.ts`가 목록으로 지킨다. 기판을 읽는 검사가 쓰는 검사용 기판은 `scripts/make_check_boards.ts`가 데모 회로 4개를 SMD·THT로 만들어 `server/outputs/`에 기판마다 그 넷리스트와 함께 둔다(없거나 생성기보다 오래됐을 때만).
 
 ```bash
 python server/pcb/run_checks.py
@@ -235,6 +235,11 @@ cd server && npx tsx check_outputs_sweep.ts
 python server/pcb/check_deploy.py
 ```
 배포 이미지 10항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), skidl 코드가 띄운 자식 프로세스가 함께 정리되고(그 자식이 파이썬의 오류 출력을 쥐고 있어도 실행이 바로 끝나는지) 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
+
+```bash
+npm run test:browser     # 서버를 스스로 띄우고 끈다. 몇 개만: npm run test:browser -- drawer pcb_sketch
+```
+아래 브라우저 검사 전부를 한 번에 (대략 10분, KiCad와 playwright의 Chromium 필요, `npm test`에는 넣지 않음). `scripts/check_*.mjs` 중 배포된 서버용인 `check_live.mjs`를 뺀 것 모두와 `check_3d.ts`의 뷰어 항목(BASE)을 차례로 돌린다. 파일 이름으로 찾으므로 새 브라우저 검사는 저절로 들어간다. API와 vite 개발 서버를 OS가 주는 빈 포트에 띄운다(3000·8113은 쓰지 않는다. `SF_BROWSER_API_PORT`·`SF_BROWSER_VITE_PORT`나 `--api-port`·`--vite-port`로 정할 수도 있다). 키는 넘기지 않는다: `server/skidl_run.ts`의 `SECRET_ENV`에 맞는 이름은 환경과 `server/.env`(이름만 읽는다)에서 모두 빈 값이나 가짜 값으로 주고(dotenv는 이미 있는 변수를 덮어쓰지 않는다), 모델과 Supabase 주소는 닫힌 로컬 포트로 보낸다. 검사마다 결과 한 줄, 끝에 요약을 찍는다. 다 끝나거나 실패하거나 Ctrl+C를 눌러도 두 서버와 그 자식 프로세스를 모두 끄고, 두 포트에 남은 것이 없는지 확인한다(Windows에서는 이 명령이 강제로 끝나도 Node가 띄운 프로세스가 함께 끝난다). 종료 코드가 0이 아닌 검사, 0으로 끝났어도 FAIL 줄을 찍은 검사, 시간 한도(`SF_BROWSER_CHECK_MIN`, 기본 20분)를 넘긴 검사는 실패다. 서버에 KiCad가 없으면(`/health`의 kicad가 null) 기판을 만드는 `check_board_panel`·`check_3d`는 SKIP으로 적고 통과로 세지 않는다. 하나라도 통과하지 못하면 종료 코드 1이다. 기판 검사는 `npm test`처럼 `server/outputs/`에 파일을 쓴다. `--list`는 돌릴 검사 목록만 보인다.
 
 ```bash
 node scripts/check_live.mjs https://schemaforge.kro.kr
