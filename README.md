@@ -144,7 +144,7 @@ KICAD_CLI_PATH=...          # kicad-cli가 PATH에 없을 때
 ```
 
 ```bash
-npm run dev      # 화면(vite 3000) + API(8080) 동시 실행
+npm run dev      # 화면(vite 3000) + API(8002) 동시 실행
 ```
 
 `http://localhost:3000` 접속. 키 없이 보려면 `http://localhost:3000/?demo=motor` (다른 데모: `led`, `ne555`, `relay`, 일부러 망가뜨린 `led_bad`, `ne555_bad`, `relay_bad`).
@@ -153,7 +153,7 @@ npm run dev      # 화면(vite 3000) + API(8080) 동시 실행
 
 | 변수 | 쓰임 |
 |---|---|
-| `PORT` | API 포트 (기본 8080) |
+| `PORT` | API 포트 (기본 8002, vite 프록시도 이 값을 따른다) |
 | `OPENAI_BASE_URL` | OpenAI 호환 API 주소. 모든 모델 호출이 이 주소로 간다 (예: xAI Grok `https://api.x.ai/v1`, 키는 `OPENAI_API_KEY`에) |
 | `SF_MODEL` | 회로 코드와 ERC 자동 수정에 쓸 모델 (기본 `gpt-4o`). 화면 위쪽과 생성 단계에 이 이름이 나온다 |
 | `SF_MODEL_MINI` | 되묻기·설계 계획·AI 편집에 쓸 모델 (기본 `gpt-4o-mini`) |

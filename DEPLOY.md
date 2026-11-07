@@ -80,8 +80,8 @@ docker run --rm --cpus=0.1 --memory=512m --memory-swap=512m -p 8002:8002 schemaf
 ## 5. 로컬 개발
 
 ```bash
-cp server/.env.example server/.env   # 값 채우기 (PORT=8080: vite 프록시가 8080을 본다)
-npm run dev                          # 화면 3000 + API 8080
+cp server/.env.example server/.env   # 값 채우기 (vite 프록시는 PORT 값을 따른다)
+npm run dev                          # 화면 3000 + API 8002
 ```
 
 개발 모드(`NODE_ENV`가 production이 아님)에서는 0절의 제한이 없다.
