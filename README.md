@@ -197,7 +197,17 @@ cd server && npx tsx check_model_config.ts
 ```bash
 npx tsx scripts/check_api_client.ts
 ```
-화면 쪽 API 클라이언트 35항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양을 확인한다.
+화면 쪽 API 클라이언트 37항목 (`src/api.ts`, 서버 없이 fetch를 흉내 낸다). 로그인 저장, 가입 응답, 401에서 한 번 갱신하고 다시 보내기(동시 요청은 갱신 한 번), 거절 코드, 즐겨찾기·대화 응답 모양, 모든 요청이 화면과 같은 주소로 가는지(빌드 설정으로 서버 주소를 바꾸지 않는다)를 확인한다.
+
+```bash
+npx tsx scripts/check_pins.ts
+```
+버전 고정 7항목. `requirements.txt`의 모든 줄이 정확한 한 버전인지, 배포 이미지의 파이썬(젯슨 3.10, Render 3.13)마다 패키지가 한 번씩 깔리는지, 두 Dockerfile이 이 파일을 설치하는지, 루트의 tsx가 서버와 같은 버전인지, 서버가 선언한 패키지를 코드가 모두 쓰는지 확인한다. 이미지에 실제로 깔린 버전과의 대조는 `docker run --rm --entrypoint /venv/bin/pip <이미지> freeze`로 한다.
+
+```bash
+npx tsx scripts/check_styles.ts
+```
+스타일시트 3항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다).
 
 ```bash
 cd server && npx tsx check_demo_cache.ts
