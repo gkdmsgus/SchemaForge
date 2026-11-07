@@ -89,3 +89,81 @@ npm run dev                          # 화면 3000 + API 8113
 ## 6. 유료로 옮길 때 (Railway)
 
 `railway.json`이 남아 있어 Railway Hobby 플랜(월 5달러, 이미지 한도 100 GB)에서는 `railway up`으로 같은 이미지를 올릴 수 있다. Trial·Free 플랜은 이미지 한도가 4 GB라 이 이미지(압축 전 약 4.3 GB)가 넘을 수 있다 ([Railway 플랜 표](https://docs.railway.com/pricing/plans)).
+
+## 7. 젯슨 (집 서버)
+
+`https://schemaforge-app.duckdns.org`는 집의 젯슨(ARM64)에서 돈다. 이미지는 `Dockerfile.jetson`(KiCad 10 PPA, `KICAD_EXPECT` 10.0.8)으로 만들고, 앞에서 Caddy가 HTTPS를 맡는다. 컨테이너는 이 기계에만(`127.0.0.1:8002`) 열린다.
+
+### 빌드와 실행
+
+젯슨의 저장소 폴더에서 한다.
+
+```bash
+git pull
+scripts/jetson_run.sh              # 빌드 → 돌던 이미지를 schemaforge:jetson-prev로 → 새 컨테이너 → /health 확인
+scripts/jetson_run.sh --no-build   # 빌드 없이 지금 이미지로 다시 띄운다 (env 파일을 바꾼 뒤)
+scripts/jetson_run.sh --rollback   # schemaforge:jetson-prev로 돌아간다
+```
+
+새 이미지는 `/health`가 `"kicad":"10.0.8"`을 말해야 뜬 것으로 본다(2초 간격 60번, 120초까지). 뜨지 않으면 스크립트가 `schemaforge:jetson-prev`를 다시 띄우고 exit 1로 끝난다. 그때는 배포가 된 것이 아니다. 스크립트가 함께 보여 주는 `docker logs --tail 30 schemaforge`를 보고 고친 뒤 다시 돌린다. PPA에서 다른 KiCad가 오면 빌드가 멈추고 그 버전을 말한다. 그 버전으로 `python server/pcb/check_deploy.py --dockerfile Dockerfile.jetson`이 통과한 뒤에 `KICAD_EXPECT`를 바꾼다.
+
+컨테이너 제한은 메모리 2 GB(`MEMORY`), 코어 4개(`CPUS`), 프로세스 512개, Linux 권한 없음, 로그 10 MB × 3개다.
+
+### 키: `~/schemaforge.env`
+
+`chmod 600 ~/schemaforge.env`. 값은 이 문서에도 저장소에도 적지 않는다. 들어가는 이름은 이렇다 (뜻은 3절 표).
+
+- `OPENAI_API_KEY` (다른 회사 모델이면 `OPENAI_BASE_URL`, `SF_MODEL`, `SF_MODEL_MINI`, `SF_REASONING_EFFORT`도)
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+- `ALLOWED_EMAILS`
+- `FRONTEND_URL=https://schemaforge-app.duckdns.org`
+- `SF_JOB_SLOTS` (선택. 기판·DRC·3D·거버처럼 무거운 작업을 동시에 몇 개 돌릴지. 기본 4, 컨테이너의 코어 4개에 맞춘 값)
+- `MOUSER_API_KEY` (선택)
+
+`PORT`와 `NODE_ENV`는 파일에 있어도 스크립트가 8002와 production으로 덮는다. 파일을 고친 뒤에는 `scripts/jetson_run.sh --no-build`로 다시 띄운다.
+
+### Caddy: `~/Caddyfile.sf` 적용
+
+`~/Caddyfile.sf`는 지금 쓰는 `/etc/caddy/Caddyfile`에서 같은 젯슨의 다른 사이트(동글 숲 게임 주소 두 개, 친구 주소의 비밀번호 포함)를 그대로 두고, SchemaForge 사이트에 세 가지를 더한 것이다. 보안 헤더(HSTS 하루, `nosniff`, 다른 사이트 안에 넣지 못하게, CSP), Node보다 짧은 `keepalive 3s`(Node가 닫는 연결로 요청을 보내 가끔 나던 502를 막는다), 컨테이너가 내려가 있는 동안(다시 빌드, 재시작) 빈 502 대신 한국어 안내와 503이다.
+
+친구 주소의 `basic_auth` 줄이 지금 파일과 같은지 먼저 본다. 아무것도 나오지 않아야 한다.
+
+```bash
+diff <(sudo grep -A2 basic_auth /etc/caddy/Caddyfile) <(grep -A2 basic_auth ~/Caddyfile.sf)
+```
+
+그다음 백업, 복사, 검사, 다시 읽기 순서로 한다.
+
+```bash
+sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%Y%m%d-%H%M)
+sudo cp ~/Caddyfile.sf /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+```
+
+`validate`가 실패하면 reload하지 않고 백업을 되돌린다(`sudo cp /etc/caddy/Caddyfile.bak-<시각> /etc/caddy/Caddyfile`). reload 뒤에는 `systemctl status caddy`와 `curl -sI https://schemaforge-app.duckdns.org/ | grep -i strict-transport-security`로 새 설정이 쓰이는지 본다.
+
+### 지금 도는 커밋
+
+```bash
+curl -s https://schemaforge-app.duckdns.org/health
+```
+
+`"commit":"<짧은 해시>"`가 이미지를 만든 커밋이다(`scripts/jetson_run.sh`가 빌드할 때 넣는다). `"unknown"`이면 이 스크립트 없이(`--build-arg SF_COMMIT` 없이) 만든 젯슨 이미지, `null`이면 그 값이 없는 서버(Render 이미지, `npm run dev`)다. 이 항목이 생기기 전에 만든 이미지는 `docker exec schemaforge printenv SF_COMMIT`로 본다.
+
+### 옮긴 뒤 확인
+
+멈추지 않고 할 수 있는 확인 세 가지다.
+
+1. 불러온 설정이 파일과 같은지: `sudo caddy adapt --config /etc/caddy/Caddyfile | grep -o '"host":\[[^]]*\]'`와 `curl -s localhost:2019/config/apps/http/servers | grep -o '"host":\[[^]]*\]'`가 같은 주소 목록을 내야 한다.
+2. 재부팅 뒤에도 컨테이너가 뜨는지: `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' schemaforge`가 `unless-stopped`.
+3. 재부팅 뒤에 Caddy와 Docker가 켜지는지: `systemctl is-enabled caddy docker`가 둘 다 `enabled`.
+
+재부팅 시험은 사용하는 사람이 없는 시간에 한 번 한다(선택). `sudo reboot` 뒤 대략 3분 기다렸다가 확인한다.
+
+- `systemctl status caddy` (`--config /etc/caddy/Caddyfile`로 떠 있는지)
+- `docker ps` (schemaforge가 Up, `127.0.0.1:8002`)
+- `curl -s https://schemaforge-app.duckdns.org/health` (`"kicad":"10.0.8"`, `"commit"`)
+- 친구 주소가 비밀번호 없이 401을 주는지
+- `~/duckdns/duck2.log`에 재부팅 뒤 시각의 `OK`가 있는지
+- `node scripts/check_live.mjs https://schemaforge-app.duckdns.org` (이 PC에서)
