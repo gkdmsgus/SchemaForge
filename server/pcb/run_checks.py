@@ -51,6 +51,23 @@ def kicad_cli():
     return os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 
 
+def vendored_kicad_config(home, footprints=os.path.join(HERE, 'footprints')):
+    """A KICAD_CONFIG_HOME whose footprint table is the vendored libraries, as the images and the development server
+    write it (server/kicad_config.ts, the same text): this PC's own table made each DRC about 10 s and 1.4 GB."""
+    libs = sorted(d for d in os.listdir(footprints) if d.endswith('.pretty') and os.path.isdir(os.path.join(footprints, d)))
+    lines = ['(fp_lib_table', '  (version 7)'] + [
+        f'  (lib (name "{d[:-len(".pretty")]}")(type "KiCad")(uri "{os.path.join(footprints, d).replace(os.sep, "/")}")'
+        '(options "")(descr ""))' for d in libs] + [')', '']
+    os.makedirs(os.path.join(home, '10.0'), exist_ok=True)
+    with open(os.path.join(home, '10.0', 'fp-lib-table'), 'w', encoding='utf-8', newline='\n') as f:
+        f.write('\n'.join(lines))
+    return home
+
+
+# DRC's environment, set in main(): the vendored table unless KICAD_CONFIG_HOME names one
+DRC_ENV = None
+
+
 def build_netlist(name, work):
     shutil.copyfile(os.path.join(SERVER, 'test_circuits', name + '.py'), os.path.join(work, name + '.py'))
     subprocess.run([sys.executable, name + '.py'], cwd=work, check=True, capture_output=True)
@@ -141,9 +158,11 @@ def check_one(name, style, work, cli):
     # 5. KiCad DRC: loads, 0 violations, unconnected = connections still to route.
     # The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
     drc = os.path.join(work, f'{name}_{style}.drc.json')
-    p = subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--refill-zones', '--output', drc, pcb], capture_output=True)
+    t0 = time.time()
+    p = subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--refill-zones', '--output', drc, pcb], capture_output=True, env=DRC_ENV)
+    drc_s = f'{time.time() - t0:.1f} s'
     if p.returncode != 0 or not os.path.exists(drc):
-        res['5 drc'] = (False, p.stderr.decode('utf-8', 'replace')[-200:])
+        res['5 drc'] = (False, f'{drc_s} ' + p.stderr.decode('utf-8', 'replace')[-200:])
         unconn = viol = None
     else:
         d = json.load(open(drc, encoding='utf-8'))
@@ -152,7 +171,7 @@ def check_one(name, style, work, cli):
         expected = sum(len(n['nodes']) - 1 for n in nets if len(n['nodes']) > 1)
         # stage 2: the board is routed, so KiCad must find nothing left to connect
         res['5 drc'] = (not viol and unconn == 0,
-                        f'violations={viol} unconnected={unconn} (before routing: {expected})')
+                        f'violations={viol} unconnected={unconn} (before routing: {expected}) {drc_s}')
 
     # 6. gerbers + drill export, by the same function as the server's /generate_gerber
     gdir = os.path.join(work, f'{name}_{style}_gerber')
@@ -560,6 +579,10 @@ def main():
     cli = kicad_cli()
     work_root = args.keep or tempfile.mkdtemp(prefix='sf_checks_')
     os.makedirs(work_root, exist_ok=True)
+    global DRC_ENV
+    if not os.environ.get('KICAD_CONFIG_HOME'):
+        DRC_ENV = dict(os.environ, KICAD_CONFIG_HOME=vendored_kicad_config(os.path.join(work_root, 'kicad_config')))
+        print(f'DRC reads the vendored footprint table in {DRC_ENV["KICAD_CONFIG_HOME"]}')
 
     all_ok = True
     rows = []

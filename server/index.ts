@@ -18,6 +18,7 @@ import { runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
 import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, runningCommit, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
+import { vendoredKicadConfig } from './kicad_config'
 import { sweepOutputs } from './outputs_sweep'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
@@ -1273,6 +1274,15 @@ interface DrcResult {
   warnings?: number
 }
 
+/**
+ * DRC on the development PC reads the vendored footprint table, as the images do (kicad_config.ts): the PC's own table
+ * made each DRC about 10 s and 1.4 GB. A deployed server has its table from the image; a KICAD_CONFIG_HOME set is kept.
+ * The 3D and gerber exports read no footprint library and stay as they were.
+ */
+const DRC_CONFIG = !GUARD.deployed && !process.env.KICAD_CONFIG_HOME ? vendoredKicadConfig(join(process.cwd(), 'pcb', 'footprints')) : null
+const DRC_ENV = DRC_CONFIG ? { ...process.env, KICAD_CONFIG_HOME: DRC_CONFIG } : undefined
+if (DRC_CONFIG) console.log(`[kicad] DRC reads the vendored footprint table in ${DRC_CONFIG}`)
+
 /** Run KiCad's design rule check on a finished board. Never throws. */
 async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult> {
   const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
@@ -1281,7 +1291,7 @@ async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult>
   try {
     // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
     // The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal)
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal, DRC_ENV)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
@@ -1701,10 +1711,10 @@ app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Re
 const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
 
-function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal): Promise<void> {
+function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error(`${label} stopped`))
-    const proc = spawn(KICAD_CLI, args)
+    const proc = spawn(KICAD_CLI, args, env ? { env } : {})
     const onAbort = () => proc.kill('SIGKILL')
     signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''

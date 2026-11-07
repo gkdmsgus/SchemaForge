@@ -6,6 +6,7 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { better, clashText, decouplingPairs, describeBoard, heavyPowerNets, metricsOf, parseOhms, precheck, precheckNote, type Overrides } from './ai_layout'
+import { vendoredKicadConfig } from './kicad_config'
 
 const work = mkdtempSync(join(tmpdir(), 'sf_ailayout_'))
 copyFileSync(join('test_circuits', 'ne555_blink.py'), join(work, 'ne555_blink.py'))
@@ -145,9 +146,12 @@ if (c3) {
 //        Widening them one group at a time lowers the count and is judged better each step; the fully widened
 //        board passes KiCad DRC. NE555 has none.
 const kicad = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
+// the vendored footprint table, as the server's DRC reads it (kicad_config.ts)
+const kicadHome = process.env.KICAD_CONFIG_HOME || vendoredKicadConfig(join(process.cwd(), 'pcb', 'footprints'))
 const drcOf = (pcb: string): { ok: boolean; info: string } => {
   try {
-    execFileSync(kicad, ['pcb', 'drc', '--format', 'json', '--severity-all', '--output', pcb + '.drc.json', pcb])
+    execFileSync(kicad, ['pcb', 'drc', '--format', 'json', '--severity-all', '--output', pcb + '.drc.json', pcb],
+      kicadHome ? { env: { ...process.env, KICAD_CONFIG_HOME: kicadHome } } : {})
     const d = JSON.parse(readFileSync(pcb + '.drc.json', 'utf8'))
     const errors = (d.violations || []).filter((v: { severity: string }) => v.severity === 'error')
     const unconnected = (d.unconnected_items || []).length
