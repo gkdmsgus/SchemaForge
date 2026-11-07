@@ -29,7 +29,7 @@ const ROOT = path.resolve(import.meta.dirname, '..')
 /** scripts/check_*.mjs that stay out: check_live drives the deployed site (its default BASE), behind its proxy */
 export const LEFT_OUT = ['check_live.mjs']
 /** the checks that build a board, which needs KiCad (README: "KiCad 필요") */
-const NEEDS_KICAD = ['scripts/check_board_panel.mjs', 'scripts/check_3d.ts']
+const NEEDS_KICAD = ['scripts/check_board_panel.mjs', 'scripts/check_phone_width.mjs', 'scripts/check_3d.ts']
 
 export type BrowserCheck = { name: string, file: string, kicad: boolean }
 
