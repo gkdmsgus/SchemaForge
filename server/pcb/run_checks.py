@@ -419,12 +419,47 @@ def check_pin_number_bomb(work):
     return bomb_ok and edge_ok, f"{'; '.join(info)}; pads={pads} warnings={done['board']['warnings']} edge={warnings}"
 
 
+def _round_against_plain_loop(parts):
+    """One local-search round beside the per-candidate loop it replaced: (parts that moved, parts that took another move)."""
+    costs_of = placer._part_costs
+    want = {}
+
+    def pose(p):
+        return p['x'], p['y'], p['rot']
+
+    def recording(p, cands, boxes):
+        costs = costs_of(p, cands, boxes)
+        if len(cands) > 1:  # the current pose is costed alone
+            base = costs_of(p, [pose(p)], boxes)[0]
+            others = [placer.part_bbox(q) for q in parts if q is not p]
+            want[p['ref']] = pose(p)
+            best = None
+            for k, cand in enumerate(cands):
+                if costs[k] < base - 1e-6 and (best is None or costs[k] < best) \
+                        and not any(placer._overlap(placer.part_bbox(p, *cand), o, placer.GAP / 2) for o in others):
+                    best = costs[k]
+                    want[p['ref']] = cand
+        return costs
+
+    before = {p['ref']: pose(p) for p in parts}
+    placer._part_costs = recording
+    try:
+        placer._local_search_round(parts, {})
+    finally:
+        placer._part_costs = costs_of
+    return sum(pose(p) != before[p['ref']] for p in parts), [p['ref'] for p in parts if pose(p) != want[p['ref']]]
+
+
 def check_local_search(work):
     """The local search's candidate costs (one numpy step per rotation, its own rotation math) move exactly as hpwl() does
-    for every part at poses in all four rotations, and a round does not go back to a python call per candidate, which was
-    most of the placement time (2026-11-06): pad_positions runs once per other part, not once per candidate."""
+    for every part at poses in all four rotations, a round takes the move the per-candidate loop took (the cheapest free one,
+    the first of equal costs), and it does not go back to a python call per candidate, which was most of the placement time
+    (2026-11-06): pad_positions runs once per other part, not once per candidate."""
     net = build_netlist('ne555_blink', work)
     components, nets = parse_netlist(open(net, encoding='utf-8').read())
+    # the shelf layout has moves to take; after force_place a round has none, and a check on those would pass on nothing
+    shelf, _, _ = build_board(components, nets, 'tht')
+    moved, wrong = _round_against_plain_loop(shelf)
     parts, _, _ = build_board(components, nets, 'tht')
     placer.force_place(parts, nets)
     worst = 0.0
@@ -452,7 +487,8 @@ def check_local_search(work):
     finally:
         placer.pad_positions = counted
     limit = len(parts) * (len(parts) - 1)
-    return worst < 1e-6 and 0 < calls <= limit, f'cost off hpwl by {worst:.2e} mm; pad_positions {calls} calls, limit {limit}'
+    return worst < 1e-6 and 0 < calls <= limit and moved > 0 and not wrong, \
+        f'cost off hpwl by {worst:.2e} mm; pad_positions {calls} calls, limit {limit}; {moved} parts moved, other move on {wrong}'
 
 
 def check_templates():
