@@ -303,7 +303,7 @@ npx tsx scripts/check_board_checks.ts
 ```bash
 npx tsx scripts/check_circuit_validation.ts
 ```
-회로도 위 회로 검사 17항목 (`src/lib/circuitValidation.ts`, python과 skidl 필요, 서버 없음). 데모 회로 4개는 `/demo_result`처럼 skidl 파일을 돌려 서버의 넷리스트 읽기로 읽는다. 정상 데모가 통과하는지, 부품 하나를 빼면 오류나 경고가 나는지, "LED 저항 없음"이 LED 줄을 따라가는지(보호 다이오드·스위치·릴레이 접점 너머의 저항은 통과, 저항이 하나도 없으면 오류), 이름으로 저장된 핀(LED A·K, 트랜지스터 B·G)을 핀 이름 표로 읽고 표에 없는 이름은 짐작하지 않는지("LED 저항 없음"과 "트랜지스터 제어 핀이 떠 있음" 둘 다) 확인한다.
+회로도 위 회로 검사 18항목 (`src/lib/circuitValidation.ts`, python과 skidl 필요, 서버 없음). 데모 회로 4개는 `/demo_result`처럼 skidl 파일을 돌려 서버의 넷리스트 읽기로 읽는다. 정상 데모가 통과하는지, 부품 하나를 빼면 오류나 경고가 나는지, "LED 저항 없음"이 LED 줄을 따라가는지(보호 다이오드·스위치·릴레이 접점 너머의 저항은 통과, 저항이 하나도 없으면 오류), 이름으로 저장된 핀(LED A·K, 트랜지스터 B·G)을 핀 이름 표로 읽고 표에 없는 이름은 짐작하지 않는지("LED 저항 없음"과 "트랜지스터 제어 핀이 떠 있음" 둘 다), 한 핀이 번호와 이름으로 서로 다른 넷에 들어 있으면 "핀의 넷이 충돌합니다"로 잡는지 확인한다.
 
 ```bash
 npx tsx scripts/check_code_view.ts

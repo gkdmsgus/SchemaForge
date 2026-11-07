@@ -42,12 +42,20 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
 
   if (components.length && !nets.some(n => /^(GND|AGND|DGND|PGND)$/i.test(n.name))) add({ code: 'CIR005', severity: 'error', title: '기준 접지가 없습니다', message: 'GND 넷이 없어 전압의 기준점과 귀환 경로를 확인할 수 없습니다.', suggestion: '전원 음극과 회로의 귀환 경로를 GND 넷으로 연결하세요.', chat: 'GND 넷이 없어. 배터리나 전원의 − 단자가 있는 넷의 이름을 GND로 바꿔줘. 연결된 핀은 그대로 둬.', refs: [], nets: [] })
 
-  const pinNets = new Map<string, string[]>()
+  // one pin by its number in one net and by its name in another (D1.1 and D1.A) is one pin on two nets: read through the
+  // pin-name table as the board generator reads it (2026-11-08), which would otherwise put the pad on one of them unasked.
+  // The same pin twice in one net is on one net
+  const kindOf = new Map(components.map(c => [c.ref, c.name]))
+  const pinNets = new Map<string, Set<string>>(), written = new Map<string, Set<string>>()
   for (const net of nets) for (const node of net.nodes) {
-    const key = `${node.ref}.${node.pin}`
-    pinNets.set(key, [...(pinNets.get(key) || []), net.name])
+    const key = `${node.ref}.${pinNumber(kindOf.get(node.ref), String(node.pin))}`
+    pinNets.set(key, (pinNets.get(key) ?? new Set()).add(net.name))
+    written.set(key, (written.get(key) ?? new Set()).add(`${node.ref}.${node.pin}`))
   }
-  for (const [pin, names] of pinNets) if (names.length > 1) add({ code: 'CIR006', severity: 'error', title: '핀의 넷이 충돌합니다', message: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있습니다.`, suggestion: '이 핀은 하나의 넷에만 남기세요.', chat: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있어. ${pin}을 맞는 넷 하나에만 남겨줘.`, refs: [pin.split('.')[0]], nets: names })
+  for (const [key, on] of pinNets) if (on.size > 1) {
+    const pin = [...written.get(key)!].join('/'), names = [...on]
+    add({ code: 'CIR006', severity: 'error', title: '핀의 넷이 충돌합니다', message: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있습니다.`, suggestion: '이 핀은 하나의 넷에만 남기세요.', chat: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있어. ${pin}을 맞는 넷 하나에만 남겨줘.`, refs: [key.split('.')[0]], nets: names })
+  }
 
   // a part counts as a resistor by its type or its reference, as it did here: an edit may have saved R3 under a name of its own
   const resistors = new Set(components.filter(c => c.name === 'R' || /^R\d+$/i.test(c.ref)).map(c => c.ref))

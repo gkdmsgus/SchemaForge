@@ -73,6 +73,10 @@ const cir102 = (c: NetGraph) => validateCircuit(c).filter(i => i.code === 'CIR10
 const driver = (kind: string, b: string, c: string, e: string, base = ['BASE', 'R1.2', `Q1.${b}`]) =>
   g([bat('9V'), ['R1', 'R', '1k'], ['R2', 'R', '470'], ['D1', 'LED', 'RED'], ['Q1', kind, ''], ['J1', 'Conn_01x02', '']],
     ['VCC', 'BT1.+', 'R2.1'], ['A', 'R2.2', 'D1.A'], ['K', 'D1.K', `Q1.${c}`], ['IN', 'J1.1', 'R1.1'], base, ['GND', `Q1.${e}`, 'BT1.-', 'J1.2'])
+// one pin by number in one net and by name in another is one pin on two nets, as the board generator reads it (2026-11-08);
+// the same pin twice in one net, or a name the table does not know, is no conflict
+const cir006 = (c: NetGraph) => validateCircuit(c).filter(i => i.code === 'CIR006').map(i => `${i.refs.join()} ${i.nets.join()}`)
+const ledWith = (...nets: string[][]) => g([bat('9V'), ['R1', 'R', '680'], ['D1', 'LED', 'RED']], ['VCC', 'BT1.1', 'R1.1'], ...nets)
 const checks: [string, boolean][] = [
   ['normal motor passes', validateCircuit(motor).length === 0],
   ['normal LED passes', validateCircuit(led).length === 0],
@@ -98,6 +102,10 @@ const checks: [string, boolean][] = [
       && !cir102(driver('Q_NMOS', 'G', 'D', 'S')).length && cir102(driver('Q_NPN', 'B', 'C', 'E', ['BASE', 'Q1.B'])).join() === 'Q1'],
   ['a transistor pin name the table does not know is not guessed: no CIR102 for it',
     !cir102(driver('Q_NPN', 'BASE', 'C', 'E')).length && !cir102(driver('Q_NMOS', 'G', 'DRAIN', 'S', ['BASE', 'R1.2'])).length],
+  ['one pin by number and by name on two nets is a conflict; twice on one net or an unknown name is not',
+    cir006(ledWith(['A', 'R1.2', 'D1.1'], ['GND', 'D1.A', 'D1.2', 'BT1.2'])).join() === 'D1 A,GND'
+      && !cir006(ledWith(['A', 'R1.2', 'D1.1', 'D1.A'], ['GND', 'D1.2', 'BT1.2'])).length
+      && !cir006(ledWith(['A', 'R1.2', 'D1.1'], ['GND', 'D1.ANODE', 'D1.2', 'BT1.2'])).length],
 ]
 
 for (const [name, ok] of checks) console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}`)
