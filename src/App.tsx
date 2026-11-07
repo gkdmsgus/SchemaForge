@@ -310,6 +310,18 @@ export default function App() {
     return false
   }
 
+  /**
+   * The model itself failed on /clarify or /plan (no credit 503, busy 429, no answer 504, no connection 503: server
+   * model.ts modelFailure): its words go in the error box and the steps stop. Going on asked the same model again, so
+   * a stalled one kept a spinner up about 5.5 minutes and ended in English (review of 2026-11-07). 재시도 asks again.
+   */
+  async function modelDown(res: Response, p: string, stale: () => boolean): Promise<boolean> {
+    if (res.status !== 429 && res.status !== 503 && res.status !== 504) return false
+    const why = await errorText(res)
+    if (!stale()) { lastPrompt.current = p; setError({ text: why }) }
+    return true
+  }
+
   async function fetchPlan(prompt: string) {
     stopPlan()
     const seq = planSeq.current
@@ -325,7 +337,7 @@ export default function App() {
         signal: abort.signal,
       })
       if (stale()) return
-      if (await refused(res, { prompt, plan: true }, stale)) { if (!stale()) setPlan(null); return }
+      if (await refused(res, { prompt, plan: true }, stale) || await modelDown(res, prompt, stale)) { if (!stale()) setPlan(null); return }
       // any other failure: the plan is optional, so generation goes on without it
       if (!res.ok) throw new Error('plan request failed')
       const data = await res.json()
@@ -376,8 +388,8 @@ export default function App() {
           signal: abort.signal,
         })
         if (stale()) return
-        // refused: no plan or generation after it (they would be refused too)
-        if (await refused(cRes, { prompt: p, typeKey, skipCache }, stale)) return
+        // refused, or the model failed: no plan or generation after it (they would be refused, or fail, too)
+        if (await refused(cRes, { prompt: p, typeKey, skipCache }, stale) || await modelDown(cRes, p, stale)) return
         if (cRes.ok) {
           const cData = await cRes.json() as ClarifyApiResponse
           if (stale()) return

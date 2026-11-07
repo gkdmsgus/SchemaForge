@@ -348,13 +348,24 @@ async function main() {
     const busyError = String((await busy.json() as { error?: string }).error ?? '')
     check('L7b model busy: the plan answers 429 and asks to try again shortly', busy.status === 429 && busyError === MODEL_BUSY,
       `${busy.status} ${busyError}`)
+    const busyAsk = await post(grok.base, '/clarify', { description: 'LED 하나를 켜는 회로' })
+    const busyAskBody = await busyAsk.json() as { error?: string; clear?: boolean }
 
     // L8b. the same on the wire: an answer the SDK may retry (500) is asked twice from a route, not three times
     failWith = { status: 500, error: { message: 'down', type: 'server_error', code: 'server_error' }, retry: true }
     n = seen.length
     const down = await post(grok.base, '/plan', { description: 'LED 하나를 켜는 회로' })
     check('L8b a retryable failure is asked once more, no further', down.status === 500 && at(n).length === 2, `${down.status} after ${at(n).length} call(s)`)
+    const downAsk = await post(grok.base, '/clarify', { description: 'LED 하나를 켜는 회로' })
+    const downAskBody = await downAsk.json() as { error?: string; clear?: boolean }
     failWith = null
+
+    // L7c. the questions step says a model failure it knows as the plan does, so the screen stops there: it answered
+    // "no questions" and the plan and the circuit asked the same model again, about 5.5 minutes for a stalled one before
+    // an English error (review of 2026-11-07). Any other failure still lets the steps go on (the questions are optional)
+    check('L7c the questions: a known model failure is told (429 busy), any other is "no questions"', busyAsk.status === 429
+      && busyAskBody.error === MODEL_BUSY && downAsk.status === 200 && downAskBody.clear === true,
+      `busy ${busyAsk.status} ${JSON.stringify(busyAskBody).slice(0, 60)} | 500 ${downAsk.status} ${JSON.stringify(downAskBody)}`)
   } finally {
     await stopServer(grok.proc)
   }

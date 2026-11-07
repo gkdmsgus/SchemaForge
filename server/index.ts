@@ -676,6 +676,11 @@ app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Requ
     res.json({ clear: false, questions: parsed.questions.slice(0, 4) })
   } catch (e) {
     console.error('/clarify error:', e)
+    // a failure that would stop the plan and the circuit too (no credit, busy, no answer, no connection) is said now, as
+    // /plan says it: answered "no questions", the steps asked the same model twice more, about 5.5 minutes for a stalled
+    // one (review of 2026-11-07). Anything else: the questions are optional, so the steps go on
+    const f = modelFailure(e)
+    if (f) return res.status(f.status).json({ error: f.text })
     res.json({ clear: true })
   }
 })

@@ -14,7 +14,10 @@
 // asked about (under the questions step its 불러오기 opened the saved circuit and the steps ran on, and that generation then
 // took the screen; its 새로 생성 did nothing), P12 a generation stopped too late for its failure (500, 403, 401) says nothing
 // and asks for no login, on the home screen the person went back to, P13 with no questions step (a circuit type picked,
-// or the questions off) a double click asks for one plan (the second one aborted the first, whose model call ran on).
+// or the questions off) a double click asks for one plan (the second one aborted the first, whose model call ran on),
+// P14-P15 a plan or questions the model did not answer (504) say so in the error box and stop the steps, and 재시도 makes
+// that circuit, while any other plan failure still generates without it (the plan's 504 was dropped and the same model
+// asked again: about 5.5 minutes of a spinner, then an English error, review of 2026-11-07).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -267,6 +270,40 @@ try {
   await makeTwice(p13.p)
   const came13 = await approve(p13.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
   check('P13 with no questions step a double click asks for one plan', came13 && p13.held.plans === 1 && p13.held.stopped === 0, `/plan ${p13.held.plans}, stopped ${p13.held.stopped}, plan shown ${came13}`)
+
+  // P14-P15: the model fails on the plan or on the questions, as the server says it (model.ts modelFailure)
+  const SILENT = 'AI 모델이 응답하지 않습니다. 잠시 뒤에 다시 시도해 주세요.'
+  const failing = async (settings, route, status) => {
+    const p = await ctx.newPage()
+    await p.addInitScript(s => localStorage.setItem('sf_settings', JSON.stringify(s)), settings)
+    const held = { generations: [], plans: 0 }
+    await fake(p, r => { held.generations.push(r.request().postDataJSON()?.description); return done(r) })
+    await p.route(/\/plan$/, r => { held.plans++; return route === 'plan' ? r.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: status === 500 ? 'plan parse failed' : SILENT }) }) : json(r, PLAN) })
+    await p.route(/\/clarify$/, r => (route === 'clarify' ? r.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: SILENT }) }) : json(r, { clear: true })))
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    return { p, held }
+  }
+  const p14 = await failing({ clarify: false, plan: true }, 'plan', 504)
+  await submit(p14.p, '모델이 멈춘 계획의 전원 회로')
+  const said14 = await p14.p.getByText(SILENT).waitFor({ timeout: 10000 }).then(() => true, () => false)
+  await p14.p.waitForTimeout(500)
+  const sentBefore = p14.held.generations.length
+  await p14.p.getByRole('button', { name: '재시도', exact: true }).click({ timeout: 3000 }).catch(() => {})
+  await p14.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 10000 }).catch(() => {})
+  check('P14 a plan the model did not answer (504) is said in the error box and starts no generation; 재시도 makes that circuit',
+    said14 && sentBefore === 0 && p14.held.generations[0] === '모델이 멈춘 계획의 전원 회로',
+    `said ${said14}, generations before 재시도 ${sentBefore}, after: ${JSON.stringify(p14.held.generations)}`)
+  const p14b = await failing({ clarify: false, plan: true }, 'plan', 500)
+  await submit(p14b.p, '계획을 읽지 못한 전원 회로')
+  const went14 = await p14b.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 10000 }).then(() => true, () => false)
+  check('P14b any other plan failure (500) still generates without the plan', went14 && p14b.held.generations.length === 1, `${p14b.held.generations.length} generations`)
+
+  const p15 = await failing({ clarify: true, plan: true }, 'clarify', 504)
+  await submit(p15.p, '모델이 멈춘 질문의 전원 회로')
+  const said15 = await p15.p.getByText(SILENT).waitFor({ timeout: 10000 }).then(() => true, () => false)
+  await p15.p.waitForTimeout(500)
+  check('P15 questions the model did not answer (504) are said in the error box, with no plan or generation after them',
+    said15 && p15.held.plans === 0 && p15.held.generations.length === 0, `said ${said15}, /plan ${p15.held.plans}, generations ${p15.held.generations.length}`)
 } finally {
   await browser.close()
 }
