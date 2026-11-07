@@ -1,9 +1,8 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   BoardFrame, BoardModel, BoardPart, BoardPad, BoardTrack, BoardVia, RouteEvent, DrcResult, AiRound, SilkItem,
 } from '../types'
 import Board3D from './Board3D'
-import KiCad3DViewer from './KiCad3DViewer'
 import { Stamp, StatusChip } from './StatusUi'
 import type { Camera } from '../lib/board3d'
 import { HUMAN_ROW, STATE_TONE, TONE_COLOR, checkRows, drcCounts, overall, stateWord, summarize, type Tone } from '../lib/boardChecks'
@@ -12,6 +11,29 @@ import { KIND_LABEL, MARK_COLOR, boardMarks, confirmReviews, loadReviewed, revie
 import { assemblyRefs, clickAction, loadAssemblyView, loadPlaced, placedKey, saveAssemblyView, savePlaced } from '../lib/assembly'
 import { buildBom, type BomLine } from '../lib/bom'
 import { ercFixes, graphFromBoard, opFixes, withFixes } from '../lib/fixes'
+
+/**
+ * The 3D viewer's own file could not be loaded. A tab open across a deploy asks for a chunk name that is gone, the server
+ * answers with the app's page, and the import fails: uncaught, the error boundary took the whole result screen
+ * (review of 2026-11-06). The assembly view goes to its 2D drawing by onError, as for a model that does not load.
+ */
+function ViewerFileFailed({ onError }: { onError?: () => void }) {
+  useEffect(() => { onError?.() }, [])
+  return (
+    <div data-testid="kicad-3d" data-state="error" role="alert" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+      color: '#c0392b', fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>3D 모델을 불러오지 못했습니다. 새로고침해 주세요.</div>
+  )
+}
+
+// three.js is a quarter of the first download and only a finished board needs it, so the viewer comes in a file of its own
+const KiCad3DViewer = lazy(() => import('./KiCad3DViewer').catch(e => {
+  console.error('3D viewer file failed to load:', e)
+  return { default: ViewerFileFailed }
+}))
+const VIEWER_LOADING = (
+  <div data-testid="kicad-3d" data-state="loading" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+    color: '#6b7079', fontFamily: 'var(--sf-font-mono)', fontSize: 12 }}>KiCad 실제 3D 모델 불러오는 중…</div>
+)
 
 // Draws the real board model (mm) streamed by /generate_pcb_stream and plays it
 // back: placement frames first, then routing events one connection at a time.
@@ -876,9 +898,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {/* 배치하기 in 3D: KiCad's own model, a click on a part ticks it */}
       {asm3d && placed && pcbFilename && (
         <div ref={pane3d} data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
-          <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={[...placedRefs]} focus={focusRefs ?? []}
-            marks={marks3d} layout={layout3d} hoverLabel={hoverLabel} view={topView ? 'top' : 'iso'} resetKey={camReset} margin={1.08}
-            onPick={togglePlaced} onLoad={(refs, ok) => { setModelled3d(refs); setMarksIn3d(ok) }} onError={() => setGlbFailed(true)} />
+          <Suspense fallback={VIEWER_LOADING}>
+            <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={[...placedRefs]} focus={focusRefs ?? []}
+              marks={marks3d} layout={layout3d} hoverLabel={hoverLabel} view={topView ? 'top' : 'iso'} resetKey={camReset} margin={1.08}
+              onPick={togglePlaced} onLoad={(refs, ok) => { setModelled3d(refs); setMarksIn3d(ok) }} onError={() => setGlbFailed(true)} />
+          </Suspense>
           {low3d ? <HintChip text={hint3d} /> : (
             <div style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
               padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
@@ -908,8 +932,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
           onPointerUp={() => { drag3d.current = null }}
           onWheel={real3d && placed ? undefined : e => setZoom3d(z => Math.min(8, Math.max(0.4, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))))}>
           {real3d && placed && pcbFilename
-            ? <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={reviewedRefs} marks={marks3d} layout={layout3d}
-                hoverLabel={hoverLabel} onPick={pickFrom3d} />
+            ? <Suspense fallback={VIEWER_LOADING}>
+                <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={reviewedRefs} marks={marks3d} layout={layout3d}
+                  hoverLabel={hoverLabel} onPick={pickFrom3d} />
+              </Suspense>
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}

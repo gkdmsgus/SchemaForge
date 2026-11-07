@@ -4,6 +4,7 @@ import {
   getSessions, deleteSession as dbDeleteSession, deleteAllSessions, getFavorites, removeFavorite, renameSession,
   type AuthUser, type DbFavorite,
 } from '../api'
+import { savedGraph } from '../lib/graphEdit'
 
 interface StoredEntry {
   id: number
@@ -302,7 +303,7 @@ export default function SideDrawer({ open, onClose, onLoadSession, user }: SideD
                     msgCount={s.messages?.length || 0}
                     dbId={s._dbId}
                     onClick={() => {
-                      onLoadSession({ prompt: s.prompt, graph: s.result?.graph ?? undefined, circuitName: s.prompt, messages: s.messages || [], result: s.result, dbId: s._dbId })
+                      onLoadSession({ prompt: s.prompt, graph: savedGraph(s), circuitName: s.prompt, messages: s.messages || [], result: s.result, dbId: s._dbId })
                       onClose()
                     }}
                     onDelete={(e) => deleteSaved(e, s.id)}

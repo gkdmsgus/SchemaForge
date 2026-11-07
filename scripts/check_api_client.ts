@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'api.ts')
 const OUT = path.join(os.tmpdir(), `sf_api_under_test_${process.pid}.mts`)
-fs.writeFileSync(OUT, fs.readFileSync(SRC, 'utf8').replace('import.meta.env.VITE_API_URL', 'undefined'))
+fs.writeFileSync(OUT, fs.readFileSync(SRC, 'utf8').replace('import.meta.env?.VITE_API_URL', 'undefined'))
 
 // ── stubs ──
 const store = new Map<string, string>()

@@ -55,11 +55,13 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
   const tipEl = useRef<HTMLDivElement>(null)
   const tipAt = useRef<{ x: number; y: number } | null>(null)     // pointer in the viewer, for the tooltip
   const placeCamera = useRef<(v: 'iso' | 'top') => void>(() => {})
+  const requestDraw = useRef<() => void>(() => {})
   const latest = useRef({ onPick, onLoad, onError, hoverLabel, marks, layout, view, margin })
   latest.current = { onPick, onLoad, onError, hoverLabel, marks, layout, view, margin }
   // a green tint is lost on a green board, so checked parts get a badge (as in 2D) instead
   const okRefs = checked.filter(r => modelled.includes(r)).sort()
   const focusKey = focus.join(',')
+  const marksKey = marks.map(m => `${m.key} ${m.label} ${m.x} ${m.y}`).join(',')
   const tip = hover ? hoverLabel?.(hover) ?? null : null
 
   // tint: the picked part violet, the part under the mouse and the parts lit from outside amber; light enough
@@ -81,7 +83,11 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
         }
       })
     }
+    requestDraw.current()
   }, [state, selected, hover, focusKey])
+
+  // a new badge or label is placed with the next draw
+  useEffect(() => { if (state === 'ready') requestDraw.current() }, [state, okRefs.join(','), marksKey])
 
   useEffect(() => { if (state === 'ready') placeCamera.current(view) }, [state, view, resetKey])
 
@@ -104,7 +110,10 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.0
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.PCFShadowMap
+    // nothing in the scene moves but the camera, and the key light's shadows do not depend on it: drawn once, when the model
+    // is in, and again if a GPU reset takes them
+    renderer.shadowMap.autoUpdate = false
     // CSS size follows the panel; the drawing buffer is panel size x devicePixelRatio. Without this the
     // canvas shows at DPR x its CSS size on HiDPI screens and only its top-left part is visible.
     renderer.domElement.style.width = '100%'
@@ -129,7 +138,14 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     controls.minDistance = 0.01
     controls.maxDistance = 10000
 
+    // Drawn only when something changed, since this view stays open for the tens of minutes of hand soldering. A frame each,
+    // shadow pass included, took the whole main thread of an Iris Xe laptop with the page untouched (review of 2026-11-06).
+    // A frame request can also be for the hover check alone: a mouse moving over the board draws nothing until a part lights up
     let frame = 0
+    let needsDraw = false
+    const requestFrame = () => { if (!frame) frame = requestAnimationFrame(onFrame) }
+    const draw = () => { needsDraw = true; requestFrame() }
+    requestDraw.current = draw
     let disposed = false
     let model: THREE.Object3D | null = null
     let boxes = new Map<string, THREE.Box3>()                     // each part's box, for picking near a part
@@ -143,12 +159,13 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       renderer.setSize(w, h, false)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
+      draw()
     }
     const observer = new ResizeObserver(resize)
     observer.observe(el)
     resize()
 
-    // badges and marks follow the board: project each one every frame (hidden behind the camera)
+    // badges and marks follow the board: project each one with every draw (hidden behind the camera)
     const tmp = new THREE.Vector3()
     const put = (node: HTMLDivElement | null | undefined, at: THREE.Vector3 | null) => {
       if (!node) return
@@ -226,7 +243,7 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       return first ? refOf(first.object) ?? nearPart(first) : null
     }
 
-    // the part under the mouse lights up (when the page gives it a label); worked out once per frame at most
+    // the part under the mouse lights up (when the page gives it a label); worked out once per animation frame at most
     let pointer: { x: number; y: number } | null = null
     let hoverDirty = false, hoverNow: string | null = null
     const pressed = new Set<number>()
@@ -239,16 +256,24 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       renderer.domElement.style.cursor = ref ? 'pointer' : ''
       setHover(ref)
     }
-    controls.addEventListener('change', () => { if (pointer) hoverDirty = true })
+    controls.addEventListener('change', () => {
+      if (pointer) hoverDirty = true
+      draw()
+    })
 
-    const animate = () => {
-      controls.update()
-      renderer.render(scene, camera)
-      placeOverlays()
+    function onFrame() {
+      frame = 0
+      if (needsDraw) {
+        needsDraw = false
+        // true: still sliding after a drag (damping), so the next frame draws too
+        if (controls.update()) needsDraw = true
+        renderer.render(scene, camera)
+        placeOverlays()
+      }
       if (hoverDirty) updateHover()
-      frame = requestAnimationFrame(animate)
+      if (needsDraw) requestFrame()
     }
-    animate()
+    draw()
 
     let down: { x: number; y: number; slop: number } | null = null
     const onDown = (e: PointerEvent) => {
@@ -256,10 +281,12 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       // left button only (right drags pan, the wheel zooms); a second finger makes it a pinch, not a tap
       down = e.button === 0 && pressed.size === 1 ? { x: e.clientX, y: e.clientY, slop: e.pointerType === 'mouse' ? 5 : 10 } : null
       hoverDirty = true
+      requestFrame()
     }
     const onUp = (e: PointerEvent) => {
       pressed.delete(e.pointerId)
       hoverDirty = true
+      draw()
       if (!down || e.button !== 0) { if (!pressed.size) down = null; return }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > down.slop
       down = null
@@ -269,19 +296,27 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     }
     const onCancel = (e: PointerEvent) => { pressed.delete(e.pointerId); down = null }
     const onMove = (e: PointerEvent) => {
+      // a drag too short to cross the controls' change threshold (1 mrad) still turns the board
+      if (pressed.size) draw()
       if (e.pointerType !== 'mouse') return
       pointer = { x: e.clientX, y: e.clientY }
       hoverDirty = true
+      requestFrame()
       const r = el.getBoundingClientRect()
       tipAt.current = { x: e.clientX - r.left, y: e.clientY - r.top }
       placeTip(el, tipEl.current, tipAt.current)
     }
-    const onLeave = () => { pointer = null; tipAt.current = null; hoverDirty = true }
+    const onLeave = () => { pointer = null; tipAt.current = null; hoverDirty = true; requestFrame() }
     renderer.domElement.addEventListener('pointerdown', onDown)
     renderer.domElement.addEventListener('pointerup', onUp)
     renderer.domElement.addEventListener('pointercancel', onCancel)
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerleave', onLeave)
+    renderer.domElement.addEventListener('wheel', draw, { passive: true })
+    // the GPU reset or the browser gave the context back: three.js sets it up again, but the shadow map is gone (the board
+    // came back flat, 8% of the view's pixels off: 2026-11-07), and nothing else asks for a draw
+    const onRestored = () => { renderer.shadowMap.needsUpdate = true; draw() }
+    renderer.domElement.addEventListener('webglcontextrestored', onRestored)
     // dev builds: where a part's centre lands on screen, so UI checks can click it
     if (import.meta.env.DEV) {
       Object.assign(el, {
@@ -321,6 +356,7 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
       camera.up.set(0, 1, 0)
       camera.updateProjectionMatrix()
       controls.update()
+      draw()
     }
 
     new GLTFLoader().load(
@@ -403,6 +439,7 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
         fit = { center, radius }
         controls.minDistance = radius * 0.35
         controls.maxDistance = radius * 8
+        renderer.shadowMap.needsUpdate = true
         placeCamera.current(latest.current.view)
         el.dataset.marksPlaced = toModel ? '1' : '0'
         setModelled([...parts.keys()].sort())
@@ -420,11 +457,14 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
     return () => {
       disposed = true
       cancelAnimationFrame(frame)
+      requestDraw.current = () => {}
       renderer.domElement.removeEventListener('pointerdown', onDown)
       renderer.domElement.removeEventListener('pointerup', onUp)
       renderer.domElement.removeEventListener('pointercancel', onCancel)
       renderer.domElement.removeEventListener('pointermove', onMove)
       renderer.domElement.removeEventListener('pointerleave', onLeave)
+      renderer.domElement.removeEventListener('wheel', draw)
+      renderer.domElement.removeEventListener('webglcontextrestored', onRestored)
       placeCamera.current = () => {}
       partsRef.current = new Map()
       anchorsRef.current = new Map()
@@ -437,6 +477,8 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
         materials.forEach(m => m.dispose())
       })
       renderer.dispose()
+      // dispose keeps the context: it stayed until Chrome dropped the oldest at 16, about 127 MB of GPU memory each (2026-11-06)
+      renderer.forceContextLoss()
       renderer.domElement.remove()
     }
   }, [pcbFilename, version])

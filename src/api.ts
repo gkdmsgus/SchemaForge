@@ -2,7 +2,8 @@
 
 import type { ChatAction, ChatMessage } from './types'
 
-const BASE = import.meta.env.VITE_API_URL ?? ''
+// ?. : under tsx (scripts/check_bom.ts renders the BOM table, which calls authFetch) there is no import.meta.env
+const BASE = import.meta.env?.VITE_API_URL ?? ''
 
 /** the saved access token, or '' (an older build saved "undefined" when a sign-up gave no session) */
 function token() {

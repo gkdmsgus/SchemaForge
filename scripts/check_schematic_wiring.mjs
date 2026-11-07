@@ -10,7 +10,24 @@
 // the press, so neither reached the part: frame review of 2026-10-30), S9 the view fits again when the drawer
 // below opens and closes (a circuit fitted with the Code drawer open stayed a tiny cluster after it closed), S10 the
 // circuit opens fitted when the schematic changes size before its parts are placed (it opened at zoom 1 from the
-// origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31).
+// origin, parts below the visible part, in 3 of 30 openings of the tour's 555: 2026-10-31), S13 the check above the
+// schematic follows the SMD/THT choice: it runs again with that style on THT and after an AI edit, so its pad numbers
+// are the board's (the check always used the SMD table: a floating Q_NPN base read pad 1 on a THT board, where it is
+// pad 2: review of 2026-11-06). /erc_graph is faked, by the style it is sent, S14 hand edits are the circuit's, not just
+// the drawing's: a joined wire and a value reach the checks, the saved session, undo and the next PCB, and outlive a tab
+// switch (they stayed in the schematic, under a "● 수정됨": review of 2026-11-06), and are not called AI edits, S15 a value
+// goes up on blur or Enter, once, not per keystroke, and Escape keeps the old one, S16 a deleted wire leaves its pin on the
+// part and its toast takes it back, S17 a hand-changed value moves the operating check, S18 opened again from this
+// browser's record it is the edited circuit, not called an AI edit, S19 a typed " or \ does not reach the netlist (the check
+// cleans them and passed; the PCB stopped with a Python traceback), S20 a hand edit that breaks the circuit leaves the
+// schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check), S21 a hand edit made
+// while the AI editor answers stays, with the answer's change on top (the answer went on the circuit it was asked about: the
+// value went back, on screen and in the saved session), S22 a part's pins are kept for that part: a 3-pin regulator that took
+// the ref of a 555 has 3 (it had the 8 of the 555, 5 of them on nothing), and an undo brings the 555 back with its 8, S23 a value
+// being typed goes up on a press on the empty schematic or on a pin (those presses are cancelled, so the browser moved no focus:
+// the panel closed with the value on the part and nowhere else, no "● 수정됨", the BOM and the PCB without it), S24 an IC keeps
+// the pin of a deleted wire when that was its highest (S16 cannot tell: the demos' highest IC pins are on power nets, drawn with
+// no wire to pick, so here the supply has another name).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -22,6 +39,8 @@ const check = (name, ok, info = '') => { if (!ok) failed++; console.log(`${ok ? 
 const browser = await chromium.launch()
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  // an edit brings the check's notice above the schematic, which moves it: answered at once, the wait below outlasts both
+  await page.route(/\/erc_graph$/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"erc":[]}' }))
   await page.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().waitFor({ timeout: 60000 })
 
@@ -40,7 +59,7 @@ try {
   const toolbarHeight = async () => Math.round((await toolbar.boundingBox()).height)
   const partY = ref => page.locator(`g[data-comp='${ref}']`).boundingBox().then(b => Math.round(b.y))
   // pins and the net whose drawn wire passes each pin's end (pins carry no ref or net in the page)
-  const pinMap = () => page.evaluate(() => {
+  const pinMap = (on = page) => on.evaluate(() => {
     const scr = (el, x, y) => { const c = el.getScreenCTM(); return { x: x * c.a + y * c.c + c.e, y: x * c.b + y * c.d + c.f } }
     const nets = [...document.querySelectorAll('g[data-net]')].map(g => {
       const pts = []
@@ -54,11 +73,13 @@ try {
     // only pins in the part of the schematic on screen (some parts sit below it)
     const view = document.querySelector('svg:has(g[data-comp])').getBoundingClientRect()
     for (const comp of document.querySelectorAll('g[data-comp]')) {
+      let num = 0
       for (const hit of comp.querySelectorAll("g[style*='crosshair'] circle[r='8']")) {
+        num++
         const p = scr(hit, +hit.getAttribute('cx'), +hit.getAttribute('cy'))
         if (p.x < view.left + 15 || p.x > view.right - 15 || p.y < view.top + 15 || p.y > view.bottom - 15) continue
         const net = nets.findIndex(pts => pts.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 5))
-        pins.push({ ref: comp.getAttribute('data-comp'), x: p.x, y: p.y, net })
+        pins.push({ ref: comp.getAttribute('data-comp'), pin: String(num), x: p.x, y: p.y, net })
       }
     }
     return { pins, nets: nets.length }
@@ -87,7 +108,7 @@ try {
   // S2
   if (!started) await page.mouse.click(pair.a.x, pair.a.y)   // so the next checks still run on the old build
   await page.mouse.click(pair.b.x, pair.b.y)
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(900)
   const joined = await pinMap()
   check('S2 a click on a pin of another net joins the two nets', !(await hint.isVisible()) && joined.nets === before.nets - 1
     && await page.getByText('● 수정됨').isVisible(), `nets ${before.nets}→${joined.nets}`)
@@ -103,8 +124,9 @@ try {
   check('S3 a click on empty space drops a started wire', shown && !(await hint.isVisible()) && (await pinMap()).nets === joined.nets)
 
   // S4: a and b are on one net now
-  const a = joined.pins.find(p => Math.hypot(p.x - pair.a.x, p.y - pair.a.y) < 3)
-  const b = joined.pins.find(p => Math.hypot(p.x - pair.b.x, p.y - pair.b.y) < 3)
+  const samePin = q => p => p.ref === q.ref && p.pin === q.pin
+  const a = joined.pins.find(samePin(pair.a))
+  const b = joined.pins.find(samePin(pair.b))
   await page.mouse.click(a.x, a.y)
   await page.waitForTimeout(200)
   await page.mouse.click(b.x, b.y)
@@ -160,8 +182,8 @@ try {
     await page.mouse.move(move.target.x, move.target.y, { steps: 12 })
     wireStarted = await hint.isVisible()
     await page.mouse.up()
-    await page.waitForTimeout(400)
-    const m = await pinMap(), now = q => m.pins.find(p => Math.hypot(p.x - q.x, p.y - q.y) < 4)
+    await page.waitForTimeout(900)
+    const m = await pinMap(), now = q => m.pins.find(samePin(q))
     const t = now(move.target), k = now(move.keep), o = now(move.own)
     moved = !!t && !!k && t.net >= 0 && t.net === k.net && (!o || o.net !== k.net)
   }
@@ -347,6 +369,420 @@ try {
   check('S12 the PCB tab and back moves no part (C4 added); a part taken out comes back to its spot on undo, the PCB tab in between',
     Object.keys(s3).length >= 10 && !!s3.C4 && !tabMoved.length && !undoMoved.length && !leftPlace(s2, s3b, false).length,
     `moved by the tabs [${tabMoved}]; moved after removing D1 and undoing [${undoMoved}]${s3b.D1 && s4.D1 ? `; D1 ${s3b.D1.at} -> ${s4.D1.at}` : ''}`)
+
+  // S13: a generation whose answer carries one error, as /generate checks it (with the SMD table)
+  const ctx13 = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await ctx13.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+  })
+  const p13 = await ctx13.newPage()
+  const floatingBase = pad => ({ rule: 'floating_pin', severity: 'error', message: `Q1의 B 핀(${pad === '1' ? '1번' : `1번, 기판 패드 ${pad}`})이 떠 있습니다`,
+    refs: [{ ref: 'Q1', pin: pad, sym: '1', name: 'B' }], net: null })
+  const demo13 = await fetch(`${BASE}/demo_result/motor`).then(r => r.json())
+  const checked = []
+  await p13.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await p13.route(/\/(favorites|sessions)(\/.*)?$/, r => json(r, { favorites: [], sessions: [], messages: [], id: 's1' }))
+  await p13.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream',
+    body: `event: done\ndata: ${JSON.stringify({ ...demo13, erc: { findings: [floatingBase('1')], repair: null } })}\n\n` }))
+  await p13.route(/\/erc_graph$/, r => {
+    const sent = r.request().postDataJSON()
+    checked.push(sent)
+    return json(r, { erc: [floatingBase(sent.style === 'tht' ? '2' : '1')] })
+  })
+  await p13.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: 'R1 값을 바꿨습니다.', actions: [{ type: 'modify_component', ref: 'R1', value: '2k2' }] })}\n\n` }))
+  await p13.goto(BASE, { waitUntil: 'networkidle' })
+  await p13.locator('.sf-home-input textarea').fill('베이스가 뜬 모터 회로')
+  await p13.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  const notice = p13.getByTestId('erc-notice')
+  await notice.waitFor({ timeout: 20000 })
+  const atSmd = await notice.innerText(), sentAtSmd = checked.length
+  await p13.getByRole('button', { name: 'THT', exact: true }).click()
+  const thtPad = await notice.getByText('기판 패드 2').waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const onResult = checked.at(-1)
+  await p13.getByRole('button', { name: 'SMD', exact: true }).click()
+  await p13.waitForTimeout(600)
+  const backSmd = await notice.innerText()
+  await p13.getByRole('button', { name: 'THT', exact: true }).click()
+  await notice.getByText('기판 패드 2').waitFor({ timeout: 5000 }).catch(() => {})
+  await p13.getByTestId('chat-input').fill('R1 값을 2k2로 바꿔줘')
+  await p13.getByTestId('chat-input').press('Enter')
+  await p13.waitForFunction(() => /AI 편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 5000 }).catch(() => {})
+  const editedTht = await notice.innerText(), sentEdited = checked.at(-1)
+  await p13.getByRole('button', { name: 'SMD', exact: true }).click()
+  await p13.waitForFunction(() => /AI 편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || '')
+    && !/기판 패드/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 5000 }).catch(() => {})
+  const editedSmd = await notice.innerText(), sentSmd = checked.at(-1)
+  const r1 = g => g?.components?.find(c => c.ref === 'R1')?.value
+  check('S13 the check above the schematic has the pad numbers of the SMD/THT choice, before and after an AI edit',
+    /\(1번\)/.test(atSmd) && sentAtSmd === 0 && thtPad && onResult?.style === 'tht' && r1(onResult?.graph) === r1(demo13.graph) && /\(1번\)/.test(backSmd)
+    && /기판 패드 2/.test(editedTht) && sentEdited?.style === 'tht' && r1(sentEdited?.graph) === '2k2' && !/기판 패드/.test(editedSmd) && sentSmd?.style === 'smd',
+    `SMD ${sentAtSmd} calls; THT pad 2 ${thtPad} (${onResult?.style}); back on SMD ${/\(1번\)/.test(backSmd)}; edited ${sentEdited?.style} ${/기판 패드 2/.test(editedTht)}, then ${sentSmd?.style} ${!/기판 패드/.test(editedSmd)}`)
+
+  // S14-S16: a generated circuit in a saved session, every request kept
+  const ctx14 = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await ctx14.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+  })
+  const p14 = await ctx14.newPage()
+  const rechecked = [], saved = [], pcbs = []
+  const final14 = { outline: [0, 0, 20, 14], parts: [], nets: [], style: 'smd', erc: [], tracks: [], vias: [], unrouted: [] }
+  await p14.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+  await p14.route(/\/favorites$/, r => json(r, { favorites: [] }))
+  await p14.route(/\/sessions$/, r => json(r, { id: 's14', sessions: [] }))
+  await p14.route(/\/sessions\/s14$/, r => { saved.push(r.request().postDataJSON()); return json(r, { ok: true }) })
+  await p14.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(demo13)}\n\n` }))
+  await p14.route(/\/erc_graph$/, r => { rechecked.push(r.request().postDataJSON().graph); return json(r, { erc: [] }) })
+  await p14.route(/\/generate_pcb_stream$/, r => {
+    pcbs.push(r.request().postDataJSON())
+    return r.fulfill({ status: 200, contentType: 'text/event-stream',
+      body: `event: done\ndata: ${JSON.stringify({ board: final14, pcbFilename: 'check.kicad_pcb', summary: { unmapped: [], warnings: [] } })}\n\n` })
+  })
+  await p14.route(/\/board_model/, r => r.fulfill({ status: 404, body: '' }))
+  await p14.goto(BASE, { waitUntil: 'networkidle' })
+  await p14.locator('.sf-home-input textarea').fill('손으로 고칠 모터 회로')
+  await p14.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 20000 })
+  await p14.waitForTimeout(600)
+  const settle = () => p14.waitForTimeout(900)
+  const netGroups = () => p14.locator('g[data-net]').count()
+  const notice14 = () => p14.getByTestId('erc-notice').innerText().catch(() => '')
+  const undo14 = p14.getByTestId('schematic-undo')
+  const modifiedMark = p14.getByText('● 수정됨')
+  const onOneNet = (g, x, y) => (g?.nets ?? []).some(n => n.nodes.some(nd => nd.ref === x.ref && nd.pin === x.pin) && n.nodes.some(nd => nd.ref === y.ref && nd.pin === y.pin))
+  const valueOf = (g, ref) => g?.components?.find(c => c.ref === ref)?.value
+  const wiredPair = pins => {
+    let best = null
+    for (const a of pins) for (const b of pins) {
+      const d = Math.hypot(a.x - b.x, a.y - b.y)
+      if (a.ref !== b.ref && a.net >= 0 && b.net >= 0 && a.net !== b.net && (!best || d < best.d)) best = { a, b, d }
+    }
+    return best
+  }
+  const join = async () => {
+    const { pins } = await pinMap(p14)
+    const { a, b } = wiredPair(pins)
+    await p14.mouse.click(a.x, a.y)
+    await p14.waitForTimeout(200)
+    await p14.mouse.click(b.x, b.y)
+    await settle()
+    return { a, b }
+  }
+
+  const nets0 = await netGroups()
+  const { a: a14, b: b14 } = await join()
+  const joinedNets = await netGroups(), said14 = await notice14()
+  const undoWords = await p14.locator('[data-testid="left-panel"] button', { hasText: '되돌리기' }).getAttribute('title').catch(() => null)
+  const reachedCheck = onOneNet(rechecked.at(-1), a14, b14), reachedSave = onOneNet(saved.at(-1)?.graph, a14, b14)
+  const inBrowser = await p14.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]?.graph)
+  check('S14a a joined wire reaches the check, the saved session and this browser\'s record, and is not called an AI edit',
+    joinedNets === nets0 - 1 && reachedCheck && reachedSave && onOneNet(inBrowser, a14, b14) && /^편집 뒤/.test(said14) && !/AI 편집/.test(said14) && undoWords === '마지막 수정 취소',
+    `nets ${nets0}→${joinedNets}, check ${reachedCheck}, session ${reachedSave}, notice "${said14.split('\n')[0]}", undo "${undoWords}"`)
+
+  await p14.getByTestId('view-tab-pcb').click()
+  await p14.waitForTimeout(500)
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
+  check('S14b it outlives the PCB tab', await netGroups() === nets0 - 1 && await modifiedMark.isVisible())
+
+  await undo14.click()
+  await settle()
+  const undone = await netGroups() === nets0 && !(await modifiedMark.isVisible()) && !onOneNet(saved.at(-1)?.graph, a14, b14)
+  check('S14c undo takes it back, on screen and in the saved session', undone, `nets ${await netGroups()}, marked ${await modifiedMark.isVisible()}`)
+
+  const { a: a14d, b: b14d } = await join()
+  await p14.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+  await p14.getByRole('button', { name: /\.kicad_pcb/ }).waitFor({ timeout: 10000 })
+  check('S14d the next PCB is made from the edited circuit', onOneNet(pcbs.at(-1)?.graph, a14d, b14d) && !pcbs.at(-1)?.filename && !!pcbs.at(-1)?.baseName, JSON.stringify(Object.keys(pcbs.at(-1) ?? {})))
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
+
+  // S15: the part's own value field, then its panel
+  const part14 = async () => { const b = await p14.locator("g[data-comp='R2']").boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 } }
+  const bomValue = v => p14.locator('[data-testid="right-panel"]').getByText(v, { exact: true }).first().isVisible().catch(() => false)
+  const r0 = valueOf(demo13.graph, 'R2')
+  let r1At = await part14()
+  const beforeTyping = { checks: rechecked.length, saves: saved.length }
+  await p14.mouse.dblclick(r1At.x, r1At.y)
+  const valueField = p14.locator('svg foreignObject input').first()
+  await valueField.waitFor({ timeout: 3000 })
+  await valueField.fill('')
+  await valueField.pressSequentially('2k2', { delay: 40 })
+  await p14.waitForTimeout(500)
+  const whileTyping = rechecked.length === beforeTyping.checks && saved.length === beforeTyping.saves
+  await p14.keyboard.press('Enter')
+  await settle()
+  const entered = valueOf(saved.at(-1)?.graph, 'R2') === '2k2' && saved.length === beforeTyping.saves + 1 && await bomValue('2k2')
+  const staleButton = await p14.getByRole('button', { name: 'PCB 다시 생성' }).first().isVisible().catch(() => false)
+  await p14.getByTestId('view-tab-pcb').click()
+  const staleBanner = await p14.getByTestId('pcb-stale').waitFor({ timeout: 3000 }).then(() => true, () => false)
+  await p14.getByTestId('view-tab-schematic').click()
+  await p14.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+  await settle()
+  await undo14.click()
+  await settle()
+  const oneStep = valueOf(saved.at(-1)?.graph, 'R2') === r0 && onOneNet(saved.at(-1)?.graph, a14d, b14d)
+  check('S15a a value goes up on Enter, once, not per keystroke; the BOM and the PCB banner follow, and one undo takes it back',
+    whileTyping && entered && staleButton && staleBanner && oneStep, `while typing nothing ${whileTyping}, on Enter ${entered}, PCB button ${staleButton}, banner ${staleBanner}, one undo ${oneStep}`)
+
+  r1At = await part14()
+  await p14.mouse.dblclick(r1At.x, r1At.y)
+  await valueField.waitFor({ timeout: 3000 })
+  await valueField.fill('999')
+  await p14.keyboard.press('Escape')
+  await settle()
+  const escInline = saved.at(-1) && valueOf(saved.at(-1).graph, 'R2') === r0 && !(await valueField.isVisible())
+  r1At = await part14()
+  await p14.mouse.click(r1At.x, r1At.y)
+  const panelField = p14.getByTestId('part-value')
+  await panelField.waitFor({ timeout: 3000 })
+  const savesBefore = saved.length
+  await panelField.fill('33k')
+  await p14.waitForTimeout(400)
+  const panelTyping = saved.length === savesBefore
+  await panelField.press('Enter')
+  await settle()
+  const panelSaved = valueOf(saved.at(-1)?.graph, 'R2') === '33k' && saved.length === savesBefore + 1 && await bomValue('33k')
+  await panelField.fill('777')
+  await panelField.press('Escape')
+  await settle()
+  const escPanel = valueOf(saved.at(-1)?.graph, 'R2') === '33k' && saved.length === savesBefore + 1 && await panelField.inputValue() === '33k'
+  check('S15b Escape keeps the old value; the part\'s panel commits on Enter, not per keystroke', escInline && panelTyping && panelSaved && escPanel,
+    `Escape in the part ${escInline}, panel typing ${panelTyping}, panel Enter ${panelSaved}, Escape in the panel ${escPanel}`)
+
+  // S16: the pins are counted, a wire is picked and deleted, its toast takes it back
+  const box14 = await p14.locator('svg:has(g[data-comp])').first().boundingBox()
+  await p14.mouse.click(box14.x + 6, box14.y + box14.height - 6)
+  await p14.waitForTimeout(300)
+  const pinCount = () => p14.locator("g[data-comp] g[style*='crosshair'] circle[r='8']").count()
+  const pins0 = await pinCount(), nets16 = await netGroups()
+  const wire = await p14.evaluate(() => {
+    for (const p of document.querySelectorAll("g[data-net] path[stroke='transparent']")) {
+      const L = p.getTotalLength()
+      if (L < 40) continue
+      const m = p.getPointAtLength(L / 2), c = p.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    }
+    return null
+  })
+  await p14.mouse.click(wire.x, wire.y)
+  await p14.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+  await settle()
+  const pinsAfter = await pinCount(), netsAfter = await netGroups(), toast16 = await p14.getByText('삭제됨').isVisible()
+  await p14.getByText('삭제됨').locator('xpath=..').getByRole('button', { name: /되돌리기/ }).click()
+  await settle()
+  check('S16 a deleted wire leaves its pins on the parts, and its toast takes it back', pinsAfter === pins0 && netsAfter === nets16 - 1 && toast16 && await netGroups() === nets16,
+    `pins ${pins0}→${pinsAfter}, nets ${nets16}→${netsAfter}→${await netGroups()}, toast ${toast16}`)
+
+  // S18
+  await p14.getByText(/^v0\.4 · /).first().click()
+  await p14.locator('.sf-home-input textarea').fill('손으로 고칠 모터 회로')
+  await p14.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p14.getByRole('button', { name: '불러오기', exact: true }).click({ timeout: 5000 })
+  await p14.locator("g[data-comp='R2']").waitFor({ timeout: 10000 })
+  await settle()
+  const reopened = await p14.locator("g[data-comp='R2']").textContent(), said18 = await notice14()
+  check('S18 opened again from this browser\'s record it is the edited circuit, still not called an AI edit', /33k/.test(reopened) && /^편집 뒤/.test(said18),
+    `R2 "${reopened}", notice "${said18.split('\n')[0]}"`)
+
+  // S17
+  const p17 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  await p17.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p17.goto(`${BASE}/?demo=led`, { waitUntil: 'networkidle' })
+  await p17.locator("g[data-comp='R1']").waitFor({ timeout: 60000 })
+  await p17.waitForTimeout(500)
+  const opChip = () => p17.getByTestId('op-chip').innerText()
+  const op0 = await opChip()
+  const r1Box = await p17.locator("g[data-comp='R1']").boundingBox()
+  await p17.mouse.dblclick(r1Box.x + r1Box.width / 2, r1Box.y + r1Box.height / 2)
+  const field17 = p17.locator('svg foreignObject input').first()
+  await field17.waitFor({ timeout: 3000 })
+  await field17.fill('1')
+  await p17.keyboard.press('Enter')
+  await p17.waitForTimeout(900)
+  const op1 = await opChip()
+  check('S17 a hand-changed value moves the operating check', op0 !== op1, `${op0.trim()} → ${op1.trim()}`)
+
+  // S19
+  let pcb19 = null
+  await p17.route(/\/generate_pcb_stream$/, r => { pcb19 = r.request().postDataJSON(); return r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: error\ndata: {"error":"check"}\n\n' }) })
+  const r19 = await p17.locator("g[data-comp='R1']").boundingBox()
+  await p17.mouse.dblclick(r19.x + r19.width / 2, r19.y + r19.height / 2)
+  await field17.waitFor({ timeout: 3000 })
+  await field17.fill('2k2"\\')
+  await p17.keyboard.press('Enter')
+  await p17.waitForTimeout(500)
+  await p17.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+  for (let i = 0; i < 30 && !pcb19; i++) await p17.waitForTimeout(100)
+  const sent19 = pcb19?.graph?.components?.find(c => c.ref === 'R1')?.value
+  check('S19 a typed quote or backslash does not reach the netlist', sent19 === '2k2', `sent ${JSON.stringify(sent19)}`)
+
+  // S20: wires deleted until the circuit check speaks up
+  const p20 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  await p20.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p20.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await p20.locator('g[data-comp]').first().waitFor({ timeout: 60000 })
+  await p20.waitForTimeout(500)
+  const box20 = p20.getByTestId('circuit-diagnostics')
+  const nets20 = await p20.locator('g[data-net]').count()
+  let deleted20 = 0
+  for (let i = 0; i < nets20 && !(await box20.isVisible()); i++) {
+    const at = await p20.evaluate(() => {
+      const w = document.querySelector("g[data-net] path[stroke='transparent']")
+      if (!w) return null
+      const m = w.getPointAtLength(w.getTotalLength() / 2), c = w.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    })
+    await p20.mouse.click(at.x, at.y)
+    await p20.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+    deleted20++
+    await p20.waitForTimeout(500)
+  }
+  const undo20 = p20.getByTestId('schematic-undo')
+  const onTop = await undo20.evaluate(b => {
+    const r = b.getBoundingClientRect()
+    return b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+  })
+  const said20 = await box20.isVisible()
+  await undo20.click({ timeout: 3000 }).catch(() => {})
+  await p20.waitForTimeout(400)
+  const undone20 = await p20.locator('g[data-net]').count()
+  check('S20 a hand edit that breaks the circuit leaves the schematic\'s undo in reach', said20 && onTop && undone20 === nets20 - deleted20 + 1,
+    `${deleted20} wires deleted, check's box ${said20}, undo on top ${onTop}, nets ${nets20}→${undone20}`)
+
+  // S21-S22: a saved session and the AI editor's answers faked
+  const answered = []
+  const editorPage = async (which, change = d => d) => {
+    const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    await c.addInitScript(() => {
+      localStorage.setItem('sf_token', 'fake-token')
+      localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+      localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false }))
+    })
+    const p = await c.newPage()
+    const d = change(await fetch(`${BASE}/demo_result/${which}`).then(r => r.json()))
+    await p.route(/\/auth\/me$/, r => json(r, { user: { id: 'u1', email: 'owner@example.com' }, canGenerate: true }))
+    await p.route(/\/favorites$/, r => json(r, { favorites: [] }))
+    await p.route(/\/sessions$/, r => json(r, { id: 's21', sessions: [] }))
+    await p.route(/\/sessions\/s21$/, r => { answered.push(r.request().postDataJSON()); return json(r, { ok: true }) })
+    await p.route(/\/sessions\/s21\/messages$/, r => json(r, { messages: [] }))
+    await p.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+    await p.route(/\/generate$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(d)}\n\n` }))
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    await p.locator('.sf-home-input textarea').fill(`AI 편집 답을 기다리는 ${which} 회로`)
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p.locator('g[data-comp]').first().waitFor({ timeout: 20000 })
+    await p.waitForTimeout(600)
+    return p
+  }
+  const ask = async (p, message) => {
+    await p.getByTestId('chat-input').fill(message)
+    await p.getByTestId('chat-input').press('Enter')
+  }
+  const p21 = await editorPage('motor')
+  let answer19
+  const answering = new Promise(r => { answer19 = r })
+  await p21.route(/\/chat_edit$/, async r => {
+    await answering
+    await r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: 'C9를 더했습니다.', actions: [{ type: 'add_component', ref: 'C9', name: 'C', value: '100nF' }] })}\n\n` })
+  })
+  await ask(p21, 'C9 커패시터를 하나 추가해줘')
+  await p21.waitForTimeout(200)
+  const r21 = await p21.locator("g[data-comp='R2']").boundingBox()
+  await p21.mouse.dblclick(r21.x + r21.width / 2, r21.y + r21.height / 2)
+  await p21.locator('svg foreignObject input').first().fill('33k')
+  await p21.keyboard.press('Enter')
+  await p21.waitForTimeout(400)
+  answer19()
+  await p21.locator("g[data-comp='C9']").waitFor({ timeout: 5000 }).catch(() => {})
+  await p21.waitForTimeout(400)
+  const shown21 = await p21.locator("g[data-comp='R2']").textContent(), c9Came = await p21.locator("g[data-comp='C9']").count() === 1
+  const kept21 = valueOf(answered.at(-1)?.graph, 'R2'), record21 = await p21.evaluate(() => JSON.parse(localStorage.getItem('sf_saved_results') || '[]')[0]?.graph)
+  await p21.getByTestId('schematic-undo').click()
+  await p21.locator("g[data-comp='C9']").waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
+  await p21.waitForTimeout(300)
+  const undone21 = await p21.locator("g[data-comp='R2']").textContent()
+  check('S21 a hand edit made while the AI editor answers stays, with the answer on top, on screen and in the saves; one undo takes the answer off',
+    /33k/.test(shown21) && c9Came && kept21 === '33k' && valueOf(record21, 'R2') === '33k' && /33k/.test(undone21),
+    `R2 "${shown21}", C9 ${c9Came}, session ${kept21}, this browser ${valueOf(record21, 'R2')}, after undo "${undone21}"`)
+
+  const p22 = await editorPage('ne555')
+  const u1Pins = () => p22.locator("g[data-comp='U1'] g[style*='crosshair'] circle[r='8']").count()
+  const pins22 = await u1Pins()
+  await p22.route(/\/chat_edit$/, r => {
+    const actions = /빼줘/.test(r.request().postDataJSON().message) ? [{ type: 'remove_component', ref: 'U1' }] : [
+      { type: 'add_component', ref: 'U1', name: 'LM7805', value: 'LM7805' },
+      { type: 'add_net', name: 'IN22', nodes: [{ ref: 'U1', pin: '1' }, { ref: 'R1', pin: '1' }] },
+      { type: 'add_net', name: 'OUT22', nodes: [{ ref: 'U1', pin: '3' }, { ref: 'R2', pin: '1' }] },
+    ]
+    return r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify({ reply: '바꿨습니다.', actions })}\n\n` })
+  })
+  await ask(p22, 'U1 빼줘')
+  await p22.locator("g[data-comp='U1']").waitFor({ state: 'detached', timeout: 5000 })
+  await p22.waitForTimeout(800)
+  await ask(p22, 'U1 자리에 LM7805 U1을 넣고 R1, R2 연결도 바꿔줘')
+  await p22.locator("g[data-comp='U1']").waitFor({ timeout: 5000 })
+  await p22.waitForTimeout(400)
+  const regulator = await u1Pins()
+  await p22.getByTestId('schematic-undo').click()
+  await p22.locator("g[data-comp='U1']").waitFor({ state: 'detached', timeout: 5000 })
+  await p22.waitForTimeout(300)
+  await p22.getByTestId('schematic-undo').click()
+  await p22.locator("g[data-comp='U1']").waitFor({ timeout: 5000 })
+  await p22.waitForTimeout(400)
+  const back22 = await u1Pins()
+  check('S22 a part that takes another\'s ref has its own pins; an undo brings the first part back with its own', pins22 === 8 && regulator === 3 && back22 === 8, `555 ${pins22} pins, regulator ${regulator}, after undo ${back22}`)
+
+  // S23
+  const p23 = await (await browser.newContext({ viewport: { width: 1400, height: 800 } })).newPage()
+  await p23.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p23.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await p23.locator('g[data-comp]').first().waitFor({ timeout: 60000 })
+  await p23.waitForTimeout(500)
+  const at23 = async ref => { const b = await p23.locator(`g[data-comp='${ref}']`).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 } }
+  const empty23 = async () => { const b = await p23.locator('svg:has(g[data-comp])').first().boundingBox(); await p23.mouse.click(b.x + 6, b.y + b.height - 6); await p23.waitForTimeout(800) }
+  const listed = v => p23.locator('[data-testid="right-panel"]').getByText(v, { exact: true }).first().isVisible().catch(() => false)
+  let spot = await at23('R2')
+  await p23.mouse.click(spot.x, spot.y)
+  await p23.getByTestId('part-value').fill('11k')
+  await empty23()
+  const panel23 = await listed('11k') && await p23.getByText('● 수정됨').isVisible()
+  spot = await at23('R3')
+  await p23.mouse.dblclick(spot.x, spot.y)
+  await p23.locator('svg foreignObject input').first().fill('22k')
+  await empty23()
+  const inline23 = await listed('22k') && await p23.locator('svg foreignObject input').count() === 0
+  spot = await at23('R2')
+  await p23.mouse.click(spot.x, spot.y)
+  await p23.getByTestId('part-value').fill('33k')
+  const pin23 = await p23.evaluate(() => {
+    const hit = document.querySelector("g[data-comp='R3'] g[style*='crosshair'] circle[r='8']"), c = hit.getScreenCTM()
+    return { x: +hit.getAttribute('cx') * c.a + +hit.getAttribute('cy') * c.c + c.e, y: +hit.getAttribute('cx') * c.b + +hit.getAttribute('cy') * c.d + c.f }
+  })
+  await p23.mouse.click(pin23.x, pin23.y)
+  await p23.waitForTimeout(800)
+  const onPin23 = await listed('33k')
+  check('S23 a value being typed goes up on a press on the empty schematic or on a pin', panel23 && inline23 && onPin23, `panel ${panel23}, in the part ${inline23}, press on a pin ${onPin23}`)
+
+  // S24
+  const p24 = await editorPage('ne555', d => ({ ...d, graph: { ...d.graph, nets: d.graph.nets.map(n => (n.name === 'VCC' ? { ...n, name: 'SUPPLY_A' } : n)) } }))
+  const pins24 = () => p24.locator("g[data-comp='U1'] g[style*='crosshair'] circle[r='8']").count()
+  const before24 = await pins24()
+  const wire24 = await p24.evaluate(() => {
+    const on = [...document.querySelectorAll('g[data-net]')].at(-1).querySelector("path[stroke='transparent']")
+    const m = on.getPointAtLength(on.getTotalLength() / 2), c = on.getScreenCTM()
+    return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+  })
+  await p24.mouse.click(wire24.x, wire24.y)
+  await p24.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+  await p24.waitForTimeout(600)
+  const gone24 = await p24.getByText("'SUPPLY_A' 삭제됨").isVisible(), after24 = await pins24()
+  check('S24 an IC keeps the pin of a deleted wire, its highest', before24 === 8 && gone24 && after24 === 8, `U1 ${before24}→${after24} pins, SUPPLY_A deleted ${gone24}`)
 } finally {
   await browser.close()
 }

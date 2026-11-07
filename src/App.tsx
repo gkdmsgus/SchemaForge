@@ -9,7 +9,7 @@ import SideDrawer from './components/SideDrawer'
 import AuthModal, { type AuthNotice } from './components/AuthModal'
 import LegalPage from './components/LegalPage'
 import { getSavedResults, saveResultToLocal } from './components/ResultPanel'
-import { Button } from './components/primitives.tsx'
+import { Button, Spinner } from './components/primitives.tsx'
 import {
   loadAuth, logout as apiLogout, authFetch, clearAuth, errorText, getMe, getMessages, restoreNetlist, saveSession,
   setAuthExpiredHandler, type AuthUser,
@@ -20,6 +20,7 @@ import type {
   ClarifyApiResponse, SavedSession,
 } from './types'
 import { useModelName } from './lib/modelName'
+import { savedGraph } from './lib/graphEdit'
 import ErrorBoundary from './components/ErrorBoundary'
 import './styles/main.scss'
 
@@ -42,7 +43,6 @@ function getSettings(): AppSettings {
 
 function detectStep(msg: string): number {
   if (/netlist|fixing/i.test(msg)) return 2
-  if (msg.includes('Searching')) return 0
   if (msg.includes('GPT') || msg.includes('analysing') || msg.includes('analyzing')) return 1
   if (msg.includes('netlist') || msg.includes('Generating')) return 2
   return 0
@@ -113,6 +113,15 @@ export default function App() {
   // the plan approved for a description goes with its generation, and with ↺ of the same description
   const approvedPlan = useRef<{ prompt: string; plan: unknown } | null>(null)
   const pendingGenerateRef = useRef<PendingRun | null>(null)
+  // which plan request may still answer, and its way to stop: cancelled, a late plan came back over the home screen
+  // or a later generation's steps, and a failed one started the generation the person had just cancelled (2026-11-06)
+  const planSeq = useRef(0)
+  const planAbort = useRef<AbortController | null>(null)
+  // /clarify on its way, for this description: the form sat there with nothing shown, for up to 10 minutes if the model
+  // did not answer, so a second click sent the questions and the plan again (2026-11-06). The ref is set before anything
+  // is drawn, for a second click that lands first; it is also the way to stop the request
+  const prepareAbort = useRef<AbortController | null>(null)
+  const [preparing, setPreparing] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   // bumped whenever another circuit takes the screen (history open, version pick, new generation, home):
   // a slower answer for the one before (a history load, a session save) does not land on it
@@ -187,7 +196,35 @@ export default function App() {
     if (pendingCached) cachedOfferRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [pendingCached])
 
+  /**
+   * Another screen or generation takes over: what is on its way stops (the server stops the model call when the
+   * connection closes). A generation left running behind a circuit opened from the history took the screen back with
+   * its answer and the two circuits mixed; the logo did nothing while it ran; of two generations 취소 stopped only the
+   * newest (review of 2026-11-06).
+   */
+  function stopRunning() {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    stopPlan()
+    stopPreparing()
+  }
+
+  function stopPreparing() {
+    prepareAbort.current?.abort()
+    prepareAbort.current = null
+    setPreparing(null)
+  }
+
+  /** the plan request on its way answers no more; its stop may come too late, so the number is what counts */
+  function stopPlan() {
+    planSeq.current++
+    planAbort.current?.abort()
+    planAbort.current = null
+  }
+
   function goHome() {
+    stopRunning()
     setResult(null)
     setError(null)
     setProgress(null)
@@ -205,6 +242,9 @@ export default function App() {
   async function handleLoadSession(session: SavedSession) {
     const resultObj: GenerateResult | null = session.result || (session.graph ? { graph: session.graph, filename: session.circuitName || '' } : null)
     if (!resultObj) return
+    stopRunning()
+    setProgress(null)
+    setLogLines([])
     const seq = ++loadSeq.current
     let messages = session.messages || []
     let aiEdited = false
@@ -265,40 +305,53 @@ export default function App() {
    * A refusal from /clarify, /plan or /generate stops the steps: 401 asks for the login again (the prompt waits
    * for it), 403 says why as the server wrote it, with no retry (it would be refused the same way). true = stopped.
    */
-  async function refused(res: Response, pending: PendingRun): Promise<boolean> {
+  async function refused(res: Response, pending: PendingRun, stale: () => boolean): Promise<boolean> {
     if (res.status === 401) { authExpired(pending); return true }
-    if (res.status === 403) { setError({ text: await errorText(res), refused: true }); return true }
+    if (res.status === 403) {
+      const why = await errorText(res)
+      if (!stale()) setError({ text: why, refused: true })
+      return true
+    }
     return false
   }
 
   async function fetchPlan(prompt: string) {
+    stopPlan()
+    const seq = planSeq.current
+    const stale = () => seq !== planSeq.current
+    const abort = new AbortController()
+    planAbort.current = abort
     setPlan({ originalPrompt: prompt, plan: null, loading: true })
     try {
       const res = await authFetch(`${API}/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: prompt }),
+        signal: abort.signal,
       })
-      if (await refused(res, { prompt, plan: true })) { setPlan(null); return }
+      if (stale()) return
+      if (await refused(res, { prompt, plan: true }, stale)) { if (!stale()) setPlan(null); return }
       // any other failure: the plan is optional, so generation goes on without it
       if (!res.ok) throw new Error('plan request failed')
       const data = await res.json()
-      setPlan({ originalPrompt: prompt, plan: data, loading: false })
+      if (!stale()) setPlan({ originalPrompt: prompt, plan: data, loading: false })
     } catch (e) {
+      // first: a stop lands here as an AbortError, and it must not generate
+      if (stale()) return
       setPlan(null)
       executeGenerate(prompt)
+    } finally {
+      // answered: nothing on its way (runGenerate waits for this one)
+      if (planAbort.current === abort) planAbort.current = null
     }
   }
 
-  function handleCancel() {
-    abortRef.current?.abort()
-    abortRef.current = null
-    goHome()
-    setLoading(false)
-  }
-
   async function runGenerate(p: string, typeKey?: string, skipCache = false) {
-    if (!p.trim() || loading) return
+    // also for a second click that lands before the screen changed: with no questions step it asked for the plan again
+    if (!p.trim() || loading || prepareAbort.current || planAbort.current) return
+    // an offer for the last description goes: left under these steps, its 불러오기 opened that circuit and the steps ran
+    // on behind it, and their generation took the screen; its 새로 생성 did nothing (2026-11-07)
+    setPendingCached(null)
 
     // 로그인 필요: 모달 열고 로그인 후 자동 재개
     if (!authRef.current) {
@@ -316,22 +369,34 @@ export default function App() {
     }
 
     if (settings.clarify !== false && !typeKey) {
+      const abort = new AbortController()
+      prepareAbort.current = abort
+      setPreparing(p)
+      const stale = () => prepareAbort.current !== abort
       try {
         const cRes = await authFetch(`${API}/clarify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: p }),
+          signal: abort.signal,
         })
+        if (stale()) return
         // refused: no plan or generation after it (they would be refused too)
-        if (await refused(cRes, { prompt: p, typeKey, skipCache })) return
+        if (await refused(cRes, { prompt: p, typeKey, skipCache }, stale)) return
         if (cRes.ok) {
           const cData = await cRes.json() as ClarifyApiResponse
+          if (stale()) return
           if (cData?.clear === false && Array.isArray(cData.questions) && cData.questions.length) {
             setClarify({ originalPrompt: p, questions: cData.questions })
             return
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // cancelled: the steps stop here. Any other failure: the questions are optional, so the steps go on
+        if (stale()) return
+      } finally {
+        if (!stale()) stopPreparing()
+      }
     }
 
     if (settings.plan !== false) return fetchPlan(p)
@@ -368,6 +433,7 @@ export default function App() {
   }
 
   async function executeGenerate(p: string) {
+    stopRunning()
     setClarify(null)
     setPlan(null)
     setPendingCached(null)
@@ -375,7 +441,7 @@ export default function App() {
     // and is not the session the favourite button points at until it is saved
     setInitialChatSession(null)
     setCurrentSessionId(null)
-    loadSeq.current++
+    const seq = ++loadSeq.current
     lastPrompt.current = p
     setLoading(true)
     // the steps start at the top: a plan approved further down the page left the steps' header "회로 만드는 중" out of
@@ -398,6 +464,9 @@ export default function App() {
           plan: approvedPlan.current?.prompt === p ? approvedPlan.current.plan : undefined }),
         signal: abort.signal,
       })
+      // refused, and stopped while its body was read (a 401's, to see whether it can be renewed): nothing to say any more,
+      // and the login window would have gone on with the generation after the login (2026-11-07)
+      if (!res.ok && seq !== loadSeq.current) return
       if (res.status === 401) {
         // the login ran out or is missing: log in again, and this prompt is generated right after (no error box)
         authExpired({ prompt: p, direct: true })
@@ -407,6 +476,7 @@ export default function App() {
       }
       if (!res.ok) {
         const why = await errorText(res)
+        if (seq !== loadSeq.current) return
         // a refusal (a deployed server keeps generation for listed accounts) is said as the server wrote it
         setError(res.status === 403 ? { text: why, refused: true } : { text: `서버 오류 (${res.status}): ${why}` })
         setProgress(null)
@@ -429,14 +499,14 @@ export default function App() {
               if (!evtM || !dataM) continue
               const evt = evtM[1].trim()
               const raw = dataM[1].trim()
-              if (evt === 'error') {
+              if (evt === 'error' && seq === loadSeq.current) {
                 let msg = raw
                 try { msg = JSON.parse(raw).message || raw } catch (_) {}
                 setError({ text: msg }); setProgress(null); setLoading(false)
                 return
-              } else if (evt === 'done') {
-                gotResult = true
               }
+              // a done frame here is cut off (the server ends every frame with a blank line): it counts as no result,
+              // so the check below says the connection was lost
             }
           }
           break
@@ -450,6 +520,12 @@ export default function App() {
           if (!evtM || !dataM) continue
           const evt = evtM[1].trim()
           const raw = dataM[1].trim()
+
+          // another circuit took the screen since the stop: nothing here is for it; the answer is kept for 불러오기
+          if (seq !== loadSeq.current) {
+            if (evt === 'done') saveResultToLocal(JSON.parse(raw), p)
+            continue
+          }
 
           if (evt === 'status') {
             const step = detectStep(raw)
@@ -481,13 +557,12 @@ export default function App() {
               label: p.slice(0, 60),
             }
             if (authRef.current) {
-              const shown = loadSeq.current
               saveSession({ prompt: p, code: d.code, guide: d.guide, graph: d.graph, filename: d.filename })
                 .then(id => {
                   // the version keeps its session, so picking it again in the strip points the saves back at it
                   setVersions(prev => prev.map(v => (v.id === newVersion.id ? { ...v, sessionId: id } : v)))
                   // the screen still shows this circuit (no history open, version pick or new generation since)
-                  if (shown === loadSeq.current) setCurrentSessionId(id)
+                  if (seq === loadSeq.current) setCurrentSessionId(id)
                 })
                 .catch(() => {})
             }
@@ -506,17 +581,20 @@ export default function App() {
           }
         }
       }
-      if (!gotResult && !abort.signal.aborted) {
+      if (!gotResult && !abort.signal.aborted && seq === loadSeq.current) {
         setError({ text: '회로 생성 중 연결이 끊겼습니다. 잠시 후 다시 시도해주세요.' })
         setProgress(null)
       }
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return
+      if ((e as Error).name === 'AbortError' || seq !== loadSeq.current) return
       setError({ text: `네트워크 오류: ${(e as Error).message}` })
       setProgress(null)
     } finally {
-      setLoading(false)
-      abortRef.current = null
+      // stopped: `loading` and the controller are no longer this generation's
+      if (abortRef.current === abort) {
+        setLoading(false)
+        abortRef.current = null
+      }
     }
   }
 
@@ -527,7 +605,7 @@ export default function App() {
   }
 
   const headerVariant = result ? 'result' : (loading ? 'generating' : 'composer')
-  const modelStatus = loading ? 'busy' : 'ready'
+  const modelStatus = loading || preparing ? 'busy' : 'ready'
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sf-bg)' }}>
@@ -604,7 +682,7 @@ export default function App() {
               const { prompt, cached } = pendingCached
               lastPrompt.current = prompt
               setResult(cached.result ?? null)
-              setInitialChatSession({ messages: cached.messages || [], graph: cached.result?.graph || null })
+              setInitialChatSession({ messages: cached.messages || [], graph: savedGraph(cached) ?? null })
               setResultKey(k => k + 1)
               setPendingCached(null)
             }}>불러오기</Button>
@@ -649,11 +727,11 @@ export default function App() {
               : plan.originalPrompt
             fetchPlan(enriched)
           }}
-          onCancel={() => setPlan(null)}
+          onCancel={() => { stopPlan(); setPlan(null) }}
         />
       )}
 
-      {!LEGAL_PAGE && authUser && cannotGenerate && !result && !loading && !error && !clarify && !plan && (
+      {!LEGAL_PAGE && authUser && cannotGenerate && !result && !loading && !preparing && !error && !clarify && !plan && (
         <div role="status" data-testid="cannot-generate" style={{ maxWidth: 760, margin: '16px auto 0', padding: '0 24px' }}>
           <div style={{
             background: 'var(--sf-bg-2)', border: '1px solid var(--sf-amber-line)', borderRadius: 'var(--sf-r-md)',
@@ -667,17 +745,33 @@ export default function App() {
         </div>
       )}
 
+      {!LEGAL_PAGE && preparing && !result && !error && !clarify && !plan && (
+        <main className="sf-flow" data-testid="preparing">
+          <header className="sf-flow-head">
+            <div>
+              <p className="sf-flow-kicker">설명 확인</p>
+              <h1 className="sf-flow-title">{preparing.split('\n')[0]}</h1>
+            </div>
+            <Button variant="outline" size="md" onClick={stopPreparing}>취소</Button>
+          </header>
+          <p className="sf-flow-wait"><Spinner size={14} color="var(--sf-amber)" /> 확인 중… 설명에 더 물어볼 것이 있는지 살펴보고 있습니다.</p>
+        </main>
+      )}
+
       {!LEGAL_PAGE && !result && !error && !clarify && !plan && (
-        <WizardPanel
-          phase={wizardPhase}
-          initialPrompt=""
-          currentPrompt={lastPrompt.current}
-          onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
-          onCancel={handleCancel}
-          logLines={logLines}
-          tokensUsed={Math.min(4096, logLines.length * 200)}
-          tokenBudget={4096}
-        />
+        // hidden, not gone, while the questions are asked: 취소 gives the form back as typed
+        <div style={{ display: preparing ? 'none' : 'contents' }}>
+          <WizardPanel
+            phase={wizardPhase}
+            initialPrompt=""
+            currentPrompt={lastPrompt.current}
+            onSubmit={(prompt: string, typeKey?: string) => runGenerate(prompt, typeKey)}
+            onCancel={goHome}
+            logLines={logLines}
+            tokensUsed={Math.min(4096, logLines.length * 200)}
+            tokenBudget={4096}
+          />
+        </div>
       )}
 
       {error && !result && (

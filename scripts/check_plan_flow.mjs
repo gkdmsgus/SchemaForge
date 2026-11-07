@@ -2,7 +2,19 @@
 // 만들기" sends the approved plan with the generation (it was shown and approved but never sent, so a 12 V LM7812
 // plan came out as a 5 V LM7805: frame review of the tour, 2026-10-30), P2 ↺ of the same description sends it again,
 // P3 the generation screen opens at its top when the plan was approved further down the page (it opened scrolled down,
-// "회로 만드는 중" out of view: 2026-11-03 tour takes 1 and 3, S28).
+// "회로 만드는 중" out of view: 2026-11-03 tour takes 1 and 3, S28), P4 a stream cut off inside its done frame says the
+// connection was lost (it went back to the home screen with no word, the model already paid for: review of 2026-11-06),
+// P5-P7 a cancelled plan request stays cancelled, whether its stop comes in time or not: its late plan does not come back
+// over the home screen, its failure does not start a generation (the plan is optional, so a failed one generates), and
+// its plan does not replace the steps of a later generation, whose 취소 still stops it (review of 2026-11-06),
+// P8 while /clarify is asked the screen says so with a 취소, and a double click asks once (the form stayed as it was, so
+// a second click sent the questions and the plan again, four model calls), P9 that 취소 stops the steps and leaves the form
+// as typed, P10 two clicks that reach the generation leave one running, which 취소 stops (the first ran on unseen and its
+// result came up after the cancel: review of 2026-11-06), P11 an offer of a saved result goes when another description is
+// asked about (under the questions step its 불러오기 opened the saved circuit and the steps ran on, and that generation then
+// took the screen; its 새로 생성 did nothing), P12 a generation stopped too late for its failure (500, 403, 401) says nothing
+// and asks for no login, on the home screen the person went back to, P13 with no questions step (a circuit type picked,
+// or the questions off) a double click asks for one plan (the second one aborted the first, whose model call ran on).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_plan_flow.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -76,6 +88,185 @@ try {
   check('P3 the generation screen opens at its top after a plan approved further down', before > 0 && after === 0 && room > 0,
     `plan page at ${before} px, generation screen at ${after} px (it scrolls ${room} px)`)
   answer()
+
+  // P4
+  const cut = await ctx.newPage()
+  await fake(cut, r => r.fulfill({ status: 200, contentType: 'text/event-stream',
+    body: 'event: status\ndata: 회로를 만들고 있습니다\n\nevent: done\ndata: {"code":"from skidl imp' }))
+  await toPlan(cut, '전원 회로 만들어줘 9V로')
+  await cut.getByRole('button', { name: '이 계획으로 회로 만들기' }).click()
+  const lost = await cut.getByText('회로 생성 중 연결이 끊겼습니다').waitFor({ timeout: 10000 }).then(() => true, () => false)
+  check('P4 a stream cut off inside its done frame says the connection was lost', lost, lost ? '' : 'no word on screen')
+
+  // P5-P7: the first description's plan waits; with abort doing nothing too, so the sequence number is tested on its own
+  const lateCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await lateCtx.addInitScript(() => {
+    localStorage.setItem('sf_token', 'fake-token')
+    localStorage.setItem('sf_user', JSON.stringify({ id: 'u1', email: 'owner@example.com' }))
+    localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: true }))
+    AbortController.prototype.abort = function () {}
+  })
+  const home = p => p.locator('.sf-home-input textarea')
+  const approve = p => p.getByRole('button', { name: '이 계획으로 회로 만들기' })
+  const shows = l => l.isVisible().catch(() => false)
+  const submit = async (p, description) => {
+    await home(p).fill(description)
+    await p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  }
+  const holding = async (c, late, onGenerate = done) => {
+    const p = await c.newPage()
+    const held = { generations: 0, stopped: 0, release: () => {} }
+    const released = new Promise(r => { held.release = r })
+    p.on('requestfailed', r => { if (/\/(plan|generate)$/.test(r.url())) held.stopped++ })
+    await fake(p, r => { held.generations++; return onGenerate(r) })
+    await p.route(/\/plan$/, async r => {
+      if (!/늦는/.test(r.request().postDataJSON()?.description)) return json(r, PLAN)
+      await released
+      await late(r).catch(() => {})
+    })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    return { p, held }
+  }
+  const cancelPlan = async p => {
+    await p.getByText('부품과 회로 구성을 정리하고 있습니다').waitFor({ timeout: 10000 })
+    await p.getByRole('button', { name: '취소', exact: true }).click()
+    await home(p).waitFor({ timeout: 5000 })
+  }
+  for (const [c, how] of [[ctx, 'stopped'], [lateCtx, 'stop too late']]) {
+    const p5 = await holding(c, r => json(r, PLAN))
+    await submit(p5.p, '늦는 계획의 전원 회로 5')
+    await cancelPlan(p5.p)
+    p5.held.release()
+    await p5.p.waitForTimeout(500)
+    check(`P5 a cancelled plan does not come back over the home screen (${how})`, await shows(home(p5.p)) && !(await shows(approve(p5.p)))
+      && p5.held.stopped === (c === ctx ? 1 : 0), `${p5.held.stopped} requests stopped`)
+
+    const p6 = await holding(c, r => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"check"}' }))
+    await submit(p6.p, '늦는 계획의 전원 회로 6')
+    await cancelPlan(p6.p)
+    p6.held.release()
+    await p6.p.waitForTimeout(500)
+    check(`P6 a cancelled plan's failure starts no generation (${how})`, await shows(home(p6.p)) && p6.held.generations === 0, `${p6.held.generations} generations`)
+
+    let answer7
+    const answered7 = new Promise(r => { answer7 = r })
+    const p7 = await holding(c, r => json(r, PLAN), async r => { await answered7; await done(r).catch(() => {}) })
+    await submit(p7.p, '늦는 계획의 전원 회로 7')
+    await cancelPlan(p7.p)
+    await submit(p7.p, '다른 설명의 전원 회로')
+    await approve(p7.p).click({ timeout: 10000 })
+    await p7.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 10000 })
+    p7.held.release()
+    await p7.p.waitForTimeout(500)
+    const steps = await shows(p7.p.getByText(/^회로 만드는 중 · /)), over = await shows(approve(p7.p))
+    if (steps) await p7.p.getByRole('button', { name: '취소', exact: true }).click()
+    answer7()
+    await p7.p.waitForTimeout(500)
+    check(`P7 an old plan leaves a later generation's steps alone, and 취소 stops that generation (${how})`,
+      steps && !over && await shows(home(p7.p)) && !(await shows(p7.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first())),
+      `steps ${steps}, plan over them ${over}`)
+  }
+
+  // P8-P10: two clicks in one go, so the second lands before the screen has changed
+  const makeTwice = p => p.evaluate(() => {
+    const make = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '회로 만들기')
+    make.click()
+    make.click()
+  })
+  const settled = (settings, stopped) => async c => {
+    const p = await c.newPage()
+    await p.addInitScript(s => localStorage.setItem('sf_settings', JSON.stringify(s)), settings)
+    const held = { asked: 0, plans: 0, generations: 0, stopped: 0, release: () => {} }
+    const released = new Promise(r => { held.release = r })
+    p.on('requestfailed', r => { if (stopped.test(r.url())) held.stopped++ })
+    await fake(p, async r => { held.generations++; await released; await done(r).catch(() => {}) })
+    await p.route(/\/plan$/, r => { held.plans++; return json(r, PLAN) })
+    await p.route(/\/clarify$/, async r => { held.asked++; await released; await json(r, { clear: true }).catch(() => {}) })
+    await p.goto(BASE, { waitUntil: 'networkidle' })
+    return { p, held }
+  }
+  const asking = settled({ clarify: true, plan: true }, /\/clarify$/)
+  const p8 = await asking(ctx)
+  await home(p8.p).fill('질문을 기다리는 전원 회로')
+  await makeTwice(p8.p)
+  const says = await p8.p.getByText('확인 중').first().waitFor({ timeout: 5000 }).then(() => true, () => false)
+  const cancelShown = await shows(p8.p.getByRole('button', { name: '취소', exact: true }))
+  await p8.p.waitForTimeout(300)
+  p8.held.release()
+  const planCame = await approve(p8.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('P8 while the questions are asked the screen says so with a 취소, and a double click asks once',
+    says && cancelShown && planCame && p8.held.asked === 1 && p8.held.plans === 1, `says ${says}, 취소 ${cancelShown}, /clarify ${p8.held.asked}, /plan ${p8.held.plans}`)
+
+  for (const [c, how] of [[ctx, 'stopped'], [lateCtx, 'stop too late']]) {
+    const p9 = await asking(c)
+    await home(p9.p).fill('질문을 취소하는 전원 회로')
+    await p9.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await p9.p.getByText('확인 중').first().waitFor({ timeout: 5000 }).catch(() => {})
+    await p9.p.getByRole('button', { name: '취소', exact: true }).click({ timeout: 2000 }).catch(() => {})
+    await p9.p.waitForTimeout(300)
+    const typed = await home(p9.p).inputValue().catch(() => '')
+    p9.held.release()
+    await p9.p.waitForTimeout(500)
+    const noSteps = p9.held.plans === 0 && !(await shows(approve(p9.p))) && await shows(home(p9.p))
+    await p9.p.getByRole('button', { name: '회로 만들기', exact: true }).click({ timeout: 2000 }).catch(() => {})
+    const again = await approve(p9.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+    check(`P9 취소 while the questions are asked stops the steps and leaves the form as typed (${how})`,
+      noSteps && typed === '질문을 취소하는 전원 회로' && again && p9.held.stopped === (c === ctx ? 1 : 0),
+      `form "${typed}", no steps ${noSteps}, can ask again ${again}, ${p9.held.stopped} requests stopped`)
+
+    const p10 = await settled({ clarify: false, plan: false }, /\/generate$/)(c)
+    await home(p10.p).fill('두 번 눌린 전원 회로')
+    await makeTwice(p10.p)
+    await p10.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 5000 })
+    await p10.p.waitForTimeout(300)
+    await p10.p.getByRole('button', { name: '취소', exact: true }).click()
+    p10.held.release()
+    await p10.p.waitForTimeout(600)
+    const backHome = await shows(home(p10.p)), popped = await shows(p10.p.getByRole('button', { name: /PCB (다시 )?생성/ }).first())
+    check(`P10 of two generations one stays, and 취소 leaves none to come up later (${how})`,
+      backHome && !popped && p10.held.stopped === (c === ctx ? 2 : 0), `${p10.held.generations} sent, ${p10.held.stopped} stopped, home ${backHome}, result came up ${popped}`)
+  }
+
+  // P11: the first description has a saved result, so its offer is up; the second one is being asked about
+  const p11 = await settled({ clarify: true, plan: false }, /\/clarify$/)(ctx)
+  await p11.p.evaluate(result => localStorage.setItem('sf_saved_results', JSON.stringify([{ id: 1, name: 'a', prompt: '저장된 전원 회로', result, time: Date.now() }])), demo)
+  await home(p11.p).fill('저장된 전원 회로')
+  await p11.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  const open11 = p11.p.getByRole('button', { name: '불러오기', exact: true })
+  await open11.waitFor({ timeout: 5000 })
+  await home(p11.p).fill('다른 설명의 전원 회로')
+  await p11.p.getByRole('button', { name: '회로 만들기', exact: true }).click()
+  await p11.p.getByTestId('preparing').waitFor({ timeout: 5000 })
+  const offerStays = await shows(open11)
+  check('P11 an offer of a saved result goes when another description is asked about', !offerStays, `offer under the questions step ${offerStays}`)
+  p11.held.release()
+
+  // P12: the stop does nothing, as when it comes while the refused answer's body is being read
+  for (const [status, body] of [[500, { error: 'check' }], [403, { error: 'check' }], [401, { error: 'check', code: 'login_required' }]]) {
+    let answer12
+    const answered12 = new Promise(r => { answer12 = r })
+    const p12 = await holding(lateCtx, r => json(r, PLAN), async r => {
+      await answered12
+      await r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {})
+    })
+    await p12.p.addInitScript(() => localStorage.setItem('sf_settings', JSON.stringify({ clarify: false, plan: false })))
+    await p12.p.goto(BASE, { waitUntil: 'networkidle' })
+    await submit(p12.p, '늦게 거절되는 전원 회로')
+    await p12.p.getByText(/^회로 만드는 중 · /).waitFor({ timeout: 10000 })
+    await p12.p.getByRole('button', { name: '취소', exact: true }).click()
+    await home(p12.p).waitFor({ timeout: 5000 })
+    answer12()
+    await p12.p.waitForTimeout(500)
+    const box = await shows(p12.p.getByText(/check|서버 오류/).first()), login = await shows(p12.p.locator('input[type=password]').first())
+    check(`P12 a generation stopped too late for its ${status} says nothing on the home screen`, !box && !login && await shows(home(p12.p)), `error box ${box}, login ${login}`)
+  }
+
+  // P13
+  const p13 = await settled({ clarify: false, plan: true }, /\/plan$/)(ctx)
+  await home(p13.p).fill('두 번 눌린 계획의 전원 회로')
+  await makeTwice(p13.p)
+  const came13 = await approve(p13.p).waitFor({ timeout: 5000 }).then(() => true, () => false)
+  check('P13 with no questions step a double click asks for one plan', came13 && p13.held.plans === 1 && p13.held.stopped === 0, `/plan ${p13.held.plans}, stopped ${p13.held.stopped}, plan shown ${came13}`)
 } finally {
   await browser.close()
 }

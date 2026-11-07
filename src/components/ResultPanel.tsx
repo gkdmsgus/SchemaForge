@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
-import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
 import {
   addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText,
   type AuthUser, type SessionPatch,
@@ -42,12 +40,19 @@ export function getSavedResults(): StoredEntry[] {
   try { return JSON.parse(localStorage.getItem('sf_saved_results') || '[]') } catch { return [] }
 }
 
-function updateSavedResultChat(prompt: string, messages: ChatMessage[], graph: NetGraph | null) {
-  const saved = getSavedResults()
-  const idx = saved.findIndex(s => s.prompt === prompt)
-  if (idx < 0) return
-  saved[idx] = { ...saved[idx], messages, graph: graph || saved[idx].graph }
-  localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+/**
+ * The saved entry of this description follows the chat and the circuit, while it holds this circuit: ↺ leaves it with the
+ * newest version, and an edit of an older one opened as the newest one's file with the older one's parts (2026-11-07).
+ * An answer still coming stays out: opened again, its cursor would blink on.
+ */
+function updateSavedResultChat(prompt: string, filename: string | undefined, messages: ChatMessage[], graph: NetGraph | null) {
+  try {
+    const saved = getSavedResults()
+    const idx = saved.findIndex(s => s.prompt === prompt && s.result?.filename === filename)
+    if (idx < 0) return
+    saved[idx] = { ...saved[idx], messages: messages.filter(m => !m._streaming), graph: graph || saved[idx].graph }
+    localStorage.setItem('sf_saved_results', JSON.stringify(saved))
+  } catch { /* storage full or blocked: the edit stays in memory */ }
 }
 
 /** After a code run: the saved entry keeps the edited code and its circuit (the chat graph is replaced). */
@@ -129,6 +134,10 @@ export default function ResultPanel({
   const [gerberError, setGerberError] = useState('')
   // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
   const gerberReq = useRef(0)
+  // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
+  // AI rounds, once the connection closes; left open, a board nobody would see went on to the end (review of 2026-11-06)
+  const pcbAbort = useRef<AbortController | null>(null)
+  useEffect(() => () => pcbAbort.current?.abort(), [])
   const [activeTab, setActiveTab] = useState('Netlist')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
@@ -154,8 +163,8 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // the operating checks open from their chip in the tab bar, so they never sit over the schematic uninvited
   const [opOpen, setOpOpen] = useState(false)
-  // the netlist check on the circuit the AI editor changed, run again after every change (a fix made by chat shows at once)
-  const [aiErc, setAiErc] = useState<{ graph: NetGraph; findings: ErcFinding[] | null; error?: string } | null>(null)
+  // the netlist check run again after every change of the circuit (a fix made by chat shows at once) or of the style
+  const [aiErc, setAiErc] = useState<{ graph: NetGraph; style: 'smd' | 'tht'; findings: ErcFinding[] | null; error?: string } | null>(null)
   const [ercRetry, setErcRetry] = useState(0)       // 다시 점검: runs the check on the same circuit again
   // what the current board was built from, to tell when it no longer matches the circuit
   const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
@@ -163,9 +172,19 @@ export default function ResultPanel({
   const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
   const effectiveGraph = localGraph || result?.graph
-  // the AI chat changed the circuit (a session opened from history starts with localGraph === result.graph,
-  // or with savedEdit when its saved circuit is an AI edit)
+  // the circuit on screen now, for an answer that comes back later (sendChat)
+  const graphNow = useRef(effectiveGraph)
+  graphNow.current = effectiveGraph
+  // the circuit is no longer the generated one: changed in the AI chat or by hand on the schematic (a session opened
+  // from history starts with localGraph === result.graph, or with savedEdit when its saved circuit is an AI edit)
   const aiEdited = !!localGraph && localGraph !== result?.graph
+  // the circuits with a hand edit in them, by object as every test of an edit here, so an undo brings the words back
+  // too: every path below is the same for both, but "AI 편집" on a hand edit says what did not happen. An entry opened
+  // with a circuit no chat answer explains has one too
+  const handGraphs = useRef(new WeakSet<NetGraph>())
+  if (aiEdited && localGraph === initialChatSession?.graph && !initialChatSession?.messages.some(m => m.actions?.length)) handGraphs.current.add(localGraph)
+  const handEdited = !!localGraph && handGraphs.current.has(localGraph)
+  const editWord = handEdited ? '편집' : 'AI 편집'
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
   const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
     : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
@@ -174,8 +193,8 @@ export default function ResultPanel({
   // built from it has its own (the one the .kicad_pcb was made from), and that is the file shown and given
   const boardNet = boardNetlist(aiEdited, pcbStatus, pcbStale, pcbFilename)
   const netFile = boardNet ?? result?.filename
-  const netNote = netlistNote(aiEdited, boardNet)
-  const guideLine = guideNote(!!result?.codeEdited, aiEdited)
+  const netNote = netlistNote(aiEdited, boardNet, editWord)
+  const guideLine = guideNote(!!result?.codeEdited, aiEdited, editWord)
   useEffect(() => {
     if (!drawerOpen || activeTab !== 'Netlist' || !netFile || netText?.file === netFile) return
     let off = false
@@ -185,24 +204,29 @@ export default function ResultPanel({
       .then(got => { if (!off) setNetText({ file: netFile, ...got }) })
     return () => { off = true }
   }, [drawerOpen, activeTab, netFile, netText?.file])
+  // what the check runs on: an edited circuit, or the generated one on THT, since /generate's own check uses the SMD
+  // table and a pin's pad differs (a floating Q_NPN base is pad 1 on SMD, 2 on THT: the banner said 1 on a THT board,
+  // review of 2026-11-06). A code run's circuit says its findings in the Code tab, and a result with no check has no banner
+  const ercGraph = aiEdited ? localGraph : pcbStyle === 'tht' && result?.erc && !result.codeEdited ? result.graph ?? null : null
   useEffect(() => {
-    if (!aiEdited || !localGraph) return
+    if (!ercGraph) return
     let off = false
+    const style = pcbStyle
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: localGraph }) })
+        const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: ercGraph, style }) })
         const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string } | null
         if (off) return
         const why = res.status === 404 ? '서버에 이 점검 기능이 없습니다. 서버를 최신 코드로 다시 시작하면 됩니다.'
           : res.status === 400 ? '회로에 점검할 수 없는 이름(따옴표나 괄호)이 있습니다.'
             : !res.ok ? `서버가 점검하지 못했습니다 (HTTP ${res.status}).` : undefined
-        setAiErc({ graph: localGraph, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
+        setAiErc({ graph: ercGraph, style, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
       } catch {
-        if (!off) setAiErc({ graph: localGraph, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })
+        if (!off) setAiErc({ graph: ercGraph, style, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })
       }
     }, 300)
     return () => { off = true; clearTimeout(timer) }
-  }, [aiEdited, localGraph, ercRetry])
+  }, [ercGraph, pcbStyle, ercRetry])
   // a session opened again (history, favourites) may already be a favourite: the star starts filled
   useEffect(() => {
     if (!authUser || !sessionId) return
@@ -224,8 +248,9 @@ export default function ResultPanel({
   // a circuit error (a pin left on its own) makes a pass read as not judged
   const opHead = operatingHeadline(opResults, circuitErrors.length)
   const opFixMap = useMemo(() => (effectiveGraph ? opFixes(fromGraph(effectiveGraph, pcbStyle), opResults) : new Map<string, Fix>()), [effectiveGraph, pcbStyle, opResults])
-  const aiErcNow = aiEdited && aiErc?.graph === localGraph ? aiErc : null
-  const ercShown = aiEdited ? aiErcNow?.findings ?? [] : result?.erc?.findings ?? []
+  const aiErcNow = ercGraph && aiErc?.graph === ercGraph && aiErc.style === pcbStyle ? aiErc : null
+  // on THT with no edit, the generation's own check until the run with the THT table has answered (or if it could not run)
+  const ercShown = aiEdited ? aiErcNow?.findings ?? [] : aiErcNow?.findings ?? result?.erc?.findings ?? []
   const ercFixList = useMemo(() => ercFixes(ercShown, aiEdited ? localGraph : result?.graph), [ercShown, aiEdited, localGraph, result?.graph])
   // parts list: the board's footprints once a PCB exists (deps on parts/final, not every streamed frame)
   const boardParts = board?.parts
@@ -234,6 +259,13 @@ export default function ResultPanel({
     ? { parts: boardFinal?.parts ?? boardParts ?? [], unmapped: boardFinal?.unmapped ?? [] }
     : null), [boardFinal, boardParts])
   const bomStyle = boardFinal?.style ?? pcbStyle
+  // what a maker would build wrong from this board: the gerber step warns instead of saying to upload it as it is
+  // (green, with an unrouted net or a stand-in footprint: review of 2026-11-06). Ordering is the person's call, so it still downloads
+  const fabIssues = [
+    boardFinal?.unrouted?.length ? `이어지지 않은 연결 ${boardFinal.unrouted.length}개` : '',
+    pcbSummary?.unmapped?.length ? `풋프린트 없는 부품 ${pcbSummary.unmapped.length}개` : '',
+    board?.drc?.unconnected ? `KiCad 점검에서 끊긴 곳 ${board.drc.unconnected}개` : '',
+  ].filter(Boolean)
   // the netlist check /generate ran: shown on the schematic while the circuit is still that netlist
   const ercNotice = useMemo(() => {
     // after an AI edit: the check run on the edited circuit (the generated one no longer applies)
@@ -242,16 +274,18 @@ export default function ResultPanel({
       if (!aiErcNow.findings) return { tone: 'warn' as const, head: '바뀐 회로의 연결 점검을 돌리지 못했습니다', retry: true,
         lines: [aiErcNow.error ?? '이유를 알 수 없습니다', '회로가 틀렸다는 뜻은 아닙니다. 다시 점검하거나, PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
       const errs = aiErcNow.findings.filter(f => f.severity === 'error')
-      if (errs.length) return { tone: 'bad' as const, head: `AI 편집 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
-        lines: ['AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
-      return { tone: 'ok' as const, head: 'AI 편집 뒤 연결 점검 통과', lines: ['바뀐 회로를 다시 점검했습니다. 기판은 PCB를 다시 만들어야 바뀝니다.'] }
+      if (errs.length) return { tone: 'bad' as const, head: `${editWord} 뒤 연결 점검 오류 ${ercErrorCount(errs)}개`,
+        lines: [handEdited ? '바뀐 회로를 다시 점검한 결과입니다. 아래처럼 고치거나, 마지막 수정을 되돌립니다.'
+          : 'AI 편집으로 바뀐 회로를 다시 점검한 결과입니다. 아래처럼 AI에게 다시 요청하거나, 마지막 AI 수정을 되돌립니다.'] }
+      return { tone: 'ok' as const, head: `${editWord} 뒤 연결 점검 통과`, lines: ['바뀐 회로를 다시 점검했습니다. 기판은 PCB를 다시 만들어야 바뀝니다.'] }
     }
     const erc = result?.erc
     if (!erc || result?.codeEdited) return null
-    const errors = (erc.findings ?? []).filter(f => f.severity === 'error')
+    const findings = aiErcNow?.findings ?? erc.findings
+    const errors = (findings ?? []).filter(f => f.severity === 'error')
     const count = ercErrorCount(errors)
     const rep = erc.repair
-    if (!erc.findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
+    if (!findings) return { tone: 'warn' as const, head: '넷리스트 점검(ERC)을 돌리지 못했습니다',
       lines: [erc.reason ?? '이유를 알 수 없습니다', 'PCB를 만들면 기판 점검에서 다시 확인합니다.'] }
     if (errors.length) return { tone: 'bad' as const, head: `넷리스트 점검(ERC) 오류 ${count}개`,
       lines: [
@@ -261,7 +295,7 @@ export default function ResultPanel({
     if (rep?.kept) return { tone: 'ok' as const, head: `넷리스트 점검(ERC) 오류를 자동으로 고쳤습니다 (오류 ${rep.before} → ${rep.after})`,
       lines: ['AI가 고친 코드를 다시 실행해 오류가 줄고, 맞게 이어져 있던 연결과 부품 값이 그대로일 때만 바꿨습니다. Code 탭에서 확인할 수 있습니다.'] }
     return null
-  }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow])
+  }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow, handEdited, editWord])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
   const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
 
@@ -300,12 +334,22 @@ export default function ResultPanel({
       .catch(e => setSyncError(`AI 편집 대화를 기록에 저장하지 못했습니다: ${(e as Error).message}`))
   }
 
+  /** A hand edit on the schematic goes the way of a chat edit: the checks, the BOM, the PCB, undo and the saves follow it. */
+  function applyHandEdit(next: NetGraph) {
+    handGraphs.current.add(next)
+    if (effectiveGraph) pushGraphHistory(effectiveGraph)
+    setLocalGraph(next)
+    saveToSession({ graph: next })
+    updateSavedResultChat(lastPrompt, result?.filename, chatMessages, next)
+  }
+
   function undoGraph() {
     const restored = graphHistory[graphHistory.length - 1]
     if (!restored) return
     setGraphHistory(prev => prev.slice(0, -1))
     setLocalGraph(restored)
     saveToSession({ graph: restored })
+    updateSavedResultChat(lastPrompt, result?.filename, chatMessages, restored)
   }
 
   /** 초기화: back to the circuit as generated (or as last saved, for a session opened from history; a saved AI edit stays one) */
@@ -314,7 +358,10 @@ export default function ResultPanel({
     const changed = effectiveGraph !== back
     setLocalGraph(savedEdit)
     setGraphHistory([])
-    if (changed && back) saveToSession({ graph: back })
+    if (changed && back) {
+      saveToSession({ graph: back })
+      updateSavedResultChat(lastPrompt, result?.filename, chatMessages, back)
+    }
   }
 
   // Streams placement and routing (/generate_pcb_stream): parts → init → frame… → route/rip… → done.
@@ -327,7 +374,7 @@ export default function ResultPanel({
       setViewMode('schematic')
       return
     }
-    // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
+    // an edited graph (AI or by hand): the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
       ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai }
       : result?.filename ? { filename: result.filename, style, ai } : null
@@ -342,17 +389,23 @@ export default function ResultPanel({
     setGerberStatus(null)
     setGerberInfo(null)
     setViewMode('pcb')
+    pcbAbort.current?.abort()
+    const abort = new AbortController()
+    pcbAbort.current = abort
     try {
       const res = await authFetch(`${API}/generate_pcb_stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abort.signal,
       })
       if (ai && (res.status === 401 || res.status === 403)) {
         // a deployed server keeps the AI rounds for listed accounts: say why, and build the board without them
         // (401: no login, or it ran out and could not be renewed, so the app also asks for the login)
         const login = res.status === 401
-        setAiNote({ text: await errorText(res), login })
+        const why = await errorText(res)
+        if (abort.signal.aborted) return
+        setAiNote({ text: why, login })
         if (login) onAuthExpired?.()
         return generatePCB({ style, ai: false })
       }
@@ -389,6 +442,7 @@ export default function ResultPanel({
       }
       if (!done) throw new Error('stream ended without a result')
     } catch (e) {
+      if ((e as Error).name === 'AbortError') return
       setBoard(b => b && { ...b, status: 'error' })
       setPcbStatus('error')
       console.error('PCB generation failed:', e)
@@ -497,6 +551,7 @@ export default function ResultPanel({
       const decoder = new TextDecoder()
       let buf = ''
       let streamedText = ''
+      let finished = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -521,8 +576,11 @@ export default function ResultPanel({
             })
             setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 10)
           } else if (evt === 'done') {
+            finished = true
             const { reply, actions: proposed } = JSON.parse(raw)
-            const snapshot = effectiveGraph ?? null
+            // the circuit as it is now: the answer is a list of changes, and on the circuit it was asked about it took back
+            // a hand edit or an undo made while it was on its way, on screen and in the saves (2026-11-07)
+            const snapshot = graphNow.current ?? null
             // what of the model's edit goes in is the code's call (graphEdit.ts chatEdit): a pin of a part the
             // message does not name keeps its net, and a reply that asks first changes nothing yet. Nothing left to
             // apply leaves the circuit, undo list and re-check alone, and says so under a reply that does not ask
@@ -533,6 +591,7 @@ export default function ResultPanel({
             if (edit?.changed && snapshot) {
               pushGraphHistory(snapshot)
               newGraph = edit.graph
+              if (handGraphs.current.has(snapshot)) handGraphs.current.add(newGraph)
               const diff = computeDiff(snapshot, newGraph)
               setGraphDiff(diff)
               // Let removed parts flash before they disappear, then show diagnostics.
@@ -543,17 +602,21 @@ export default function ResultPanel({
             const assistantMsg: ChatMessage = { role: 'assistant', content: `${reply as string}${note}`, actions: actions || [] }
             setChatMessages(prev => {
               const next = [...prev.slice(0, -1), assistantMsg]
-              updateSavedResultChat(lastPrompt, next, newGraph)
+              updateSavedResultChat(lastPrompt, result?.filename, next, newGraph)
               return next
             })
             saveChat(msg, assistantMsg)
             if (newGraph && newGraph !== snapshot) saveToSession({ graph: newGraph })
           } else if (evt === 'error') {
+            finished = true
             const { message } = JSON.parse(raw)
             setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${message as string}`, actions: [] }])
           }
         }
       }
+      // ended with no answer (a proxy that closes cleanly when the server is replaced), as the PCB and generation
+      // streams report: the cursor blinked on and the half answer went to the model with the next request (2026-11-06)
+      if (!finished) throw new Error('연결이 끊겼습니다. 다시 요청해 주세요.')
     } catch (e) {
       setChatMessages(prev => [...prev.slice(0, -1), { role: 'assistant' as const, content: `오류: ${(e as Error).message}`, actions: [] }])
     }
@@ -585,19 +648,27 @@ export default function ResultPanel({
   async function exportPDF() {
     if (!resultRef.current) return
     const el = resultRef.current
-    const canvas = await html2canvas(el, { backgroundColor: '#f1ece0', scale: 2 })
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF('p', 'mm', 'a4')
-    const w = pdf.internal.pageSize.getWidth()
-    const h = (canvas.height * w) / canvas.width
-    let yOff = 0
-    const pageH = pdf.internal.pageSize.getHeight()
-    while (yOff < h) {
-      if (yOff > 0) pdf.addPage()
-      pdf.addImage(imgData, 'PNG', 0, -yOff, w, h)
-      yOff += pageH
+    try {
+      // fetched on the click: with what they bring along they are a third of the first download, for a button few press
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')])
+      const canvas = await html2canvas(el, { backgroundColor: '#f1ece0', scale: 2 })
+      const imgData = canvas.toDataURL('image/png')
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const w = pdf.internal.pageSize.getWidth()
+      const h = (canvas.height * w) / canvas.width
+      let yOff = 0
+      const pageH = pdf.internal.pageSize.getHeight()
+      while (yOff < h) {
+        if (yOff > 0) pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, -yOff, w, h)
+        yOff += pageH
+      }
+      pdf.save('SchemaForge_회로.pdf')
+    } catch (e) {
+      // a tab open across a deploy: the files of the old build are gone
+      console.error('PDF export failed:', e)
+      alert('PDF를 만들지 못했습니다. 새로고침한 뒤 다시 시도해 주세요.')
     }
-    pdf.save('SchemaForge_회로.pdf')
   }
 
   if (!result) return null
@@ -733,7 +804,7 @@ export default function ResultPanel({
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
               <button onClick={() => setEditorOpen(false)} title="접기" aria-label="AI 편집 패널 접기" style={collapseBtn}>‹</button>
               {graphHistory.length > 0 && (
-                <button onClick={undoGraph} title="마지막 AI 수정 취소" style={{
+                <button onClick={undoGraph} title={handEdited ? '마지막 수정 취소' : '마지막 AI 수정 취소'} style={{
                   fontSize: 9, fontFamily: 'var(--sf-font-mono)', color: 'var(--sf-violet)',
                   background: 'none', border: '1px solid var(--sf-violet-line)', borderRadius: 4,
                   padding: '2px 6px', cursor: 'pointer',
@@ -927,11 +998,12 @@ export default function ResultPanel({
                 {/* done: the zip itself is the "done" sign, so the narrow tab bar does not push it out of view */}
                 {gerberStatus === 'done' && (gerberInfo?.zip
                   ? <a href={gerberFileUrl(gerberInfo.dir, gerberInfo.zip)} download data-testid="gerber-zip"
-                      title="거버 완료 · PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올립니다"
-                      style={{ ...ghostBtn, textDecoration: 'none', color: TONE_COLOR.ok, borderColor: TONE_COLOR.ok, fontWeight: 600 }}>
-                      ↓ 거버 zip
+                      title={fabIssues.length ? `거버 완료 · ${fabWarning(fabIssues)}` : '거버 완료 · PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올립니다'}
+                      style={{ ...ghostBtn, textDecoration: 'none', color: TONE_COLOR[fabIssues.length ? 'warn' : 'ok'],
+                        borderColor: TONE_COLOR[fabIssues.length ? 'warn' : 'ok'], fontWeight: 600 }}>
+                      ↓ 거버 zip{fabIssues.length ? ' · 확인 필요' : ''}
                     </a>
-                  : <StatusChip tone="ok">거버 완료</StatusChip>)}
+                  : <StatusChip tone={fabIssues.length ? 'warn' : 'ok'} title={fabIssues.length ? fabWarning(fabIssues) : undefined}>거버 완료</StatusChip>)}
                 {gerberStatus === 'error' && (
                   <button onClick={generateGerber} data-testid="gerber-retry" title={`거버를 만들지 못했습니다: ${gerberError}\n눌러서 다시 만듭니다`}
                     style={{ ...ghostBtn, color: 'var(--sf-danger)' }}>거버 다시</button>
@@ -1036,7 +1108,8 @@ export default function ResultPanel({
           {/* canvas */}
           <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
             {viewMode === 'schematic'
-              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} spots={schematicSpots.current} />
+              ? <CircuitCanvas graph={effectiveGraph} graphDiff={graphDiff} invalidRefs={invalidRefs} spots={schematicSpots.current}
+                  onGraphChange={applyHandEdit} onUndo={graphHistory.length ? undoGraph : undefined} modified={aiEdited} />
               : viewMode === 'assembly'
                 ? board?.final && board.status === 'done'
                   ? <BoardView key="assembly" mode="assembly" pcbFilename={pcbFilename ?? undefined}
@@ -1060,8 +1133,9 @@ export default function ResultPanel({
             {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} circuitErrors={circuitErrors.length} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
+              // under the schematic's tool row (37 px): a hand edit that breaks the circuit brings this box, and that row has its undo
               <div role="alert" data-testid="circuit-diagnostics" style={{
-                position: 'absolute', left: 14, top: 14, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
+                position: 'absolute', left: 14, top: 48, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
                 background: 'rgba(25,20,18,0.96)', border: '1px solid rgba(255,92,92,0.55)', borderRadius: 8,
                 boxShadow: '0 10px 30px rgba(0,0,0,0.28)', color: '#f6eee5', fontFamily: 'var(--sf-font-mono)',
               }}>
@@ -1137,9 +1211,9 @@ export default function ResultPanel({
       }}>
         {/* tab handle bar */}
         <div style={{ height: BOTTOMBAR_H, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 2 }}>
-          {['Netlist', 'Guide', 'Sources', 'BOM', 'Code'].map(t => {
+          {['Netlist', 'Guide', 'BOM', 'Code'].map(t => {
             const isActive = drawerOpen && activeTab === t
-            const disabled = (t === 'Guide' && !result.guide) || (t === 'Sources' && !(result.sources?.length))
+            const disabled = t === 'Guide' && !result.guide
             return (
               <button key={t} disabled={disabled} className="sf-drawer-tab" aria-pressed={isActive}
                 title={t === 'Code' && codeDirty ? '실행하지 않은 수정이 있습니다' : undefined} onClick={() => {
@@ -1183,23 +1257,16 @@ export default function ResultPanel({
                 <div style={{ padding:'14px 20px', color:'var(--sf-fg-dim)', fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{result.guide}</div>
               </>
             )}
-            {activeTab === 'Sources' && (result.sources?.length ?? 0) > 0 && (
-              <div style={{ padding:'14px 20px' }}>
-                {(result.sources ?? []).map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noopener" style={{ display:'block', padding:'5px 0', color:'var(--sf-cyan)', fontSize:12, fontFamily:'var(--sf-font-mono)', wordBreak:'break-all' }}>{url}</a>
-                ))}
-              </div>
-            )}
             {activeTab === 'BOM' && (
               <BomTable components={effectiveGraph?.components ?? []} board={bomBoard} style={bomStyle} fileBase={result.filename?.replace(/\.net$/, '')} />
             )}
             {activeTab === 'Code' && (
               <CodeEditor code={result.code ?? ''} edit={codeEdit} setEdit={setCodeEdit} onApplied={applyCodeResult}
-                lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited}
+                lastRun={lastRun} onDismissRun={() => setCodeRun(null)} aiEdited={aiEdited} editWord={editWord}
                 pcbStale={pcbStale === 'circuit'} onRegeneratePcb={() => generatePCB()} canRun={!!authUser} onAuthExpired={onAuthExpired} />
             )}
             {gerberStatus === 'done' && gerberInfo && activeTab === 'Netlist' && !pcbStale && (
-              <GerberFilePanel info={gerberInfo} />
+              <GerberFilePanel info={gerberInfo} issues={fabIssues} />
             )}
           </div>
         )}
@@ -1378,7 +1445,9 @@ type GerberInfo = { dir: string; files?: string[]; zip?: string }
 
 const gerberFileUrl = (dir: string, file: string) => `/download_gerber_file/${dir}/${encodeURIComponent(file)}`
 
-function GerberFilePanel({ info }: { info: GerberInfo }) {
+const fabWarning = (issues: string[]) => `주문 전에 고칠 것이 있습니다: ${issues.join(', ')}. 이대로 만들면 기판이 동작하지 않을 수 있습니다.`
+
+function GerberFilePanel({ info, issues }: { info: GerberInfo; issues: string[] }) {
   const { dir, files = [], zip } = info
   const layerLabels = {
     '.gtl': '상단 동박 (Top Copper)',
@@ -1410,7 +1479,7 @@ function GerberFilePanel({ info }: { info: GerberInfo }) {
           color: 'var(--sf-amber)', letterSpacing: '0.14em',
         }}>GERBER</span>
         <span style={{ fontSize: 11, color: 'var(--sf-fg-dim)', fontFamily: 'var(--sf-font-mono)' }}>
-          {files.length}개 파일 · 제조사 업로드 가능
+          {files.length}개 파일 · {issues.length ? '제조 전 확인 필요' : '제조사 업로드 가능'}
         </span>
         <span style={{ flex: 1 }} />
         {zip && (
@@ -1421,7 +1490,11 @@ function GerberFilePanel({ info }: { info: GerberInfo }) {
           }}>↓ zip 한 번에 받기</a>
         )}
       </div>
-      {zip && (
+      {issues.length > 0 ? (
+        <p role="alert" data-testid="gerber-warning" style={{ margin: '0 0 10px', fontSize: 11.5, lineHeight: 1.5, color: TONE_COLOR.warn }}>
+          {fabWarning(issues)} 고친 뒤 PCB와 거버를 다시 만듭니다.{zip ? ' 아래는 zip 안의 파일입니다.' : ''}
+        </p>
+      ) : zip && (
         <p style={{ margin: '0 0 10px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--sf-fg-muted)' }}>
           PCB 업체(JLCPCB 등) 주문 화면에 이 zip 하나를 그대로 올리면 됩니다. 아래는 zip 안의 파일입니다.
         </p>

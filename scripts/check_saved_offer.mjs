@@ -2,7 +2,10 @@
 // O1 asked from the circuit-type panel further down the page, the offer comes into view (it sat at the top of the
 // page, out of view, and the make button seemed to do nothing: tour take 4, 2026-10-29), O2 불러오기 opens the
 // saved circuit without asking the server for a plan or a circuit again. O3-O5 what that panel sends: a field that takes
-// several sends its chips and what was typed, in either order; a single choice one or the other.
+// several sends its chips and what was typed, in either order; a single choice one or the other. O6 an entry saved with
+// an AI edit opens with the edit (the chat said "+C9" over a circuit without it, and the next PCB left it out: review of
+// 2026-11-06), O7 a saved copy equal in value is no edit, O8 an edit made, then undone or reset, opens as it was left,
+// O9 from the side drawer's list of this browser's records too (what it shows when the server's list does not come).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_saved_offer.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -97,6 +100,81 @@ try {
   check('O5 single choice stays one or the other: typing replaces the chip, a chip replaces the typing',
     typedSingle.includes('- 앰프 종류: OPA2134 앰프') && !typedSingle.includes('헤드폰') && pickedAfter.includes('- 앰프 종류: 파워앰프') && !pickedAfter.includes('OPA2134'),
     JSON.stringify({ typedSingle, pickedAfter }))
+
+  // O6-O8: the description typed, so its entry is found by it
+  const TYPED = '저장된 편집을 다시 여는 LED 회로'
+  let rechecks = 0
+  await page.route(/\/erc_graph$/, r => { rechecks++; return json(r, { erc: [] }) })
+  const c9 = { reply: 'C9를 더했습니다.', actions: [{ type: 'add_component', ref: 'C9', name: 'C', value: '100nF' },
+    { type: 'add_net', name: demo.graph.nets[0].name, nodes: [{ ref: 'C9', pin: '1' }] }, { type: 'add_net', name: demo.graph.nets[1].name, nodes: [{ ref: 'C9', pin: '2' }] }] }
+  await page.route(/\/chat_edit$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(c9)}\n\n` }))
+  const entry = extra => page.evaluate(([p, result, more]) => localStorage.setItem('sf_saved_results',
+    JSON.stringify([{ id: 2, name: p.slice(0, 40), prompt: p, result, time: Date.now(), ...more }])), [TYPED, demo, extra])
+  const openSaved = async () => {
+    await page.goto(BASE, { waitUntil: 'networkidle' })
+    await page.locator('.sf-home-input textarea').fill(TYPED)
+    await page.getByRole('button', { name: '회로 만들기', exact: true }).click()
+    await page.getByRole('button', { name: '불러오기', exact: true }).click({ timeout: 5000 })
+    await page.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+    await page.waitForTimeout(600)
+  }
+  const hasC9 = () => page.locator("g[data-comp='C9']").count().then(n => n > 0)
+  const reset = page.getByRole('button', { name: '초기화', exact: true })
+  const edited = { ...demo.graph, components: [...demo.graph.components, { ref: 'C9', name: 'C', value: '100nF' }] }
+
+  await entry({ graph: edited, messages: [{ role: 'user', content: 'C9 더해줘' }, { role: 'assistant', content: 'C9를 더했습니다.', actions: c9.actions }] })
+  await openSaved()
+  check('O6 an entry saved with an AI edit opens with the edit', await hasC9() && await page.getByText('+C9', { exact: true }).isVisible(),
+    `C9 on the schematic: ${await hasC9()}`)
+
+  await entry({ graph: JSON.parse(JSON.stringify(demo.graph)), messages: [{ role: 'user', content: '이 회로가 뭐야?' }, { role: 'assistant', content: 'LED 회로입니다.', actions: [] }] })
+  rechecks = 0
+  await openSaved()
+  // an edit is checked again on its own (ResultPanel's /erc_graph effect), the generated circuit is not
+  await page.waitForTimeout(500)
+  check('O7 a saved copy equal in value is no edit', !(await hasC9()) && rechecks === 0, `re-checks ${rechecks}`)
+
+  const makeC9 = async () => {
+    await page.getByTestId('chat-input').fill('C9 커패시터를 하나 추가해줘')
+    await page.getByTestId('chat-input').press('Enter')
+    await page.locator("g[data-comp='C9']").waitFor({ timeout: 5000 })
+    await page.waitForTimeout(300)
+  }
+  await entry({})
+  await openSaved()
+  await makeC9()
+  await openSaved()
+  const reopened = await hasC9()
+  await reset.click()
+  await page.locator("g[data-comp='C9']").waitFor({ state: 'detached', timeout: 5000 })
+  await openSaved()
+  const afterReset = await hasC9()
+  await makeC9()
+  await page.getByRole('button', { name: /되돌리기/ }).first().click()
+  await page.locator("g[data-comp='C9']").waitFor({ state: 'detached', timeout: 5000 })
+  await openSaved()
+  const afterUndo = await hasC9()
+  check('O8 an edit opens again; undone or reset, it does not', reopened && !afterReset && !afterUndo, `made ${reopened}, after 초기화 ${afterReset}, after 되돌리기 ${afterUndo}`)
+
+  // O9
+  await page.unroute(/\/(favorites|sessions)$/)
+  await page.route(/\/favorites$/, r => json(r, { favorites: [] }))
+  await page.route(/\/sessions$/, r => json(r, { error: 'check' }, 500))
+  const fromDrawer = async () => {
+    await page.goto(BASE, { waitUntil: 'networkidle' })
+    await page.locator("button[aria-label='메뉴']").click()
+    await page.getByText(TYPED.slice(0, 20)).first().click({ timeout: 5000 })
+    await page.locator('g[data-comp]').first().waitFor({ timeout: 10000 })
+    await page.waitForTimeout(600)
+  }
+  await entry({ graph: edited, messages: [{ role: 'user', content: 'C9 더해줘' }, { role: 'assistant', content: 'C9를 더했습니다.', actions: c9.actions }] })
+  await fromDrawer()
+  const drawerEdit = await hasC9()
+  await entry({ graph: JSON.parse(JSON.stringify(demo.graph)), messages: [] })
+  rechecks = 0
+  await fromDrawer()
+  await page.waitForTimeout(500)
+  check('O9 the side drawer opens an edit with the edit, and an equal copy as no edit', drawerEdit && !(await hasC9()) && rechecks === 0, `edit ${drawerEdit}, re-checks ${rechecks}`)
 } finally {
   await browser.close()
 }

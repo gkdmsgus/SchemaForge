@@ -41,8 +41,10 @@ interface CodeEditorProps {
   onApplied: (run: CodeRun) => void
   lastRun: CodeRunNote | null
   onDismissRun: () => void
-  /** the AI chat changed the circuit, so the code no longer describes it */
+  /** the AI chat or a hand edit changed the circuit, so the code no longer describes it */
   aiEdited: boolean
+  /** what to call that edit: 'AI 편집', or '편집' when a hand edit on the schematic is in it */
+  editWord?: string
   /** the board was built from a different circuit than the one shown now */
   pcbStale: boolean
   onRegeneratePcb: () => void
@@ -53,7 +55,7 @@ interface CodeEditorProps {
 }
 
 export default function CodeEditor({
-  code: rawCode, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, pcbStale, onRegeneratePcb, canRun, onAuthExpired,
+  code: rawCode, edit, setEdit, onApplied, lastRun, onDismissRun, aiEdited, editWord = 'AI 편집', pcbStale, onRegeneratePcb, canRun, onAuthExpired,
 }: CodeEditorProps) {
   const code = useMemo(() => toLF(rawCode), [rawCode])
   const lines = useMemo(() => tokenizePython(code), [code])
@@ -122,7 +124,7 @@ export default function CodeEditor({
     if (!edit || edit.running || !canRun) return
     const sent = edit.text
     if (!sent.trim() || sent === code) return
-    if (aiEdited && !window.confirm('AI 편집으로 바꾼 회로 대신 이 코드의 회로를 씁니다. 계속하시겠습니까?')) return
+    if (aiEdited && !window.confirm(`${editWord}으로 바꾼 회로 대신 이 코드의 회로를 씁니다. 계속하시겠습니까?`)) return
     setEdit({ text: sent, error: null, running: true })
     const fail = (headline: string, detail = '') => setEdit({ text: sent, error: { headline, detail, line: null } })
     try {
@@ -215,7 +217,7 @@ export default function CodeEditor({
       )}
       {aiEdited && (
         <div className="sf-code-note is-info">
-          <span className="sf-code-note-text">AI 편집으로 바꾼 회로는 이 코드에 없습니다. 코드를 실행하면 이 코드의 회로로 바뀝니다.</span>
+          <span className="sf-code-note-text">{editWord}으로 바꾼 회로는 이 코드에 없습니다. 코드를 실행하면 이 코드의 회로로 바뀝니다.</span>
         </div>
       )}
       {lastRun && <RunNotes run={lastRun} onDismiss={onDismissRun} />}

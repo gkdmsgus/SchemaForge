@@ -21,6 +21,16 @@ export function pinNumber(part: string | undefined, pin: string): string {
   return at >= 0 ? String(at + 1) : p
 }
 
+/**
+ * The circuit to open a browser-saved entry with: its own copy when that differs in value from the generated one (an
+ * edit, which opening result.graph lost, with its chat chips still shown: review of 2026-11-06), else the generated
+ * object itself, since the screen tells an edit by the object (ResultPanel aiEdited) and a chat with no change saves a copy.
+ */
+export function savedGraph(entry: { graph?: NetGraph | null; result?: { graph?: NetGraph } }): NetGraph | undefined {
+  const made = entry.result?.graph
+  return entry.graph && JSON.stringify(entry.graph) !== JSON.stringify(made) ? entry.graph : made
+}
+
 export function applyActions(graph: NetGraph, actions: ChatAction[]): NetGraph {
   let comps = [...(graph.components || [])]
   let nets = (graph.nets || []).map(n => ({ ...n, nodes: [...n.nodes] }))

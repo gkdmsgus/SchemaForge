@@ -1,7 +1,13 @@
 /**
- * Stage-5 checks: the 3D view is the same board, tilted.
+ * Stage-5 checks: the 3D view is the same board, tilted. With BASE set, also the KiCad 3D viewer itself, in a browser on a
+ * real demo board (a served app with KiCad, a minute or two): 31 leaving and reopening it leaves no WebGL context behind
+ * (each stayed, about 127 MB of GPU memory, until Chrome warned at 16: review of 2026-11-06), 32-39 it draws only when
+ * something changes (every frame, shadow pass included, it filled the main thread of an Iris Xe laptop during the tens of
+ * minutes 배치하기 stays open: review of 2026-11-06), and everything still redraws: its labels, a drag and the slide after
+ * it, the wheel, the top view, a pane resized, the hover light and tooltip, a pick and its badge, in both views,
+ * 40 a GPU reset gives back the same picture, shadows too (they are drawn once, and the context's loss took them).
  *
- * Run: npx tsx scripts/check_3d.ts [board.json ...]
+ * Run: npx tsx scripts/check_3d.ts [board.json ...]     BASE=http://localhost:8133 adds the browser checks
  * With no arguments it uses every *.board.json in server/outputs.
  * Exit code 0 only if every check passes.
  */
@@ -140,6 +146,228 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
   const [w0, h0] = span(0), [w90, h90] = span(90)
   check('30 rotation applies in 3D', Math.abs(w0 - h90) < 1e-9 && Math.abs(h0 - w90) < 1e-9,
     `${p.ref} ${w0.toFixed(2)}x${h0.toFixed(2)} -> ${w90.toFixed(2)}x${h90.toFixed(2)}`)
+}
+
+// The viewer in a browser. GL calls are counted on the context itself, so the count does not depend on the viewer's code.
+const BASE = process.env.BASE?.replace(/\/$/, '')
+if (!BASE) console.log('skip 31: BASE not set (not counted as passed)')
+else {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch()
+  try {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+    const warned: string[] = []
+    page.on('console', m => { if (m.type() === 'warning' || m.type() === 'error') warned.push(m.text()) })
+    await page.addInitScript(() => {
+      const gl = { draws: 0, contexts: [] as WebGLRenderingContext[] }
+      Object.assign(window, { __gl: gl })
+      for (const proto of [WebGL2RenderingContext.prototype, WebGLRenderingContext.prototype] as unknown as Record<string, (...a: unknown[]) => unknown>[]) {
+        for (const fn of ['drawElements', 'drawArrays', 'drawElementsInstanced', 'drawArraysInstanced', 'drawRangeElements']) {
+          const native = proto[fn]
+          if (native) proto[fn] = function (this: unknown, ...a: unknown[]) { gl.draws++; return native.apply(this, a) }
+        }
+      }
+      const getContext = HTMLCanvasElement.prototype.getContext as (...a: unknown[]) => unknown
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...a: unknown[]) {
+        const c = getContext.apply(this, a) as WebGLRenderingContext | null
+        if (c && /webgl/.test(String(a[0])) && !gl.contexts.includes(c)) gl.contexts.push(c)
+        return c
+      } as typeof HTMLCanvasElement.prototype.getContext
+    })
+    await page.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+    await page.getByRole('button', { name: /\.kicad_pcb/ }).waitFor({ timeout: 300000 })
+    await page.getByTestId('view-tab-assembly').click()
+    const viewer = page.locator('[data-testid="assembly-3d"] [data-testid="kicad-3d"]')
+    const ready = () => page.waitForSelector('[data-testid="assembly-3d"] [data-testid="kicad-3d"][data-state="ready"]', { timeout: 200000 })
+    await ready()
+
+    // 31: 2D and back, more times than the 16 contexts Chrome keeps
+    for (let i = 0; i < 18; i++) {
+      await page.getByTestId('assembly-view-2d').click()
+      await page.getByTestId('assembly-view-3d').click()
+      await viewer.waitFor({ timeout: 20000 })
+    }
+    await ready()
+    await page.waitForTimeout(500)
+    const alive = await page.evaluate(() => (window as unknown as { __gl: { contexts: WebGLRenderingContext[] } }).__gl.contexts.filter(c => !c.isContextLost()).length)
+    const tooMany = warned.filter(t => /Too many active WebGL contexts/.test(t)).length
+    check('31 the viewer closed 18 times leaves no WebGL context behind', alive === 1 && tooMany === 0, `${alive} alive, ${tooMany} warnings`)
+
+    // 32: left alone. Chrome's own counters say what the page cost in the same seconds
+    await page.mouse.move(2, 2)
+    await page.waitForTimeout(1500)
+    const draws = () => page.evaluate(() => (window as unknown as { __gl: { draws: number } }).__gl.draws)
+    const quiet = async (ms = 2000) => { const d0 = await draws(); await page.waitForTimeout(ms); return (await draws()) - d0 }
+    // until a whole second has no draw: the slide after a drag is a number of frames, and without a GPU a frame takes long
+    const settle = async () => {
+      for (let i = 0; i < 40; i++) {
+        const d = await draws()
+        await page.waitForTimeout(1000)
+        if (await draws() === d) return true
+      }
+      return false
+    }
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Performance.enable')
+    const busy = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]))
+    const m0 = await busy(), d0 = await draws()
+    await page.waitForTimeout(5000)
+    const m1 = await busy(), idle5 = (await draws()) - d0
+    const taskShare = (m1.TaskDuration - m0.TaskDuration) / (m1.Timestamp - m0.Timestamp)
+    check('32 the viewer left alone draws nothing', idle5 === 0,
+      `${idle5} GL draw calls in 5 s, main thread busy ${(100 * taskShare).toFixed(1)}%, script ${(m1.ScriptDuration - m0.ScriptDuration).toFixed(2)} s`)
+
+    // 33: a part picked in the list shows its labels (+ and − on its pads), placed with no input on the viewer
+    await page.locator('[data-assembly-info]').first().click()
+    await page.waitForTimeout(500)
+    const marks = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[data-mark-3d]')].map(n => ({ key: n.dataset.mark3d, display: n.style.display, at: n.style.transform })))
+    const m33 = await marks()
+    check('33 the labels sit on the board with no input', m33.length > 0 && m33.every(n => n.display === 'block' && /translate\(/.test(n.at)), `${m33.length} labels`)
+
+    // 34: a drag moves the picture and the labels; the slide after it ends, and with it the drawing
+    const box = (await viewer.boundingBox())!
+    const clip = { x: box.x, y: box.y, width: box.width, height: box.height }
+    const picture = () => page.screenshot({ clip }).then(b => b.toString('base64'))
+    const moved = (a: Awaited<ReturnType<typeof marks>>, b: Awaited<ReturnType<typeof marks>>) => a.filter((n, i) => n.at !== b[i]?.at).length
+    const before34 = await picture(), d34 = await draws()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 140, box.y + box.height / 2 + 30, { steps: 12 })
+    await page.mouse.up()
+    const m34 = await marks()
+    await settle()
+    const left34 = await quiet()
+    const after34 = await marks()
+    const slide = m34.filter((n, i) => n.at !== after34[i]?.at).length
+    check('34 a drag turns the board and its labels, and the drawing stops after the slide', await picture() !== before34 && (await draws()) - d34 > 0 && moved(m33, after34) > 0 && slide > 0 && left34 === 0,
+      `${(await draws()) - d34} draw calls, ${moved(m33, after34)} labels moved, ${slide} still moving after the release, ${left34} after it ended`)
+
+    // 35: a short drag (a few px) is not lost below the controls' change threshold, nor is a wheel notch
+    const small = await draws(), before35 = await marks()
+    await page.mouse.move(box.x + 40, box.y + 40)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 43, box.y + 41)
+    await page.mouse.up()
+    await settle()
+    const smallDrew = (await draws()) - small, smallMoved = moved(before35, await marks())
+    const wheel0 = await draws()
+    await page.mouse.wheel(0, -120)
+    await settle()
+    const wheelDrew = (await draws()) - wheel0, wheelMoved = moved(before35, await marks())
+    check('35 a short drag and a wheel notch redraw', smallDrew > 0 && wheelDrew > 0 && wheelMoved > 0 && await quiet() === 0, `drag ${smallDrew} draw calls (${smallMoved} labels), wheel ${wheelDrew} (${wheelMoved} labels)`)
+
+    // the top view button, a pane resized (the drawer below opening and closing)
+    const top0 = await draws(), before36 = await marks()
+    await page.getByTestId('assembly-top').click()
+    await settle()
+    const topDrew = (await draws()) - top0, topMoved = moved(before36, await marks()), topView = await viewer.getAttribute('data-view')
+    await page.getByTestId('assembly-top').click()
+    await settle()
+    const size0 = await page.evaluate(() => document.querySelector('[data-testid="assembly-3d"] canvas')!.clientHeight), res0 = await draws()
+    await page.locator('button.sf-drawer-tab', { hasText: 'BOM' }).first().click()
+    await settle()
+    const size1 = await page.evaluate(() => document.querySelector('[data-testid="assembly-3d"] canvas')!.clientHeight), resDrew = (await draws()) - res0
+    await page.locator('button.sf-drawer-tab', { hasText: 'BOM' }).first().click()
+    await settle()
+    check('36 the top view and a resized pane redraw, then it is quiet again', topView === 'top' && topDrew > 0 && topMoved > 0 && size1 !== size0 && resDrew > 0 && await quiet() === 0,
+      `top view ${topDrew} draw calls (${topMoved} labels), pane ${size0}→${size1} px ${resDrew} draw calls`)
+
+    // the part under the mouse, found from the labels (each sits on a pad), else over the pane
+    const partUnder = async (wanted = (_: string) => true) => {
+      const b = (await viewer.boundingBox())!
+      const fromMarks = (await marks()).flatMap(n => { const x = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(n.at); return x ? [[+x[1], +x[2]]] : [] })
+      const grid: number[][] = []
+      for (let y = 30; y < b.height; y += 30) for (let x = 30; x < b.width; x += 30) grid.push([x, y])
+      for (const [x, y] of [...fromMarks, ...grid]) {
+        await page.mouse.move(b.x + x, b.y + y)
+        await page.waitForTimeout(80)
+        const ref = await viewer.getAttribute('data-hover')
+        if (ref && wanted(ref)) return { ref, x: b.x + x, y: b.y + y }
+      }
+      return null
+    }
+    const hover0 = await draws()
+    const hit = await partUnder()
+    await page.waitForTimeout(300)
+    const lit = (await draws()) - hover0
+    const tipShown = await viewer.locator('[data-testid="kicad-3d-tip"]').isVisible() && !!(await viewer.locator('[data-testid="kicad-3d-tip"]').innerText()).trim()
+    const stillIdle = await quiet()
+    await page.mouse.move(2, 2)
+    await page.waitForTimeout(300)
+    const offPart = !(await viewer.getAttribute('data-hover'))
+    check('37 the part under the mouse lights up with its tooltip and goes out; a still mouse draws nothing', !!hit && lit > 0 && tipShown && stillIdle === 0 && offPart,
+      `${hit?.ref ?? 'no part found'}: ${lit} draw calls, tooltip ${tipShown}, then ${stillIdle} with the mouse still, off the part ${offPart}`)
+
+    // a click ticks the part, a resistor (one to check for its direction first only shows why): its badge floats over it
+    const resistor = await partUnder(ref => /^R\d/.test(ref))
+    await page.waitForTimeout(200)
+    const pick0 = await draws()
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.waitForTimeout(600)
+    const badge = await page.evaluate(ref => { const n = document.querySelector<HTMLElement>(`[data-badge-3d="${ref}"]`); return n ? { display: n.style.display, at: n.style.transform } : null }, resistor?.ref ?? '')
+    check('38 a click ticks the part: its badge is placed and the picture redrawn', !!badge && badge.display === 'grid' && /translate\(/.test(badge.at) && (await draws()) - pick0 > 0,
+      `${resistor?.ref}: badge ${JSON.stringify(badge)}, ${(await draws()) - pick0} draw calls`)
+
+    // the board view's own viewer: a pick lights the part violet and shows in the list
+    await page.getByTestId('view-tab-pcb').click()
+    await page.getByTestId('view-both').click()
+    await page.waitForSelector('[data-testid="kicad-3d"][data-state="ready"]', { timeout: 200000 })
+    const boardViewer = page.locator('[data-testid="kicad-3d"]')
+    await page.mouse.move(2, 2)
+    await settle()
+    const idleBoard = await quiet()
+    const b39 = (await boardViewer.boundingBox())!
+    let pickedRef = ''
+    for (let y = 30; y < b39.height && !pickedRef; y += 30) for (let x = 30; x < b39.width && !pickedRef; x += 30) {
+      await page.mouse.move(b39.x + x, b39.y + y)
+      await page.waitForTimeout(80)
+      if (await boardViewer.getAttribute('data-hover')) {
+        const d39 = await draws()
+        await page.mouse.down()
+        await page.mouse.up()
+        await page.waitForTimeout(500)
+        pickedRef = (await boardViewer.getAttribute('data-selected')) ?? ''
+        if (pickedRef && (await draws()) - d39 === 0) pickedRef = ''
+      }
+    }
+    const shadowWarned = warned.filter(t => /PCFSoftShadowMap/.test(t)).length
+    check('39 the PCB tab\'s viewer: quiet when left alone, a click picks a part and redraws; three.js has no complaint about the shadows', idleBoard === 0 && !!pickedRef && shadowWarned === 0,
+      `${idleBoard} draw calls alone, picked ${pickedRef || 'none'}, ${shadowWarned} shadow warnings`)
+
+    // 40: the context lost and restored by the extension a GPU reset goes through; the picture's own pixels compared
+    await page.mouse.move(2, 2)
+    await settle()
+    const b40 = (await boardViewer.boundingBox())!
+    const clip40 = { x: b40.x, y: b40.y, width: b40.width, height: b40.height }
+    const before40 = await page.screenshot({ clip: clip40 })
+    await page.evaluate(() => {
+      const gl = document.querySelector<HTMLCanvasElement>('[data-testid="kicad-3d"] canvas')!.getContext('webgl2')!
+      const lose = gl.getExtension('WEBGL_lose_context')!
+      Object.assign(window, { __lose: lose })
+      lose.loseContext()
+    })
+    await page.waitForTimeout(500)
+    await page.evaluate(() => (window as unknown as { __lose: WEBGL_lose_context }).__lose.restoreContext())
+    await settle()
+    const after40 = await page.screenshot({ clip: clip40 })
+    // the two PNGs, decoded by the page: the share of pixels that differ
+    const differ = await page.evaluate(async pngs => {
+      const [x, y] = await Promise.all(pngs.map(async b64 => {
+        const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob())
+        const c = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')!
+        c.drawImage(bitmap, 0, 0)
+        return c.getImageData(0, 0, bitmap.width, bitmap.height).data
+      }))
+      let off = 0
+      for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2]) > 12) off++
+      return off / (x.length / 4)
+    }, [before40.toString('base64'), after40.toString('base64')])
+    check('40 a GPU reset gives back the same picture, shadows too', differ < 0.002, `${(100 * differ).toFixed(2)}% of the pixels differ`)
+  } finally {
+    await browser.close()
+  }
 }
 
 let allOk = true

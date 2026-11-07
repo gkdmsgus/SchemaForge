@@ -19,13 +19,13 @@ export function boardNetlist(aiEdited: boolean, pcbStatus: string | null, pcbSta
  * there while the Code and Netlist tabs said it was not in them, so the wiring order could guide a circuit other than
  * the one on screen (2026-11-03 tour, S09 after the S06b and S06c edits)
  */
-export function guideNote(codeEdited: boolean, aiEdited: boolean): string | null {
-  return aiEdited ? '이 안내는 처음 생성한 회로 기준입니다. AI 편집으로 바꾼 곳은 안내에 없습니다.'
+export function guideNote(codeEdited: boolean, aiEdited: boolean, editWord = 'AI 편집'): string | null {
+  return aiEdited ? `이 안내는 처음 생성한 회로 기준입니다. ${editWord}으로 바꾼 곳은 안내에 없습니다.`
     : codeEdited ? '이 안내는 처음 생성한 회로 기준입니다. 코드를 고친 뒤에는 부품 설명이 맞지 않을 수 있습니다.' : null
 }
 
 /** the Netlist tab's one line over the file: whose circuit it is, when that is not the one generated */
-export function netlistNote(aiEdited: boolean, boardNet: string | null): string | null {
-  return boardNet ? 'PCB를 만든 AI 편집 회로의 넷리스트입니다. .kicad_pcb와 같은 회로입니다.'
-    : aiEdited ? 'AI 편집 내용은 이 넷리스트 파일에 없습니다. PCB를 생성하면 편집한 회로로 넷리스트를 새로 만듭니다.' : null
+export function netlistNote(aiEdited: boolean, boardNet: string | null, editWord = 'AI 편집'): string | null {
+  return boardNet ? `PCB를 만든 ${editWord} 회로의 넷리스트입니다. .kicad_pcb와 같은 회로입니다.`
+    : aiEdited ? `${editWord} 내용은 이 넷리스트 파일에 없습니다. PCB를 생성하면 편집한 회로로 넷리스트를 새로 만듭니다.` : null
 }
