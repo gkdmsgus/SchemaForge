@@ -8,7 +8,6 @@ interface DragState { ref: string; offsetX: number; offsetY: number; startX: num
 interface PanState { lastX: number; lastY: number }
 interface TraceDragState { netIdx: number; segIdx: number; startMx: number; startMy: number; startX: number; startY: number; pointerId: number; captured: boolean }
 interface TraceDrag { netIdx: number; segIdx: number }
-interface Toast { msg: string; timeoutId: ReturnType<typeof setTimeout> }
 
 const COPPER = '#d9a35a'
 const COPPER_GLOW = '#ffc56f'
@@ -174,9 +173,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   const [positions, setPositions] = useState<Record<string, Pos>>({})
   const [hoveredNet, setHoveredNet] = useState<number | null>(null)
   const [selectedNet, setSelectedNet] = useState<number | null>(null)
-  const [localNets, setLocalNets] = useState<NetEntry[] | null>(null)
-  const [netsHistory, setNetsHistory] = useState<NetEntry[][]>([])
-  const [toast, setToast] = useState<Toast | null>(null)
   const [traceBends, setTraceBends] = useState<Record<string, { mx: number; my: number }>>({})
   const [traceDrag, setTraceDrag] = useState<TraceDrag | null>(null)
   const traceDragRef = useRef<TraceDragState | null>(null)
@@ -185,8 +181,9 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
   const didPanRef = useRef(false)
 
   const comps: ComponentEntry[] = graph?.components || []
+  // a sketch of the circuit: it shows the nets as they are and changes none (a trace deleted here, under a "● 수정됨",
+  // was still in the BOM, the checks and the next PCB: review of 2026-11-07). Parts and bends move on screen only
   const nets: NetEntry[] = graph?.nets || []
-  const effectiveNets = localNets || nets
 
   const containerRef = useRef<HTMLDivElement>(null)
   const onWheelRef = useRef<((e: WheelEvent) => void) | null>(null)
@@ -214,7 +211,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
     setTraceDrag(null)
     traceDragRef.current = null
     setSelectedNet(null)
-    setLocalNets(null)
   }, [graph])
 
   if (!graph || !comps.length) return null
@@ -246,34 +242,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
       try { svgRef.current?.setPointerCapture(e.pointerId) } catch (_) {}
       e.preventDefault()
     }
-  }
-
-  function showToast(msg: string) {
-    setToast(prev => {
-      if (prev?.timeoutId) clearTimeout(prev.timeoutId)
-      const id = setTimeout(() => setToast(null), 4500)
-      return { msg, timeoutId: id }
-    })
-  }
-
-  function deleteTrace(ni: number) {
-    const base = localNets ? [...localNets] : [...nets]
-    const deleted = base[ni]
-    setNetsHistory(prev => [...prev.slice(-19), base])
-    setLocalNets(base.filter((_, i) => i !== ni))
-    setSelectedNet(null)
-    showToast(`'${deleted?.name || '트레이스'}' 삭제됨`)
-  }
-
-  function undoTraceDelete() {
-    setNetsHistory(prev => {
-      if (!prev.length) return prev
-      const next = [...prev]
-      const restored = next.pop()
-      setLocalNets(restored ?? null)
-      setToast(null)
-      return next
-    })
   }
 
   function onTraceDragStart(e: React.PointerEvent, netIdx: number, segIdx: number, defaultMx: number, defaultMy: number) {
@@ -355,14 +323,6 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
         <span style={{ width:6, height:6, borderRadius:'50%', background:'#d9a35a', flexShrink:0 }} />
         <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'#d9a35a', letterSpacing:'0.12em', fontWeight:700 }}>PCB</span>
         <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'#2a3040' }}>2층 · Ctrl+스크롤 줌 · 드래그 이동 · 트레이스 드래그 경로변경</span>
-        {netsHistory.length > 0 && (
-          <button onClick={undoTraceDelete} style={{
-            padding:'2px 8px', borderRadius:4, border:'1px solid #2a1a4a',
-            background:'transparent', color:'#a78bfa', cursor:'pointer',
-            fontFamily:'var(--sf-font-mono)', fontSize:10,
-          }}>↩ 되돌리기</button>
-        )}
-        {localNets && <span style={{ fontFamily:'var(--sf-font-mono)', fontSize:10, color:'#34d3a0' }}>● 수정됨</span>}
         <div style={{ flex:1 }} />
         {Object.keys(traceBends).length > 0 && (
           <button onClick={() => setTraceBends({})} style={{
@@ -384,7 +344,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
       <div ref={containerRef} style={{ flex:1, overflow:'hidden', position:'relative' }}>
         {/* Floating trace info panel */}
         {selectedNet !== null && (() => {
-          const net = effectiveNets[selectedNet]
+          const net = nets[selectedNet]
           if (!net) return null
           const isPwr = isPowerNet(net.name)
           const traceColor = getPCBTraceColor(net.name) || COPPER
@@ -408,7 +368,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
                 }}>×</button>
               </div>
               <div style={{ fontSize:9, color:'#2e3a50', letterSpacing:'0.1em', marginBottom:6 }}>NODES</div>
-              <div style={{ display:'flex', flexDirection:'column', gap:3, marginBottom:12 }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
                 {net.nodes.map((nd, i) => (
                   <span key={i} style={{
                     fontSize:10, color:'#8899b0', padding:'2px 6px',
@@ -416,36 +376,9 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
                   }}>{nd.ref}[{nd.pin}]</span>
                 ))}
               </div>
-              <button onClick={() => deleteTrace(selectedNet)} style={{
-                width:'100%', padding:'5px 0', borderRadius:4,
-                border:'1px solid rgba(248,113,113,0.3)',
-                background:'rgba(248,113,113,0.06)',
-                color:'#f87171', cursor:'pointer', fontSize:10,
-                fontFamily:"'IBM Plex Mono',monospace",
-              }}>✕ 트레이스 삭제</button>
             </div>
           )
         })()}
-        {/* deletion toast */}
-        {toast && (
-          <div style={{
-            position:'absolute', bottom:20, left:'50%', transform:'translateX(-50%)',
-            zIndex:50, display:'flex', alignItems:'center', gap:10,
-            background:'#0e1018', border:'1px solid #2a3040',
-            borderRadius:8, padding:'8px 14px',
-            fontFamily:"'IBM Plex Mono',monospace", fontSize:11, color:'#8090b0',
-            boxShadow:'0 4px 20px rgba(0,0,0,0.5)',
-          }}>
-            <span>{toast.msg}</span>
-            <button onClick={undoTraceDelete} style={{
-              padding:'2px 8px', borderRadius:4, border:'1px solid #2a1a4a',
-              background:'transparent', color:'#a78bfa', cursor:'pointer', fontSize:10,
-            }}>↩ 되돌리기</button>
-            <button onClick={() => setToast(null)} style={{
-              background:'none', border:'none', color:'#3a4055', cursor:'pointer', fontSize:14, lineHeight:1,
-            }}>×</button>
-          </div>
-        )}
 
         <svg
           ref={svgRef}
@@ -506,7 +439,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
               ))}
 
               {/* Traces (copper) */}
-              {effectiveNets.map((net, ni) => {
+              {nets.map((net, ni) => {
                 const isPwr = isPowerNet(net.name)
                 const isHover = hoveredNet === ni
                 const isSel = selectedNet === ni
@@ -566,7 +499,7 @@ export default function PCBLayout({ graph }: { graph?: NetGraph }) {
                 const fp = footprints[c.ref]
                 if (!p || !fp) return null
                 const t = (c.ref[0] ?? '').toUpperCase()
-                const dim = hoveredNet != null && !effectiveNets[hoveredNet]?.nodes.some(nd => nd.ref === c.ref)
+                const dim = hoveredNet != null && !nets[hoveredNet]?.nodes.some(nd => nd.ref === c.ref)
                 const editedValue = c.value || ''
 
                 return (
