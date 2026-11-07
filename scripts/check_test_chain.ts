@@ -17,6 +17,7 @@ const check = (name: string, ok: boolean, info = '') => {
 /** npm test is every check that runs without a model; these need something more */
 const BROWSER = 'a browser on a running app (README: npm run dev, or a built app with BASE)'
 const OUT: Record<string, string> = {
+  'scripts/check_auth_dialog.mjs': BROWSER,
   'scripts/check_board_panel.mjs': BROWSER,
   'scripts/check_drawer.mjs': BROWSER,
   'scripts/check_live.mjs': `${BROWSER}, usually the deployed one`,
