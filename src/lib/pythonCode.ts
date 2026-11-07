@@ -37,6 +37,7 @@ export function tokenizePython(code: string): Tok[][] {
 }
 
 /** ANSI colour codes (Python 3.13+ colours tracebacks when FORCE_COLOR is set) */
+// eslint-disable-next-line no-control-regex -- the codes start with the ESC control character
 const ANSI = /\x1b\[[0-9;]*m/g
 
 /** Line in the user's script where Python stopped, from its stderr; null if there is none.

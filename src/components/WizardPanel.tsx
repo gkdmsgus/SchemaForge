@@ -74,7 +74,7 @@ function Generating({ phase, prompt, onCancel, lines }: { phase: string; prompt:
               {lines.map((l, i) => (
                 <li key={i} className={l.cursor ? 'is-live' : ''}>
                   <time>{l.ts}</time>
-                  <span>{l.msg.replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]+\s*/u, '')}</span>
+                  <span>{l.msg.replace(/^(?:[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\u{FE0F}?)+\s*/u, '')}</span>
                 </li>
               ))}
             </ol>
