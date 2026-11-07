@@ -7,6 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as sass from 'sass'
+import { contrast } from '../src/lib/diffColors.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const STYLES = path.join(ROOT, 'src', 'styles')
@@ -70,6 +71,72 @@ const webFonts = new Set([...html.matchAll(/href="https:\/\/fonts\.googleapis\.c
   const hangul = mono.slice(0, firstSystem < 0 ? mono.length : firstSystem).filter(f => / KR$/.test(f))
   check('S4 the mono stack sets Hangul with a loaded Korean web font before any system font', hangul.length > 0,
     `${mono.join(', ') || 'no --sf-font-mono'} · loaded: ${[...webFonts].join(', ')}`)
+}
+
+// S5. Text keeps 4.5:1 (WCAG AA) on the beige surfaces: the text tokens on every surface, and the text the shared
+// controls put on a colour. fg-dim (2.93:1 on bg-1), the filled amber buttons (3.31:1), the teal button's hover (3.20:1)
+// and the drawer's history items, left in dark-theme colours (#8090b0, 3.00:1; black on hover), fell short (contrast
+// sweep of 2026-11-08). fg-faint, amber and cyan are for lines, fills and marks; text takes fg-dim, amber-deep, cyan-deep.
+// --sf-danger is not in the table yet: 4.24:1 on bg-1 and 4.40:1 on bg-4, its colour still to be chosen.
+{
+  const SURFACES = ['bg', 'bg-1', 'bg-2', 'bg-3', 'bg-4'].map(s => `var(--sf-${s})`)
+  const TEXT = ['fg', 'fg-muted', 'fg-dim', 'amber-deep', 'cyan-deep', 'violet']
+  /** a colour as code or a token writes it, as #rrggbb; a translucent one is laid over `base` */
+  const hexOf = (v: string, base = '#ffffff', depth = 0): string | null => {
+    v = v.trim()
+    const t = /^var\(--sf-([\w-]+)\)$/.exec(v)
+    if (t) return depth < 4 ? hexOf(tokenOf(t[1]), base, depth + 1) : null
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase()
+    if (/^#[0-9a-f]{3}$/i.test(v)) return '#' + [...v.slice(1)].map(c => c + c).join('').toLowerCase()
+    const m = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(v)
+    const b = m && hexOf(base)
+    if (!m || !b) return null
+    const a = Number(m[4])
+    return '#' + [1, 2, 3].map(i => Math.round(Number(m[i]) * a + parseInt(b.slice(2 * i - 1, 2 * i + 1), 16) * (1 - a))
+      .toString(16).padStart(2, '0')).join('')
+  }
+  // [what, text colour, its background, the surfaces a translucent background can sit on]
+  const pairs: [string, string, string, string[]][] = TEXT.flatMap(t => SURFACES.map(s =>
+    ['token', `var(--sf-${t})`, s, ['#ffffff']] as [string, string, string, string[]]))
+  const src = (f: string) => fs.readFileSync(path.join(ROOT, 'src', 'components', f), 'utf8')
+  const prim = src('primitives.tsx'), header = src('Header.tsx'), item = src('SideDrawer.tsx').split('function SessionItem')[1] ?? ''
+  const drawer = src('SideDrawer.tsx')
+  const prop = (s: string, p: string) => new RegExp(`\\b${p}:\\s*'([^']+)'`).exec(s)?.[1] ?? ''
+  const variant = (table: string, v: string) => new RegExp(`const ${table}[^]*?\\n\\s*${v}:\\s*\\{([^}]*)\\}`).exec(prim)?.[1] ?? ''
+  /** the code of the element whose children start with `anchor` */
+  const before = (text: string, tag: string, anchor: string) => { const i = text.indexOf(anchor); return i < 0 ? '' : text.slice(text.lastIndexOf(`<${tag}`, i), i) }
+  for (const v of ['primary', 'cyan']) {
+    const text = prop(variant('BTN_VARIANTS', v), 'color')
+    pairs.push([`Button ${v}`, text, prop(variant('BTN_VARIANTS', v), 'background'), ['#ffffff']])
+    pairs.push([`Button ${v} hover`, prop(variant('BTN_HOVER', v), 'color') || text, prop(variant('BTN_HOVER', v), 'background'), ['#ffffff']])
+  }
+  pairs.push(['Chip active', /fg: active \? '([^']+)'/.exec(prim)?.[1] ?? '', /bg: active \? '([^']+)'/.exec(prim)?.[1] ?? '', SURFACES])
+  const cyanChip = /\{\s*bg: '([^']+)',\s*fg: '([^']+)'/.exec(prim)
+  pairs.push(['Chip cyan', cyanChip?.[2] ?? '', cyanChip?.[1] ?? '', SURFACES])
+  const login = before(header, 'button', '>로그인</button>')
+  pairs.push(['Header 로그인', prop(login, 'color'), prop(login, 'background'), ['#ffffff']])
+  pairs.push(['Header 로그인 hover', prop(login, 'color'), /onMouseEnter=[^\n]*style\.background = '([^']+)'/.exec(login)?.[1] ?? '', ['#ffffff']])
+  const avatar = before(header, 'div', '{user.email?.[0]')
+  pairs.push(['Header account initial', prop(avatar, 'color'), prop(avatar, 'background'), ['#ffffff']])
+  const drawerBg = /width: 280,\s*background: '([^']+)'/.exec(drawer)?.[1] ?? ''
+  const hoverBg = /background: hovered \? '([^']+)'/.exec(item)?.[1] ?? ''
+  const title = /color: hovered \? '([^']+)' : '([^']+)'/.exec(before(item, 'div', '>{title}</div>'))
+  pairs.push(['drawer item name', title?.[2] ?? '', drawerBg, ['#ffffff']])
+  pairs.push(['drawer item name, hovered', title?.[1] ?? '', hoverBg, [drawerBg]])
+  const time = prop(before(item, 'div', '{time}{msgCount'), 'color')
+  pairs.push(['drawer item time', time, drawerBg, ['#ffffff']], ['drawer item time, hovered', time, hoverBg, [drawerBg]])
+  const field = before(item, 'input', '/>')
+  pairs.push(['drawer item name field', prop(field, 'color'), prop(field, 'background'), [drawerBg]])
+  pairs.push(['drawer date group', prop(before(drawer, 'div', '}}>{label}</div>'), 'color'), drawerBg, ['#ffffff']])
+
+  const results = pairs.map(([what, fg, bg, bases]) => {
+    const worst = Math.min(...bases.map(base => { const f = hexOf(fg), b = hexOf(bg, base); return f && b ? contrast(f, b) : 0 }))
+    return { what, fg, bg, worst }
+  })
+  const short = results.filter(r => !(r.worst >= 4.5))
+  check('S5 text keeps 4.5:1 on its surface (tokens, buttons, chips, header, drawer items)', pairs.length > 40 && !short.length,
+    short.length ? short.map(r => `${r.what}: ${r.worst ? `${r.fg} on ${r.bg} ${r.worst.toFixed(2)}:1` : `colour not found (${r.fg || '?'} on ${r.bg || '?'})`}`).join(' · ')
+      : `${pairs.length} pairs, lowest ${Math.min(...results.map(r => r.worst)).toFixed(2)}:1`)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall style checks passed')

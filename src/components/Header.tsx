@@ -121,7 +121,7 @@ export default function Header({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{
               width: 30, height: 30, borderRadius: '50%',
-              background: 'var(--sf-amber)',
+              background: 'var(--sf-amber-fill)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontFamily: 'var(--sf-font-sans)', fontSize: 12, fontWeight: 700,
               color: '#fff', flexShrink: 0,
@@ -150,7 +150,7 @@ export default function Header({
           <button
             onClick={onAuthClick}
             style={{
-              background: 'var(--sf-amber)',
+              background: 'var(--sf-amber-fill)',
               border: 'none',
               borderRadius: 4, color: '#fff8ef',
               cursor: 'pointer', fontSize: 12.5, padding: '6px 14px',
@@ -159,7 +159,7 @@ export default function Header({
               transition: 'all 0.15s',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--sf-amber-deep)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber-fill)' }}
           >로그인</button>
         )}
         <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="Settings" />
