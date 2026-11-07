@@ -160,6 +160,18 @@ handler = () => json(200, { ok: true, written: true })
 check('restoreNetlist: a bad filename is not sent', (await api.restoreNetlist('../x.net', {})) === false && calls.length === 0)
 check('restoreNetlist: a good one is sent and says written', (await api.restoreNetlist('led_ab12cd34.net', { components: [] })) === true && calls[0].url === '/netlist/restore')
 
+// the netlist check's trouble in words: a busy server's own sentence (what happened, what to do), not "HTTP 503"
+// (review of 2026-11-08); the other failures keep theirs, and an answer has none
+{
+  const busy = '지금 서버에서 기판을 만드는 사람이 많아 시작하지 못했습니다. 잠시 뒤에 다시 눌러 주세요.'
+  const said = { busy: api.ercGraphTrouble(503, { code: 'busy', error: busy }), other503: api.ercGraphTrouble(503, null),
+    gone: api.ercGraphTrouble(404, null), bad: api.ercGraphTrouble(400, { error: 'graph with components and nets required' }),
+    crash: api.ercGraphTrouble(500, { error: 'Traceback' }), fine: api.ercGraphTrouble(200, { erc: [] }) }
+  check('ercGraphTrouble: busy is the Korean sentence the server wrote; 404, 400 and other failures keep theirs; an answer none',
+    said.busy === busy && said.other503 === '서버가 점검하지 못했습니다 (HTTP 503).' && /최신 코드/.test(said.gone)
+    && /따옴표/.test(said.bad) && said.crash === '서버가 점검하지 못했습니다 (HTTP 500).' && said.fine === undefined, JSON.stringify(said))
+}
+
 // 14 messages
 reset()
 handler = () => json(200, { messages: [
