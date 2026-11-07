@@ -71,12 +71,6 @@ function withoutErc(r: GenerateResult): GenerateResult {
   return rest
 }
 
-export function deleteSavedResult(id: number) {
-  const saved = getSavedResults().filter(s => s.id !== id)
-  localStorage.setItem('sf_saved_results', JSON.stringify(saved))
-  return saved
-}
-
 export function saveResultToLocal(result: GenerateResult, prompt: string) {
   const saved = getSavedResults()
   const existing = saved.findIndex(s => s.prompt === prompt)

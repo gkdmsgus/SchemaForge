@@ -1,16 +1,9 @@
 ﻿// Checks src/api.ts against a stubbed fetch + localStorage (no server): saving and reading the login, sign-up
 // answers, refresh-and-retry on 401 auth_expired (once, shared by concurrent calls), refusal codes, /auth/me,
-// favorites and messages shapes, the session routes. api.ts reads import.meta.env, so a copy with that one
-// expression replaced is imported from the system temp folder (its imports are types only).
+// favorites and messages shapes, the session routes. The file itself is imported (its imports are types only). Every
+// request stays on the page's own address: a build setting that moved half of them (VITE_API_URL) does not come back.
 // Usage: npx tsx scripts/check_api_client.ts   → exit 0 only if all pass
 import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-
-const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'api.ts')
-const OUT = path.join(os.tmpdir(), `sf_api_under_test_${process.pid}.mts`)
-fs.writeFileSync(OUT, fs.readFileSync(SRC, 'utf8').replace('import.meta.env?.VITE_API_URL', 'undefined'))
 
 // ── stubs ──
 const store = new Map<string, string>()
@@ -21,11 +14,13 @@ const store = new Map<string, string>()
 }
 type Call = { url: string; method: string; auth: string | null; ctype: string | null; body: string | null }
 let calls: Call[] = []
+const everyUrl: string[] = []
 let handler: (c: Call) => Response | Promise<Response> = () => new Response('{}')
 ;(globalThis as any).fetch = async (url: string, init: RequestInit = {}) => {
   const h = new Headers(init.headers)
   const c = { url, method: init.method ?? 'GET', auth: h.get('Authorization'), ctype: h.get('Content-Type'), body: (init.body as string) ?? null }
   calls.push(c)
+  everyUrl.push(url)
   return handler(c)
 }
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -36,7 +31,7 @@ function check(name: string, ok: boolean, detail = '') {
   if (!ok) failed++
 }
 
-const api = await import(pathToFileURL(OUT).href)
+const api: any = await import('../src/api.ts')
 let expiredCalls = 0
 api.setAuthExpiredHandler(() => { expiredCalls++ })
 const reset = () => { store.clear(); calls = []; expiredCalls = 0 }
@@ -184,6 +179,12 @@ try { await api.renameSession('s1', 'new'); check('rename 404 throws', false) } 
   check('renameSession: PATCH, and a 404 throws (the drawer puts the name back)', e.status === 404 && calls.at(-1)!.method === 'PATCH' && JSON.parse(calls.at(-1)!.body!).name === 'new')
 }
 
-fs.rmSync(OUT)
+// 16 same origin only: the two files that ask the server by themselves read no setting for where it is
+reset()
+check('every request above went to a path on this page\'s own address', everyUrl.length > 20 && everyUrl.every(u => u.startsWith('/')),
+  everyUrl.find(u => !u.startsWith('/')))
+const source = (f: string) => fs.readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')
+check('api.ts and modelName.ts read no build setting', !/import\.meta\.env/.test(source('api.ts')) && !/import\.meta\.env/.test(source('lib/modelName.ts')))
+
 console.log(failed ? `\n${failed} FAILED` : '\nall api client checks passed')
 process.exitCode = failed ? 1 : 0

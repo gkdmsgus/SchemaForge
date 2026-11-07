@@ -12,7 +12,7 @@ export function useModelName(): ModelName {
   const [name, setName] = useState<ModelName>(known ?? UNKNOWN)
   useEffect(() => {
     let live = true
-    asked ??= fetch(`${import.meta.env.VITE_API_URL ?? ''}/health`)
+    asked ??= fetch('/health')
       .then(r => r.json())
       .then((j: { model?: unknown; provider?: unknown }) => (known = {
         model: typeof j.model === 'string' && j.model ? j.model : UNKNOWN.model,

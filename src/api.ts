@@ -2,8 +2,7 @@
 
 import type { ChatAction, ChatMessage } from './types'
 
-// ?. : under tsx (scripts/check_bom.ts renders the BOM table, which calls authFetch) there is no import.meta.env
-const BASE = import.meta.env?.VITE_API_URL ?? ''
+const API = ''
 
 /** the saved access token, or '' (an older build saved "undefined" when a sign-up gave no session) */
 function token() {
@@ -73,7 +72,7 @@ export function refresh(): Promise<boolean> {
   if (refreshing) return refreshing
   const rt = localStorage.getItem('sf_refresh')
   if (!rt) return Promise.resolve(false)
-  refreshing = fetch(`${BASE}/auth/refresh`, {
+  refreshing = fetch(`${API}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh_token: rt }),
@@ -103,7 +102,7 @@ export async function fetchWithRefresh(path: string, init: RequestInit = {}): Pr
     const headers = new Headers(init.headers)
     const t = token()
     if (t) headers.set('Authorization', `Bearer ${t}`)
-    return fetch(`${BASE}${path}`, { ...init, headers })
+    return fetch(`${API}${path}`, { ...init, headers })
   }
   const sent = token()
   const res = await send()
@@ -129,7 +128,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 /** a request that needs no login (sign-up, login, netlist restore) */
 async function postOpen<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API}${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })
   return readJson<T>(res)
@@ -170,7 +169,7 @@ export function clearAuth() {
 
 export async function logout(): Promise<void> {
   // a plain fetch: an expired token is not renewed just to end it
-  await fetch(`${BASE}/auth/logout`, {
+  await fetch(`${API}/auth/logout`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: '{}',
   }).catch(() => {})
   clearAuth()
