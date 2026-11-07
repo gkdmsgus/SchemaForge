@@ -3,7 +3,9 @@
 // P5-P6 a visitor without an account is told why AI 다듬기 and the AI editor are refused (the board is still
 // built), P7 no page errors, P8 the home page fetches neither the 3D viewer nor the PDF code, and its entry file stays
 // small (they were all in one 1,837 kB file, for visitors who never make a board: review of 2026-11-06), P9 the PDF button
-// still gives a PDF. Needs the playwright package (in package.json) and its Chromium.
+// still gives a PDF, P10 no Content-Security-Policy violation while the home page, the demo board, the 3D viewer, the PDF
+// and the web fonts load (the site's CSP is set by Caddy in front of it: a source it leaves out blocks that file with
+// only a console line, which P7 never saw). Needs the playwright package (in package.json) and its Chromium.
 // Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge.kro.kr; DEMO=motor, SHOT=board.png)
 import fs from 'node:fs'
 import { chromium } from 'playwright'
@@ -19,6 +21,15 @@ const errors = []
 page.on('pageerror', e => errors.push(e.message))
 const glb = []
 page.on('response', r => { if (r.url().includes('/board_model')) glb.push(r) })
+// P10: both the console line and the page's own securitypolicyviolation event, as browsers word the line differently
+const csp = []
+const watchCsp = async p => {
+  p.on('console', m => { if (/Content[- ]Security[- ]Policy/i.test(m.text())) csp.push(`console: ${m.text().slice(0, 200)}`) })
+  await p.exposeBinding('__sfCsp', (_source, v) => { csp.push(`event: ${v}`) })
+  await p.addInitScript(() => window.addEventListener('securitypolicyviolation', e => window.__sfCsp(
+    `${e.effectiveDirective} blocked ${e.blockedURI || '(inline)'} in ${(e.sourceFile || location.href).split('/').pop()}:${e.lineNumber}`), true))
+}
+await watchCsp(page)
 
 try {
   // a free instance may be asleep: the first answer can take a minute or more
@@ -27,6 +38,7 @@ try {
 
   // P8: first, so the requests are the home page's alone
   const home = await browser.newPage()
+  await watchCsp(home)
   const scripts = []
   home.on('response', r => { if (/\/assets\/.*\.js$/.test(r.url())) scripts.push(r) })
   await home.goto(`${BASE}/`, { waitUntil: 'networkidle' })
@@ -64,6 +76,11 @@ try {
   const [pdf] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.getByRole('button', { name: 'PDF', exact: true }).click()])
   const pdfHead = fs.readFileSync(await pdf.path()).subarray(0, 4).toString('latin1')
   check('P9 the PDF button gives a PDF', pdfHead === '%PDF', `${pdf.suggestedFilename()} starts ${JSON.stringify(pdfHead)}`)
+  // the web fonts the page drew with (index.html asks Google Fonts for three families)
+  const fonts = await page.evaluate(async () => {
+    await document.fonts.ready
+    return [...new Set([...document.fonts].filter(f => f.status === 'loaded').map(f => f.family.replace(/["']/g, '')))]
+  })
 
   await page.getByRole('button', { name: /AI 다듬기 OFF/ }).click()
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
@@ -80,6 +97,8 @@ try {
   } else check('P6 AI editor refusal shown', false, 'no chat box')
 
   check('P7 no page errors', errors.length === 0, errors.join(' | ').slice(0, 300))
+  check('P10 no CSP violation while the board, the 3D viewer, the PDF and the fonts load', csp.length === 0 && fonts.length > 0,
+    `${csp.length} violations${csp.length ? ': ' + [...new Set(csp)].join(' | ').slice(0, 600) : ''}; fonts loaded: ${fonts.join(', ') || 'none'}`)
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT })
 } catch (e) { failed++; console.log('FAIL crashed: ' + e.message) } finally { await browser.close() }
 process.exit(failed ? 1 : 0)
