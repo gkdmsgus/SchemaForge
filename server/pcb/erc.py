@@ -38,6 +38,34 @@ PIN_TYPES = {
     'NE555': {'3': 'OUTPUT'},
     'OpAmp': {'3': 'OUTPUT'},
 }
+# The supply-input pins that want a capacitor to ground beside them, by symbol pin: the pins a template marks PWRIN, less
+# its ground pin. Apart from PIN_TYPES and from pintype, so a netlist with pintype and one written from a graph find the
+# same (server/check_erc_repair.ts E26); E28 compares this with the templates in server/index.ts.
+SUPPLY_PINS = {
+    'NE555': ['8'],
+    'REG': ['3'],
+    'OpAmp': ['4', '5'],
+}
+
+
+def is_ground(name):
+    """a ground net by its name: GND, AGND, DGND, PGND, or GND_x / x_GND"""
+    n = (name or '').upper()
+    return n in ('GND', 'AGND', 'DGND', 'PGND') or n.startswith('GND_') or n.endswith('_GND')
+
+
+def ohms(value):
+    """a resistor value in ohms ('0', '0R', '0Ω', '1R0', 'R10', '0R1', '100m', '4k7'), or None"""
+    v = re.sub(r'(?i)\s+|ohms?$|Ω$', '', value or '')
+    m = re.fullmatch(r'(\d*)([RrkKM])(\d+)', v)     # the letter as the decimal point
+    if m and (m.group(1) or m.group(2) in 'Rr'):
+        return float(f"{m.group(1) or 0}.{m.group(3)}") * {'r': 1, 'k': 1e3, 'm': 1e6}[m.group(2).lower()]
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)([mkKM]?)[Rr]?', v)
+    return float(m.group(1)) * {'': 1, 'm': 1e-3, 'k': 1e3, 'K': 1e3, 'M': 1e6}[m.group(2)] if m else None
+
+
+# parts that tie two grounds into one on purpose: a 0 Ω or other tiny resistor, an inductor or ferrite bead
+TIE_OHMS = 1.0
 
 
 def pin_of(part, pad):
@@ -130,5 +158,64 @@ def check(components, nets, parts=None):
                 'message': f"넷 '{n['name']}'에 출력 핀이 {len(outs)}개 (" +
                            ', '.join(f"{o['ref']}.{o['pin']}" for o in outs) + ") 있습니다 — 출력끼리 충돌",
                 'refs': [node_ref(o) for o in outs], 'net': n['name']})
+
+    # 6. an IC supply pin with no capacitor from its net to ground: the chip's sudden current then comes down the long
+    #    supply track and its voltage dips. A warning: the circuit may still run. Which pins: SUPPLY_PINS.
+    net_of = {(nd['ref'], str(nd['pin'])): n for n in nets for nd in n['nodes']}
+    pins_of = {}
+    for n in nets:
+        for nd in n['nodes']:
+            pins_of.setdefault(nd['ref'], {})[str(nd['pin'])] = n['name']
+
+    def bypassed(n):
+        """a C or CP with one pin on this net and another on a ground net"""
+        return any(part_of.get(nd['ref']) in ('C', 'CP') and
+                   any(is_ground(m) for pin, m in pins_of.get(nd['ref'], {}).items() if pin != str(nd['pin']))
+                   for nd in n['nodes'])
+
+    for c in components:
+        for sym in SUPPLY_PINS.get(c.get('part', ''), []):
+            n = net_of.get((c['ref'], sym))
+            if n is None or is_ground(n['name']) or bypassed(n):
+                continue
+            ref = node_ref({'ref': c['ref'], 'pin': sym})
+            names = PIN_NAMES.get(c['part']) or []
+            name = names[int(sym) - 1] if int(sym) <= len(names) else None
+            # on the board: the pin and its pad, as the other findings say it; else the symbol pin
+            label = pin_label(by_ref[c['ref']], ref['pin']) if 'sym' in ref else (f"{name} 핀({sym}번)" if name else f"{sym}번 핀")
+            todo = ('레귤레이터 데이터시트가 권하는 입력 커패시터를 이 핀과 GND 사이에' if c['part'] == 'REG'
+                    else '0.1 µF 커패시터를 이 핀과 GND 사이에')
+            findings.append({
+                'rule': 'no_bypass', 'severity': 'warning',
+                'message': f"{c['ref']}의 {label} 옆에 GND로 가는 커패시터가 없습니다. {todo} {c['ref']} 가까이 달아야 합니다",
+                'refs': [ref], 'net': n['name']})
+
+    # 7. two ground nets that nothing joins: two supplies whose − sides are not tied have no common reference, so a
+    #    signal from one side means nothing on the other. Joined through a resistor of TIE_OHMS or less, or an inductor
+    #    (a ferrite bead tying analog and digital ground at one point), they are one ground.
+    group = {n['name']: n['name'] for n in nets}
+
+    def root(a):
+        while group[a] != a:
+            group[a] = group[group[a]]
+            a = group[a]
+        return a
+    for c in components:
+        r = ohms(c.get('value')) if c.get('part') == 'R' else None
+        if c.get('part') == 'L' or (r is not None and r <= TIE_OHMS):
+            ends = list(pins_of.get(c['ref'], {}).values())
+            for other in ends[1:]:
+                group[root(other)] = root(ends[0])
+    grounds = {}
+    for n in nets:
+        if is_ground(n['name']):
+            grounds.setdefault(root(n['name']), []).append(n)
+    if len(grounds) > 1:
+        apart = sorted((sorted(g, key=lambda n: n['name']) for g in grounds.values()), key=lambda g: g[0]['name'])
+        names = '·'.join(g[0]['name'] for g in apart)
+        findings.append({
+            'rule': 'split_ground', 'severity': 'warning',
+            'message': f"접지({names})가 서로 이어지지 않아 {len(apart)}개로 나뉘어 있습니다. 두 전원의 − 쪽을 이어야 합니다",
+            'refs': [node_ref(g[0]['nodes'][0]) for g in apart if g[0]['nodes']], 'net': None})
 
     return findings

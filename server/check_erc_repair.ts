@@ -1,9 +1,9 @@
-// Checks E1-E27: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E28: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
 // behind (E12-E13, E18, E22-E23), the /generate and /test_code wiring read as text (E15-E16), the pin names
 // erc.py shares with the front end (E19), where findings point on the board (E20), the prompt's
-// ref= rule run in skidl (E21), pad numbers by board style through /erc_graph (E24), and a netlist written from a
-// graph, which has no pintype (E25-E27).
+// ref= rule run in skidl (E21), pad numbers by board style through /erc_graph (E24), a netlist written from a
+// graph, which has no pintype (E25-E27), and the supply pins no_bypass reads (E28).
 // No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
@@ -276,6 +276,7 @@ const fromPrompt = [
 const noPintype = (text: string) => text.replace(/\s*\(pintype "[^"]*"\)/g, '')
 const sameBoth: string[] = []
 let withConflict = 0
+let unbypassed = ''
 for (const [name, code] of [...['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor', 'bridge_supply'].map(c => [c, readFileSync(join('test_circuits', `${c}.py`), 'utf8')]), ['from_prompt', fromPrompt]]) {
   const net = await run(code)
   const stripped = join(work, `nopintype_${name}.net`)
@@ -284,8 +285,14 @@ for (const [name, code] of [...['led_basic', 'ne555_blink', 'npn_relay', 'nmos_m
   const same = a.ok && b.ok && !readFileSync(stripped, 'utf8').includes('pintype') && JSON.stringify(a.findings) === JSON.stringify(b.findings)
   if (!same) sameBoth.push(`${name}: ${a.ok ? a.findings.map(f => f.rule) : a.reason} / ${b.ok ? b.findings.map(f => f.rule) : b.reason}`)
   if (name === 'from_prompt' && a.ok) withConflict = a.findings.filter(f => f.rule === 'output_conflict').length
+  // no capacitor anywhere: the regulator's IN and both 555s' VCC have none to ground, with pintype and without
+  if (name === 'from_prompt' && a.ok && b.ok) {
+    unbypassed = [a, b].map(r => r.findings.filter(f => f.rule === 'no_bypass').map(f => `${f.refs[0]?.ref}.${f.refs[0]?.sym ?? f.refs[0]?.pin}`).join(',')).join(' / ')
+  }
 }
-check('E26 same findings with and without pintype', !sameBoth.length && withConflict === 1, `differ=[${sameBoth.join(' | ')}] conflicts in the prompt circuit=${withConflict}`)
+check('E26 same findings with and without pintype; the prompt circuit with no capacitor has no_bypass on U1 IN, U2 and U3 VCC either way',
+  !sameBoth.length && withConflict === 1 && unbypassed === 'U1.3,U2.8,U3.8 / U1.3,U2.8,U3.8',
+  `differ=[${sameBoth.join(' | ')}] conflicts in the prompt circuit=${withConflict} no_bypass=${unbypassed}`)
 
 // E27. erc.py PIN_TYPES against the templates (read as text, like E11): exactly the pins they mark PWROUT or OUTPUT, each
 //      with the pin name PIN_NAMES gives that number and a pad in the (part, pin) table of both styles, or a documented
@@ -313,6 +320,22 @@ const pinDrift = Object.entries(py.types).flatMap(([part, pins]) => Object.keys(
 }))
 check('E27 PIN_TYPES match the part templates', templates.length >= 15 && canon(py.types) === canon(wantTypes) && !pinDrift.length,
   `${templates.length} templates; erc.py=${canon(py.types)}; prompt=${canon(wantTypes)}; drift=[${pinDrift.join(' | ')}]`)
+
+// E28. erc.py SUPPLY_PINS (the pins no_bypass wants a capacitor on) against the templates: exactly the pins they mark PWRIN,
+//      less the ground pin. A renumbered template, or a new IC template, fails here instead of quietly going unchecked.
+const wantSupply = Object.fromEntries(templates.flatMap(t => {
+  const pins = t.pins.filter(p => p.func === 'PWRIN' && p.name !== 'GND').map(p => p.num)
+  return pins.length ? [[t.part, pins]] : []
+}))
+let supply: Record<string, string[]> | string
+try {
+  supply = JSON.parse(execFileSync('python', ['-c', "import json, sys; sys.path.insert(0, 'pcb'); import erc; print(json.dumps(erc.SUPPLY_PINS))"],
+    { env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] }).toString()) as Record<string, string[]>
+} catch (e) { supply = errText(e).trim().split('\n').pop() ?? 'python failed' }
+const canonPins = (o: Record<string, string[]>) => JSON.stringify(Object.entries(o).map(([k, v]) => [k, [...v].sort()]).sort())
+check('E28 SUPPLY_PINS match the PWRIN pins of the templates, less GND',
+  typeof supply !== 'string' && Object.keys(wantSupply).length >= 3 && canonPins(supply) === canonPins(wantSupply),
+  `erc.py=${typeof supply === 'string' ? supply : canonPins(supply)}; prompt=${canonPins(wantSupply)}`)
 
 // E12. secrets never reach the child: API keys, Supabase settings, *SECRET*, *TOKEN*; everything else does
 const planted = { OPENAI_API_KEY: 'sk-check', SUPABASE_URL: 'https://check.invalid', MOUSER_API_KEY: 'm',
