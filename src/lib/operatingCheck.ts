@@ -1,4 +1,5 @@
 import type { BoardModel, NetGraph } from '../types'
+import { pinNumber } from './graphEdit'
 import { SPECS, assumedBjt, assumedMos, redLed, type BjtSpec, type LedSpec, type MosSpec, type Num } from './partSpecs'
 
 // "Does this circuit actually work?" — numeric checks on the part values, on top of the
@@ -56,6 +57,8 @@ export interface OpCircuit {
   style: 'smd' | 'tht' | null        // null before the PCB exists
   /** parts whose pins cannot be told apart (boards saved before pad_pins existed) */
   missing?: string[]
+  /** pins saved under a name the pin-name table does not know ("D1.ANODE"): which leg they are on is not known */
+  unread?: string[]
 }
 
 const pinKey = (ref: string, pin: number) => `${ref}.${pin}`
@@ -66,16 +69,25 @@ const FURNITURE = new Set(['MountingHole', 'TestPoint'])
  */
 const partValue = (ref: string, value: unknown) => { const v = String(value ?? ''); return v === ref ? '' : v }
 
-/** The schematic graph (before a PCB exists); style = the SMD/THT choice the PCB will use. */
+/**
+ * The schematic graph (before a PCB exists); style = the SMD/THT choice the PCB will use. A pin an older edit saved by its
+ * name (D1 'A', Q1 'B', BT1 '+', R1 'p2') is read through the template's pin-name table, as the AI editor and the circuit
+ * check read it (2026-11-08: such a circuit had no pins here, and its 검사할 부품 없음 showed as a pass). A name the table
+ * does not know is not guessed: it is in `unread`, and the checks say 판단 불가.
+ */
 export function fromGraph(g: NetGraph, style: 'smd' | 'tht' | null = null): OpCircuit {
   const parts = (g.components || []).filter(c => c.name && !FURNITURE.has(c.name))
     .map(c => ({ ref: c.ref, part: c.name!, value: partValue(c.ref, c.value) }))
-  const known = new Set(parts.map(p => p.ref))
+  const kind = new Map(parts.map(p => [p.ref, p.part]))
   const pins = new Map<string, string>()
+  const unread: string[] = []
   for (const n of g.nets || []) for (const nd of n.nodes || []) {
-    if (known.has(nd.ref) && /^\d+$/.test(String(nd.pin))) pins.set(pinKey(nd.ref, Number(nd.pin)), n.name)
+    if (!kind.has(nd.ref)) continue
+    const pin = pinNumber(kind.get(nd.ref), String(nd.pin))
+    if (/^\d+$/.test(pin)) pins.set(pinKey(nd.ref, Number(pin)), n.name)
+    else unread.push(`${nd.ref}.${nd.pin}`)
   }
-  return { parts, pins, style }
+  return { parts, pins, style, ...(unread.length ? { unread } : {}) }
 }
 
 /** The finished board (pads mapped back to template pins). */
@@ -2113,6 +2125,13 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
       summary: `핀 대응 정보가 없는 예전 보드라 동작 검사를 하지 않았습니다 (부품 ${c.missing.length}개)`,
       detail: ['게이트와 드레인처럼 핀을 구분할 수 없으면 계산이 틀립니다. PCB를 다시 생성하면 검사합니다',
         `핀 대응이 없는 부품: ${c.missing.slice(0, 12).join(', ')}${c.missing.length > 12 ? ' …' : ''}`] }]
+  }
+  if (c.unread?.length) {
+    const refs = [...new Set(c.unread.map(k => k.split('.')[0]))]
+    return [{ rule: 'op_data', ref: '', state: 'unknown',
+      summary: `어느 다리인지 읽지 못한 연결이 있어 동작 검사를 하지 않았습니다 (부품 ${refs.length}개)`,
+      detail: ['연결이 어느 다리에 이어졌는지 모르면 계산이 틀립니다. 회로도에 저장된 다리 이름이 부품의 다리 이름 표에 없습니다',
+        `읽지 못한 연결: ${c.unread.slice(0, 12).join(', ')}${c.unread.length > 12 ? ' …' : ''}`] }]
   }
   // Which relays pull in: every relay starts released (COM–NC closed, COM–NO open), and the relays whose
   // coils pull in switch over, until nothing changes. A coil fed only through its own contact, or two relays

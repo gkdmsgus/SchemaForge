@@ -258,6 +258,7 @@ export function pinoutStyleFix(part: string, value: string, style: 'smd' | 'tht'
 export interface MissingLegs {
   ref: string
   pins: number[]      // template pins with no pad
+  names: string[]     // pins saved under a name the pin-name table does not know: which leg is not known
   raw: string[]       // the generator's own lines, for 자세히
   text: string        // the part and how many legs, never a pad number or a net
   fix: string
@@ -266,27 +267,33 @@ export interface MissingLegs {
 /**
  * server/pcb/board.py's no-pad warnings, one item per part. The board is missing every connection of those
  * legs, so the words say so. A diode with more than two legs is a bridge rectifier written as a plain diode
- * (seen live on an AC supply): its fix names the bridge part the generator now has.
+ * (seen live on an AC supply): its fix names the bridge part the generator now has. A pin saved under a name the
+ * pin-name table does not know ('D1 pin "ANODE" is neither ...', board.py read_pins) has no leg to go to either.
  */
 export function missingLegs(warnings: string[] | undefined, parts: Pick<BoardModel['parts'][number], 'ref' | 'part'>[] = []): MissingLegs[] {
-  const by = new Map<string, { pins: number[]; raw: string[] }>()
+  const by = new Map<string, { pins: number[]; names: string[]; raw: string[] }>()
   for (const w of warnings || []) {
     // the footprint can hold spaces: a stand-in is named after the part ("SchemaForge:UNMAPPED_My Part", board.py)
-    const m = /^(\S+) pin (\d+) has no pad in .+$/.exec(w)
-    if (!m) continue
-    const g = by.get(m[1]) ?? { pins: [], raw: [] }
-    g.pins.push(Number(m[2]))
+    const m = /^(\S+) pin (\d+) has no pad in .+$/.exec(w), u = /^(\S+) pin "(.*)" is neither a pin number nor a pin name of .+$/.exec(w)
+    const ref = m?.[1] ?? u?.[1]
+    if (!ref) continue
+    const g = by.get(ref) ?? { pins: [], names: [], raw: [] }
+    if (m) g.pins.push(Number(m[2]))
+    else g.names.push(u![2])
     g.raw.push(w)
-    by.set(m[1], g)
+    by.set(ref, g)
   }
   return [...by].map(([ref, g]) => {
     const part = parts.find(p => p.ref === ref)?.part ?? ''
+    const legs = g.pins.length ? `다리 ${g.pins.length}개가 기판에 놓인 부품 모양에 없습니다. 그 다리로 가야 할 연결이 기판에서 빠졌습니다.` : ''
+    const unread = g.names.length ? `연결 ${g.names.length}개는 어느 다리로 가는지 읽지 못해 기판에서 빠졌습니다.` : ''
     return {
-      ref, pins: g.pins, raw: g.raw,
-      text: `${ref}(${typeLabel(part, ref)})의 다리 ${g.pins.length}개가 기판에 놓인 부품 모양에 없습니다. 그 다리로 가야 할 연결이 기판에서 빠졌습니다.`,
-      fix: part === 'D'
+      ref, pins: g.pins, names: g.names, raw: g.raw,
+      text: `${ref}(${typeLabel(part, ref)})의 ${[legs, unread].filter(Boolean).join(' ')}`,
+      fix: g.pins.length && part === 'D'
         ? '다리가 2개보다 많은 다이오드는 보통 브리지 정류기입니다. 회로를 다시 생성해 브리지 정류기 부품으로 받은 뒤 PCB를 만듭니다.'
-        : '제작 전에 부품 종류를 확인합니다. 다리 수가 같은 부품 모양이어야 모든 연결이 기판에 들어갑니다.',
+        : g.pins.length ? '제작 전에 부품 종류를 확인합니다. 다리 수가 같은 부품 모양이어야 모든 연결이 기판에 들어갑니다.'
+          : `회로도에서 그 연결을 ${ref}의 맞는 다리에 다시 이은 뒤 PCB를 만듭니다.`,
     }
   })
 }

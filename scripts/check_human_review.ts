@@ -310,6 +310,14 @@ if (boards.some(x => x.b.style === 'smd' && x.b.parts.some(p => p.part === 'Q_NM
   check('H15 no-pad legs in words, one error per part', !shown.some(s => /has no pad|SOD-123/.test(s)) && !!row && row.state === 'error'
     && row.count === 1 && !!row.items?.[0].summary.includes('D2(다이오드)의 다리 2개') && overall(summarize(rows)).tone === 'bad',
     row ? `${row.id} ${row.state} ${row.count}: ${row.items?.[0]?.summary ?? row.detail[0]}` : 'no row names D2')
+  // a pin saved under a name the pin-name table does not know (board.py read_pins, 2026-11-08): its connection is not on the
+  // board, so the same error row, not a 핀 배열 가정 to look over
+  const u: BoardModel = { ...handBoard('smd'), warnings: ['D2 pin "ANODE" is neither a pin number nor a pin name of D'] }
+  const uRows = checkRows(clean, u)
+  const uRow = uRows.find(r => (r.items ?? []).some(i => i.ref === 'D2'))
+  check('H15b a pin name the table does not know is the same error, in words', !!uRow && uRow.state === 'error' && uRow.count === 1
+    && !uRows.some(r => r.id === 'pinout_assumed') && !!uRow.items?.[0].summary.includes('어느 다리로 가는지 읽지 못해'),
+    uRow ? `${uRow.id} ${uRow.state}: ${uRow.items?.[0]?.summary}` : uRows.map(r => r.id).join(','))
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : `ALL PASS${skipped ? ` (${skipped} skipped: not counted as passed)` : ''}`)

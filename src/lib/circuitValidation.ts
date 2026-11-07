@@ -42,12 +42,20 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
 
   if (components.length && !nets.some(n => /^(GND|AGND|DGND|PGND)$/i.test(n.name))) add({ code: 'CIR005', severity: 'error', title: '기준 접지가 없습니다', message: 'GND 넷이 없어 전압의 기준점과 귀환 경로를 확인할 수 없습니다.', suggestion: '전원 음극과 회로의 귀환 경로를 GND 넷으로 연결하세요.', chat: 'GND 넷이 없어. 배터리나 전원의 − 단자가 있는 넷의 이름을 GND로 바꿔줘. 연결된 핀은 그대로 둬.', refs: [], nets: [] })
 
-  const pinNets = new Map<string, string[]>()
+  // one pin by its number in one net and by its name in another (D1.1 and D1.A) is one pin on two nets: read through the
+  // pin-name table as the board generator reads it (2026-11-08), which would otherwise put the pad on one of them unasked.
+  // The same pin twice in one net is on one net
+  const kindOf = new Map(components.map(c => [c.ref, c.name]))
+  const pinNets = new Map<string, Set<string>>(), written = new Map<string, Set<string>>()
   for (const net of nets) for (const node of net.nodes) {
-    const key = `${node.ref}.${node.pin}`
-    pinNets.set(key, [...(pinNets.get(key) || []), net.name])
+    const key = `${node.ref}.${pinNumber(kindOf.get(node.ref), String(node.pin))}`
+    pinNets.set(key, (pinNets.get(key) ?? new Set()).add(net.name))
+    written.set(key, (written.get(key) ?? new Set()).add(`${node.ref}.${node.pin}`))
   }
-  for (const [pin, names] of pinNets) if (names.length > 1) add({ code: 'CIR006', severity: 'error', title: '핀의 넷이 충돌합니다', message: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있습니다.`, suggestion: '이 핀은 하나의 넷에만 남기세요.', chat: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있어. ${pin}을 맞는 넷 하나에만 남겨줘.`, refs: [pin.split('.')[0]], nets: names })
+  for (const [key, on] of pinNets) if (on.size > 1) {
+    const pin = [...written.get(key)!].join('/'), names = [...on]
+    add({ code: 'CIR006', severity: 'error', title: '핀의 넷이 충돌합니다', message: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있습니다.`, suggestion: '이 핀은 하나의 넷에만 남기세요.', chat: `${pin}이 ${names.join(', ')} 넷에 동시에 들어 있어. ${pin}을 맞는 넷 하나에만 남겨줘.`, refs: [key.split('.')[0]], nets: names })
+  }
 
   // a part counts as a resistor by its type or its reference, as it did here: an edit may have saved R3 under a name of its own
   const resistors = new Set(components.filter(c => c.name === 'R' || /^R\d+$/i.test(c.ref)).map(c => c.ref))
@@ -69,7 +77,12 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
   }
 
   for (const transistor of components.filter(c => c.name === 'Q_NMOS' || c.name === 'Q_NPN')) {
-    const controlNet = nets.find(n => n.nodes.some(node => node.ref === transistor.ref && String(node.pin) === '1'))
+    // the base or gate is template pin 1, also when an older edit saved it by name ('B', 'G'): read through the same table
+    // (2026-11-08: a base saved as 'B' read as floating and the PCB was refused). A name the table does not know is not
+    // guessed: it may be that pin, so this transistor is not judged here (the operating check says 판단 불가 for it)
+    const own = nets.flatMap(n => n.nodes.filter(node => node.ref === transistor.ref).map(node => ({ n, pin: pinNumber(transistor.name, String(node.pin)) })))
+    if (own.some(o => !/^\d+$/.test(o.pin))) continue
+    const controlNet = own.find(o => o.pin === '1')?.n
     if (!controlNet || controlNet.nodes.length < 2) add({ code: 'CIR102', severity: 'error', title: '트랜지스터 제어 핀이 떠 있습니다', message: `${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'} 핀에 유효한 제어 경로가 없습니다.`, suggestion: '제어 신호와 바이어스 저항 연결을 복구하세요.', chat: `${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'} 핀에 제어 신호가 없어. 제어 신호 커넥터나 출력 핀에서 저항을 거쳐 ${transistor.ref}의 ${transistor.name === 'Q_NMOS' ? '게이트' : '베이스'}로 이어줘.`, refs: [transistor.ref], nets: controlNet ? [controlNet.name] : [] })
   }
 
