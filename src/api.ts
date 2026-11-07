@@ -312,6 +312,18 @@ export async function removeFavorite(id: string): Promise<void> {
 // ── Netlist files ─────────────────────────────────────────────────
 
 /**
+ * Why /erc_graph gave no findings, in words for the screen; undefined when it answered. A busy server (every heavy-job
+ * slot taken, server/job_slots.ts) says so in its own sentence, what happened and what to do: "HTTP 503" said neither
+ * (review of 2026-11-08)
+ */
+export function ercGraphTrouble(status: number, data: { error?: string; code?: string } | null): string | undefined {
+  if (status === 404) return '서버에 이 점검 기능이 없습니다. 서버를 최신 코드로 다시 시작하면 됩니다.'
+  if (status === 400) return '회로에 점검할 수 없는 이름(따옴표나 괄호)이 있습니다.'
+  if (status === 503 && data?.code === 'busy' && data.error) return data.error
+  return status >= 200 && status < 300 ? undefined : `서버가 점검하지 못했습니다 (HTTP ${status}).`
+}
+
+/**
  * Render's disk is wiped on a restart or sleep: writes a saved session's netlist file again from its circuit
  * (the server never overwrites one that exists). true = it was missing and is written now.
  */

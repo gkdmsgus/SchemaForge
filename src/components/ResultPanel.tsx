@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
 import {
-  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText, restoreNetlist,
+  addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText, restoreNetlist, ercGraphTrouble,
   type AuthUser, type SessionPatch,
 } from '../api'
 import CircuitCanvas from './CircuitCanvas'
@@ -212,11 +212,9 @@ export default function ResultPanel({
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`${API}/erc_graph`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: ercGraph, style }) })
-        const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string } | null
+        const data = await res.json().catch(() => null) as { erc?: ErcFinding[] | null; ercError?: string; error?: string; code?: string } | null
         if (off) return
-        const why = res.status === 404 ? '서버에 이 점검 기능이 없습니다. 서버를 최신 코드로 다시 시작하면 됩니다.'
-          : res.status === 400 ? '회로에 점검할 수 없는 이름(따옴표나 괄호)이 있습니다.'
-            : !res.ok ? `서버가 점검하지 못했습니다 (HTTP ${res.status}).` : undefined
+        const why = ercGraphTrouble(res.status, data)
         setAiErc({ graph: ercGraph, style, findings: res.ok && Array.isArray(data?.erc) ? data!.erc! : null, error: why ?? data?.ercError ?? data?.error })
       } catch {
         if (!off) setAiErc({ graph: ercGraph, style, findings: null, error: '서버에 연결하지 못했습니다. 서버가 켜져 있는지 확인합니다.' })

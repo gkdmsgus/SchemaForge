@@ -304,7 +304,9 @@ def check_left(work):
 
 
 def check_replaced(work):
-    """24i. a second request for a board stops the run writing it, whoever is still reading that run's stream."""
+    """24i. a second request for a board stops the run writing it, whoever is still reading that run's stream.
+    24p. while the model thinks the run holds no slot (job_slots.ts): an AI round takes one for its reroute and DRC only,
+    and four members waiting on the model held all four for up to 7 minutes (review of 2026-11-08)."""
     body = new_net(work, 'ai_replaced_check')
     fake = FakeModel(lambda n: None)
     with fake, Server(**fake.env()) as server:
@@ -313,6 +315,8 @@ def check_replaced(work):
         reader = threading.Thread(target=lambda: seen.extend(first.events()), daemon=True)
         reader.start()
         called = wait_for(lambda: fake.calls >= 1, 90)
+        with urllib.request.urlopen(f'{server.base}/health', timeout=10) as r:
+            thinking = json.loads(r.read()).get('jobs')
         second = sse_post(f'{server.base}/generate_pcb_stream', body)
         reader.join(20)
         done = [d for k, d in second if k == 'done'][-1]
@@ -323,7 +327,10 @@ def check_replaced(work):
     said = next((d.get('error', '') for k, d in seen if k == 'error'), '')
     return {'24i a new request takes the board over': (
         called and kinds[-1:] == ['error'] and 'done' not in kinds and '멈췄습니다' in said and same and dropped,
-        f'first stream ends {kinds[-2:]}, second done.board is the file: {same}, the hanging model call dropped: {dropped}')}
+        f'first stream ends {kinds[-2:]}, second done.board is the file: {same}, the hanging model call dropped: {dropped}'),
+        '24p no slot held while the model thinks': (
+            called and isinstance(thinking, dict) and thinking.get('running') == 0 and thinking.get('waiting') == 0,
+            f'/health jobs during the model call: {thinking}')}
 
 
 def check_cut_trial(work):
