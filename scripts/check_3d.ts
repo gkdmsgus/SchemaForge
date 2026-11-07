@@ -1,7 +1,9 @@
 /**
- * Stage-5 checks: the 3D view is the same board, tilted.
+ * Stage-5 checks: the 3D view is the same board, tilted. With BASE set, also the KiCad 3D viewer itself, in a browser on a
+ * real demo board (a served app with KiCad, a minute or two): 31 leaving and reopening it leaves no WebGL context behind
+ * (each stayed, about 127 MB of GPU memory, until Chrome warned at 16: review of 2026-11-06).
  *
- * Run: npx tsx scripts/check_3d.ts [board.json ...]
+ * Run: npx tsx scripts/check_3d.ts [board.json ...]     BASE=http://localhost:8133 adds the browser checks
  * With no arguments it uses every *.board.json in server/outputs.
  * Exit code 0 only if every check passes.
  */
@@ -140,6 +142,56 @@ const camOf = (b: BoardModel, yaw: number, tilt: number): Camera =>
   const [w0, h0] = span(0), [w90, h90] = span(90)
   check('30 rotation applies in 3D', Math.abs(w0 - h90) < 1e-9 && Math.abs(h0 - w90) < 1e-9,
     `${p.ref} ${w0.toFixed(2)}x${h0.toFixed(2)} -> ${w90.toFixed(2)}x${h90.toFixed(2)}`)
+}
+
+// The viewer in a browser. GL calls are counted on the context itself, so the count does not depend on the viewer's code.
+const BASE = process.env.BASE?.replace(/\/$/, '')
+if (!BASE) console.log('skip 31: BASE not set (not counted as passed)')
+else {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch()
+  try {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+    const warned: string[] = []
+    page.on('console', m => { if (m.type() === 'warning' || m.type() === 'error') warned.push(m.text()) })
+    await page.addInitScript(() => {
+      const gl = { draws: 0, contexts: [] as WebGLRenderingContext[] }
+      Object.assign(window, { __gl: gl })
+      for (const proto of [WebGL2RenderingContext.prototype, WebGLRenderingContext.prototype] as unknown as Record<string, (...a: unknown[]) => unknown>[]) {
+        for (const fn of ['drawElements', 'drawArrays', 'drawElementsInstanced', 'drawArraysInstanced', 'drawRangeElements']) {
+          const native = proto[fn]
+          if (native) proto[fn] = function (this: unknown, ...a: unknown[]) { gl.draws++; return native.apply(this, a) }
+        }
+      }
+      const getContext = HTMLCanvasElement.prototype.getContext as (...a: unknown[]) => unknown
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...a: unknown[]) {
+        const c = getContext.apply(this, a) as WebGLRenderingContext | null
+        if (c && /webgl/.test(String(a[0])) && !gl.contexts.includes(c)) gl.contexts.push(c)
+        return c
+      } as typeof HTMLCanvasElement.prototype.getContext
+    })
+    await page.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+    await page.getByRole('button', { name: /\.kicad_pcb/ }).waitFor({ timeout: 300000 })
+    await page.getByTestId('view-tab-assembly').click()
+    const viewer = page.locator('[data-testid="assembly-3d"] [data-testid="kicad-3d"]')
+    const ready = () => page.waitForSelector('[data-testid="assembly-3d"] [data-testid="kicad-3d"][data-state="ready"]', { timeout: 200000 })
+    await ready()
+
+    // 31: 2D and back, more times than the 16 contexts Chrome keeps
+    for (let i = 0; i < 18; i++) {
+      await page.getByTestId('assembly-view-2d').click()
+      await page.getByTestId('assembly-view-3d').click()
+      await viewer.waitFor({ timeout: 20000 })
+    }
+    await ready()
+    await page.waitForTimeout(500)
+    const alive = await page.evaluate(() => (window as unknown as { __gl: { contexts: WebGLRenderingContext[] } }).__gl.contexts.filter(c => !c.isContextLost()).length)
+    const tooMany = warned.filter(t => /Too many active WebGL contexts/.test(t)).length
+    check('31 the viewer closed 18 times leaves no WebGL context behind', alive === 1 && tooMany === 0, `${alive} alive, ${tooMany} warnings`)
+  } finally {
+    await browser.close()
+  }
 }
 
 let allOk = true

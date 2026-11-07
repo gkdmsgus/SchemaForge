@@ -437,6 +437,8 @@ export default function KiCad3DViewer({ pcbFilename, version = null, selected = 
         materials.forEach(m => m.dispose())
       })
       renderer.dispose()
+      // dispose keeps the context: it stayed until Chrome dropped the oldest at 16, about 127 MB of GPU memory each (2026-11-06)
+      renderer.forceContextLoss()
       renderer.domElement.remove()
     }
   }, [pcbFilename, version])
