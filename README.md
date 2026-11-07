@@ -204,7 +204,7 @@ cd server && npx tsx check_model_config.ts
 ```bash
 cd server && npx tsx check_kicad_config.ts
 ```
-개발 PC의 DRC 라이브러리 표 4항목 (KiCad와 python·skidl 필요). 개발 서버는 시작할 때 임시 폴더에 `server/pcb/footprints` 사본만 담은 풋프린트 라이브러리 표를 만들고, DRC만 이 표를 읽는다(`KICAD_CONFIG_HOME`, 배포 이미지와 같은 표. 이미 `KICAD_CONFIG_HOME`이 있으면 그것을 쓴다). 이 PC의 표는 설치된 KiCad 라이브러리 전체를 읽어 DRC 한 번이 대략 10초·1.4 GB였고, 이 표로는 대략 1초·160 MB에 같은 결과가 나왔다. 라이브러리 이름에 `.pretty`가 붙지 않는지, 데모 기판의 DRC에 `lib_footprint_issues`가 없는지, 그 DRC가 정말 이 표를 읽는지(표를 비우면 부품마다 `lib_footprint_issues`가 나오는지), `run_checks.py`가 같은 표를 쓰는지 확인한다. 3D와 거버 내보내기는 그대로다.
+개발 PC의 DRC 라이브러리 표 5항목 (KiCad와 python·skidl 필요). 개발 서버는 시작할 때 임시 폴더에 `server/pcb/footprints` 사본만 담은 풋프린트 라이브러리 표를 만들고, DRC만 이 표를 읽는다(`KICAD_CONFIG_HOME`, 배포 이미지와 같은 표. 이미 `KICAD_CONFIG_HOME`이 있으면 그것을 쓴다). 이 PC의 표는 설치된 KiCad 라이브러리 전체를 읽어 DRC 한 번이 대략 10초·1.4 GB였고, 이 표로는 대략 1초·160 MB에 같은 결과가 나왔다. 라이브러리 이름에 `.pretty`가 붙지 않는지, 데모 기판의 DRC에 `lib_footprint_issues`가 없는지, 그 DRC가 정말 이 표를 읽는지(표를 비우면 부품마다 `lib_footprint_issues`가 나오는지), `run_checks.py`가 같은 표를 만들어 자기 DRC에 주는지 확인한다. 3D와 거버 내보내기는 그대로다.
 
 ```bash
 cd server && npx tsx check_inputs.ts

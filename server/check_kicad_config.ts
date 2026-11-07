@@ -3,7 +3,8 @@
 // K1 the table names every server/pcb/footprints/<name>.pretty as <name> (named with .pretty, every footprint came back
 // as lib_footprint_issues and nothing else said so). K2 a development server writes it at start in its temp folder,
 // and the demo board's DRC finds no lib_footprint_issues. K3 that DRC reads that table: emptied, every footprint comes
-// back as lib_footprint_issues (the PC's own table would have found them all). K4 run_checks.py writes the same table.
+// back as lib_footprint_issues (the PC's own table would have found them all). K4 run_checks.py writes the same table,
+// K4b and gives it to its DRC (read as text).
 // No model; needs python + skidl and KiCad (kicad-cli).
 // Usage (from server/): npx tsx check_kicad_config.ts   → exit 0 only if all pass
 import { spawn, spawnSync } from 'child_process'
@@ -106,6 +107,11 @@ function runChecksTable() {
     const same = existsSync(file) && readFileSync(file, 'utf8') === table
     check('K4 run_checks.py writes the same table as the server', r.status === 0 && same,
       r.status !== 0 ? `python exited ${r.status}: ${(r.stderr || '').trim().split('\n').pop()}` : same ? '' : 'the tables differ')
+    // K4b. and its DRC is given that table (read as text): K4 alone passed with run_checks' DRC on the PC's own table
+    const src = readFileSync(join(process.cwd(), 'pcb', 'run_checks.py'), 'utf8')
+    const drcCall = src.split(/\r?\n/).find(l => /subprocess\.run\(\[cli, 'pcb', 'drc'/.test(l)) ?? ''
+    const given = /^\s*DRC_ENV = dict\(os\.environ, KICAD_CONFIG_HOME=vendored_kicad_config\(/m.test(src) && /\benv=DRC_ENV\b/.test(drcCall)
+    check('K4b run_checks.py gives its DRC that table', given, given ? '' : drcCall ? 'DRC_ENV not made from the table, or not given to its DRC' : 'no DRC call found')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
