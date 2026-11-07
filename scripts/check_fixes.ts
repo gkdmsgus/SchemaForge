@@ -118,6 +118,15 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   check('F5f a four-legged diode points at the bridge rectifier; another part does not', !!d1?.fix.includes('브리지 정류기')
     && !!u9 && !u9.fix.includes('브리지') && u9.fix.includes('부품 종류를 확인'), `${d1?.fix} | ${u9?.fix}`)
   check('F5g no board parts: the kind comes from the reference', splitWarnings([warnings[0]]).legs[0]?.text.startsWith('D1(다이오드)'))
+  // a pin saved under a name the pin-name table does not know (board.py read_pins, 2026-11-08): its connection is not on
+  // the board either, so the same item, in words; the name is only in the generator's line
+  const unread = splitWarnings(['D1 pin "ANODE" is neither a pin number nor a pin name of LED', warnings[1]], [{ ref: 'D1', part: 'LED' }])
+  const ud = unread.legs[0]
+  check('F5h a pin name the table does not know: one item for the part, in words, its line kept for 자세히',
+    unread.legs.length === 1 && ud.ref === 'D1' && JSON.stringify(ud.names) === '["ANODE"]' && !ud.pins.length
+      && ud.text.startsWith('D1(') && ud.text.includes('연결 1개는 어느 다리로 가는지 읽지 못해 기판에서 빠졌습니다') && ud.fix.includes('맞는 다리')
+      && JSON.stringify(unread.rest) === JSON.stringify([warnings[1]]) && ![ud.text, ud.fix].some(s => /pin|pad|ANODE|neither|패드|\d번/i.test(s)),
+    `${ud?.text} | ${ud?.fix} | rest=${unread.rest}`)
 }
 
 // F6. particles and values as written in the fix text
