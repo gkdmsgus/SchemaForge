@@ -220,6 +220,20 @@ check('35 decoys ignored', !hNoShunt.includes('GND') && hNoShunt.includes('+12V'
   && parseOhms('10k') === 10000 && Number.isNaN(parseOhms('100nF')),
   `R2=10 ohm -> [${hNoShunt}]; no pad_pins -> [${hNoPins}]; parseOhms ok`)
 
+// 35b. a value with its rating after it is the same resistor: '0.1 1W' read as NaN here (the screen read 0.1), so the
+//      shunt carried no load and GND left the narrow-power count of better() (review of 2026-11-06). 680 ohm is no shunt
+//      with or without one, and the notations only this copy reads stay
+const netsWith = (value: string) => {
+  const b = clone()
+  b.parts.find((p: { ref: string }) => p.ref === 'R2').value = value
+  return heavyPowerNets(b).map(h => h.net)
+}
+const rated = ['0.1 1W', '0R1 1W', '100m 1W', '0.1Ω 1W', '0.1 Ω', '100mΩ,1W'].filter(v => !netsWith(v).includes('GND'))
+check('35b a rating after the value', rated.length === 0 && !netsWith('680 1/4W').includes('GND') && netsWith('R10').includes('GND')
+  && parseOhms('0.1 1W') === 0.1 && parseOhms('680 1/4W') === 680 && parseOhms('1k 1%') === 1000 && parseOhms('R10') === 0.1 && parseOhms('10mR') === 0.01
+  && Number.isNaN(parseOhms('100nF 16V')),
+  rated.length ? `GND missing with ${rated.join(' | ')}` : `0.1 1W -> ${parseOhms('0.1 1W')}, 680 1/4W -> ${parseOhms('680 1/4W')}, 10mR -> ${parseOhms('10mR')}`)
+
 // 36. widening all four clears the count, is judged better, and the board passes KiCad DRC
 const motorDrc = drcOf(motor[1].pcb)
 check('36 motor widening kept, DRC clean', motor[1].metrics.powerWidth === 0 && motor[1].metrics.unrouted === 0

@@ -9,7 +9,6 @@ import {
 import { join, basename } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import OpenAI from 'openai'
 import {
   MAX_ROUNDS, applyEdit, askModel, backup, better, clashText, describeBoard, describeOutcome, metricsOf, precheck, precheckNote,
   splitEdit, readBoard, roundFeedback, runGenerator,
@@ -19,12 +18,11 @@ import { runSkidl as runSkidlIn } from './skidl_run'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import { sweepOutputs } from './outputs_sweep'
-import { MODEL, MODEL_BASE, MODEL_MINI, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
+import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
   type ErcFinding, type ErcRun,
 } from './erc_repair'
-import { tavily } from '@tavily/core'
 import axios from 'axios'
 import { createClient, isAuthRetryableFetchError, type AuthError, type Session } from '@supabase/supabase-js'
 
@@ -105,6 +103,9 @@ const distPath = distCandidates.find(p => existsSync(p)) ?? join(process.cwd(), 
 console.log('[static] distPath:', distPath, '| exists:', existsSync(distPath))
 
 if (existsSync(distPath)) {
+  // a build's files have their hash in the name, so they can stay for a year; index.html names the current ones and
+  // stays max-age=0. All of it was asked for again on every visit (review of 2026-11-06)
+  app.use('/assets', express.static(join(distPath, 'assets'), { immutable: true, maxAge: '1y' }))
   app.use(express.static(distPath))
 }
 
@@ -702,7 +703,7 @@ app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Requ
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const response = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages: [
@@ -768,7 +769,7 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
   const description = (req.body?.description || '').trim()
   if (!description) return res.status(400).json({ error: 'description required' })
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const response = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages: [
@@ -905,15 +906,17 @@ changed.`
   }]
 
   res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
   res.setHeader('Connection', 'keep-alive')
 
   const abort = new AbortController()
   // room for max_tokens 1200 at about 30 tokens/s, so a long edit ends cut short (asked for in parts), not timed out
   const timeout = setTimeout(() => abort.abort(), 45000)
+  // a visitor who leaves takes the model call along: it ran on for up to 45 s at the operator's cost (review of 2026-11-06)
+  res.on('close', () => abort.abort())
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
+    const openai = modelClient()
     const stream = await openai.chat.completions.create({
       model: MODEL_MINI, ...modelExtra(),
       messages,
@@ -1023,7 +1026,6 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
   try {
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', '🔍 Analysing circuit requirements...'))
-    const sourceUrls: string[] = []
 
     if (abort.signal.aborted) return res.end()
     res.write(sse('status', `🤖 ${modelLabel(MODEL)} is analysing and generating the circuit...`))
@@ -1165,7 +1167,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     const ercDone: GenerateErc = erc.ok
       ? { findings: erc.findings, repair }
       : { findings: null, reason: erc.reason, repair }
-    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, sources: sourceUrls, graph, erc: ercDone })))
+    res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, graph, erc: ercDone })))
   } catch (e) {
     if (!clientClosed) {
       const msg = abort.signal.aborted
@@ -1230,12 +1232,14 @@ function cleanGraph(g: NetGraph | undefined): NetGraph | null {
 }
 
 app.post('/erc_graph', async (req: Request, res: Response) => {
-  const clean = cleanGraph((req.body || {}).graph)
+  const { graph, style } = req.body || {}
+  const clean = cleanGraph(graph)
   if (!clean) return res.status(400).json({ error: 'graph with components and nets required' })
   const netPath = join(tmpdir(), `sf_ercgraph_${randomUUID().slice(0, 8)}.net`)
   try {
     writeFileSync(netPath, graphToNetlist(clean), 'utf8')
-    const erc = await runErc(netPath, process.cwd())
+    // the board's style: a finding names a pad, and a floating NPN base is pad 1 in SMD, pad 2 in THT (review of 2026-11-06)
+    const erc = await runErc(netPath, process.cwd(), undefined, pcbStyle(style))
     res.json(erc.ok ? { erc: erc.findings } : { erc: null, ercError: erc.reason })
   } finally {
     try { unlinkSync(netPath) } catch { /* already gone */ }
@@ -1254,7 +1258,7 @@ app.get('/download/:filename', (req: Request, res: Response) => {
 // ── POST /netlist/restore ──────────────────────────────────────────
 // Render's disk is wiped on a restart or sleep, so a circuit opened from the history can name a netlist outputs/
 // no longer has. The front end sends the session's filename and graph, and the file is written back under that
-// name. Open like /generate_pcb_from_graph (a netlist from a graph, nothing runs); a file that is there stays.
+// name. Open like /generate_pcb_stream, which takes a graph too (here a netlist from a graph, nothing runs); a file that is there stays.
 
 const NETLIST_NAME = /^[A-Za-z0-9_-]{1,80}\.net$/
 
@@ -1277,83 +1281,9 @@ app.post('/netlist/restore', (req: Request, res: Response) => {
   }
 })
 
-// ── POST /generate_pcb ─────────────────────────────────────────────
-
 type PcbStyle = 'smd' | 'tht'
 
-interface PcbSummary {
-  components: number
-  nets: number
-  unmapped: { ref: string; part: string; reason: string }[]
-  warnings: string[]
-  style: PcbStyle
-  board: { w: number; h: number }
-  boardJson: string
-}
-
-/** Run pcb_generator.py; its last stdout line is a JSON summary. */
-function runPcbGenerator(netPath: string, pcbPath: string, style: PcbStyle): Promise<PcbSummary> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath, '--style', style])
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('PCB generation timed out')) }, 30000)
-    proc.on('error', (e: Error) => { clearTimeout(timer); reject(e) })
-    proc.on('close', (code: number | null) => {
-      clearTimeout(timer)
-      if (code !== 0) return reject(new Error(stderr || 'PCB generation failed'))
-      try {
-        const last = stdout.trim().split('\n').pop() || '{}'
-        resolve(JSON.parse(last) as PcbSummary)
-      } catch {
-        reject(new Error('PCB generator returned no summary'))
-      }
-    })
-  })
-}
-
 const pcbStyle = (s: unknown): PcbStyle => (s === 'tht' ? 'tht' : 'smd')
-
-app.post('/generate_pcb', async (req: Request, res: Response) => {
-  const { filename, style } = req.body || {}
-  if (!filename) return res.status(400).json({ error: 'No netlist filename provided.' })
-
-  const netPath = join(OUTPUTS_DIR, basename(filename as string))
-  if (!existsSync(netPath)) return res.status(404).json({ error: 'Netlist file not found.' })
-
-  const pcbFilename = basename(filename as string, '.net') + '.kicad_pcb'
-  const pcbPath = join(OUTPUTS_DIR, pcbFilename)
-
-  try {
-    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated successfully' })
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
-  }
-})
-
-// ── POST /generate_pcb_from_graph ─────────────────────────────────
-
-app.post('/generate_pcb_from_graph', async (req: Request, res: Response) => {
-  const { graph, baseName, style } = req.body || {}
-  if (!graph) return res.status(400).json({ error: 'No graph provided.' })
-
-  const uid = randomUUID().slice(0, 8)
-  const netFilename = `${fileStem(baseName)}_${uid}.net`
-  const netPath = join(OUTPUTS_DIR, netFilename)
-  const pcbFilename = netFilename.replace('.net', '.kicad_pcb')
-  const pcbPath = join(OUTPUTS_DIR, pcbFilename)
-
-  try {
-    writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
-    const summary = await runPcbGenerator(netPath, pcbPath, pcbStyle(style))
-    res.json({ pcbFilename, summary, drc: await runDrc(pcbPath), message: 'PCB layout generated from edited graph' })
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
-  }
-})
 
 interface DrcResult {
   available: boolean
@@ -1366,14 +1296,14 @@ interface DrcResult {
 }
 
 /** Run KiCad's design rule check on a finished board. Never throws. */
-async function runDrc(pcbPath: string): Promise<DrcResult> {
+async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult> {
   const out = join(tmpdir(), `sf_drc_${randomUUID().slice(0, 8)}.json`)
   const t0 = Date.now()
   const seconds = () => Math.round((Date.now() - t0) / 100) / 10
   try {
     // A warm DRC takes about 4 s here; the first call after the server starts has timed out at 30 s.
     // The zones are filled first, as for the gerbers, so the ground pour that gets made is checked too.
-    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000)
+    await runKicadCli(['pcb', 'drc', '--format', 'json', '--severity-all', '--refill-zones', '--output', out, pcbPath], 'DRC', 90000, signal)
     const d = JSON.parse(readFileSync(out, 'utf8')) as {
       violations: { severity: string }[]; unconnected_items: unknown[]
     }
@@ -1396,33 +1326,45 @@ async function runDrc(pcbPath: string): Promise<DrcResult> {
 /**
  * Stage 4: let the model improve the finished board, but keep a round only when the
  * numbers improve. Returns the final done payload and DRC, or null if nothing was kept.
+ * `signal` stops it: the running model call or process is cut, the board file goes back to the best so far, and what
+ * was kept is still returned. The board file always holds what this returns.
  */
 async function runAiLoop(
   netPath: string, pcbPath: string, style: PcbStyle,
   doneEvent: Record<string, unknown>, drc: DrcResult,
-  emit: (r: AiRound) => void,
+  emit: (r: AiRound) => void, signal: AbortSignal,
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
+  const summary = (doneEvent.summary || {}) as Record<string, unknown>
+  // outside the try: a kept round is already in the board file, so a later round that fails still returns it. Null sent
+  // the screen the first board while downloads and gerbers read the kept one (review of 2026-11-06)
+  let best = metricsOf(summary, drc.errors ?? 0)
+  let bestDrc = drc
+  let bestDone = doneEvent
+  let kept = false
+  let round = 0
+  // round 0 is what the screen reads as "AI 다듬기 건너뜀", so not once a round was kept: a stop in its round
+  const stopHere = (why: string) => emit(kept
+    ? { round, reason: `AI 다듬기를 여기서 멈추고 지금까지 채택한 기판을 씁니다: ${why}`, actions: { stop: true }, before: best, kept: false }
+    : { round: 0, reason: `AI 다듬기를 건너뜁니다: ${why}`, actions: {}, before: best, kept: false })
   try {
     // Every round is judged on DRC errors, so an unavailable DRC must not read as "0 errors".
-    if (!drc.available) drc = await runDrc(pcbPath)
+    if (!drc.available) drc = await runDrc(pcbPath, signal)
     if (!drc.available) throw new Error(`DRC를 돌리지 못해 판정할 수 없습니다 (${drc.reason})`)
     let board = readBoard(jsonPath)
-    let summary = (doneEvent.summary || {}) as Record<string, unknown>
-    let best = metricsOf(summary, drc.errors ?? 0, board)
-    let bestDrc = drc
-    let bestDone = doneEvent
+    best = metricsOf(summary, drc.errors ?? 0, board)
+    bestDrc = drc
     const ov: Overrides = {
       parts: Object.fromEntries(board.parts.map(p => [p.ref, [p.x, p.y, p.rot] as [number, number, number]])),
       net_width: { ...((summary.net_width as Record<string, number>) || {}) },
     }
     const history: string[] = []
     const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
-    let kept = false
 
-    for (let round = 1; round <= MAX_ROUNDS; round++) {
+    while (round < MAX_ROUNDS && !signal.aborted) {
+      round++
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
-      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history)
+      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history, signal)
       history.push(JSON.stringify(edit))
       if (edit.stop) {
         // no note: the list's 중단 chip says it (a note "stop" showed under it in English)
@@ -1432,6 +1374,7 @@ async function runAiLoop(
       // A proposal often mixes a width change with a move. Judge them one after the other so a good
       // width change is not thrown away with a bad move (or a bad move carried in by a good width change).
       for (const [part, sub] of splitEdit(edit)) {
+        if (signal.aborted) break
         const label = part === 'width' ? '선 폭' : '배치'
         const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
         const notes = applyEdit(trial, sub, board)
@@ -1445,12 +1388,12 @@ async function runAiLoop(
                  note: [...notes, precheckNote(label, problems)].join(', ') })
           continue
         }
-        const restore = backup([pcbPath, jsonPath])
+        const { restore, drop } = backup([pcbPath, jsonPath])
         let after: Metrics | undefined
         let note = notes.join(', ')
         try {
-          const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd())
-          const drc2 = await runDrc(pcbPath)
+          const s2 = await runGenerator(netPath, pcbPath, style, trial, process.cwd(), signal)
+          const drc2 = await runDrc(pcbPath, signal)
           if (!drc2.available) throw new Error(`DRC 실패로 판정 불가 (${drc2.reason})`)
           after = metricsOf(s2, drc2.errors ?? 0, readBoard(jsonPath))
           if (better(after, best)) {
@@ -1462,6 +1405,7 @@ async function runAiLoop(
             ov.parts = trial.parts
             ov.net_width = trial.net_width
             kept = true
+            drop()
             feedback.push(describeOutcome(round, sub, before, after, true))
             emit({ round, part, reason: edit.reason || '', actions: sub, before, after, kept: true, note })
             continue
@@ -1471,16 +1415,17 @@ async function runAiLoop(
           note = `적용 실패: ${(e as Error).message}`
         }
         restore()                                   // put the previous board back
+        if (signal.aborted) break                   // cut short, not judged: no row for it
         feedback.push(describeOutcome(round, sub, best, after, false))
         emit({ round, part, reason: edit.reason || '', actions: sub, before: best, after, kept: false, note })
       }
     }
-    return kept ? { done: bestDone, drc: bestDrc } : null
   } catch (e) {
-    emit({ round: 0, reason: `AI 다듬기를 건너뜁니다: ${modelFailure(e)?.text ?? (e as Error).message}`, actions: {},
-           before: metricsOf((doneEvent.summary || {}) as Record<string, unknown>, drc.errors ?? 0), kept: false })
-    return null
+    // a model call the signal cut is not a failed one
+    if (!signal.aborted) stopHere(modelFailure(e)?.text ?? (e as Error).message)
   }
+  if (signal.reason === 'budget') stopHere('정해진 시간 안에 끝나지 않았습니다.')
+  return kept ? { done: bestDone, drc: bestDrc } : null
 }
 
 // ── GET /board_model ───────────────────────────────────────────────
@@ -1509,39 +1454,22 @@ app.get('/board_model', async (req: Request, res: Response) => {
   }
 })
 
-// ── GET /render_board ──────────────────────────────────────────────
-// KiCad's own 3D renderer, for the photo view next to the schematic-style board.
-// ?pcb=<file in outputs>&rot=X,Y,Z&w=&h=  -> image/png
-app.get('/render_board', async (req: Request, res: Response) => {
-  const file = basename(String(req.query.pcb || ''))
-  if (!file.endsWith('.kicad_pcb')) return res.status(400).json({ error: 'pcb must be a .kicad_pcb file' })
-  const pcbPath = join(OUTPUTS_DIR, file)
-  if (!existsSync(pcbPath)) return res.status(404).json({ error: 'board not found' })
-  const rot = /^-?\d{1,3},-?\d{1,3},-?\d{1,3}$/.test(String(req.query.rot || '')) ? String(req.query.rot) : '-30,0,35'
-  const side = String(req.query.side || 'top') === 'bottom' ? 'bottom' : 'top'
-  const w = Math.min(2000, Math.max(400, Number(req.query.w) || 1400))
-  const h = Math.min(1400, Math.max(300, Number(req.query.h) || 900))
-  const out = join(tmpdir(), `sf_render_${randomUUID().slice(0, 8)}.png`)
-  try {
-    await runKicadCli(['pcb', 'render', '--output', out, '--width', String(w), '--height', String(h),
-      '--quality', 'high', '--floor', '--perspective', '--rotate', rot, '--side', side,
-      '--background', 'opaque', pcbPath], '3D render', 180000)
-    const png = readFileSync(out)
-    res.setHeader('Content-Type', 'image/png')
-    res.setHeader('Cache-Control', 'no-store')
-    res.send(png)
-  } catch (e) {
-    res.status(503).json({ error: (e as Error).message })
-  } finally {
-    try { unlinkSync(out) } catch { /* already gone */ }
-  }
-})
-
 // ── POST /generate_pcb_stream (SSE) ────────────────────────────────
 // Streams the placement as it happens: parts (local geometry) → init → frame… → done.
 // Body: { filename } for a generated netlist, or { graph, baseName } for an edited one; plus style.
 
-app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Response) => {
+/** what DRC and the AI rounds may take after the generator is done. The checks shorten it (pcb/check_ai_loop.py) */
+const AI_BUDGET_MS = Number(process.env.SF_AI_BUDGET_MS) || 420000
+
+/**
+ * The run writing each board file, stopped by its signal with the reason 'closed' (the visitor left), 'budget' or
+ * 'replaced'. A retry names the same file as the run it follows, and a loop left running kept overwriting it: the
+ * screen showed one board and the gerbers came from another (review of 2026-11-06). So a new request stops the run
+ * before it and waits for its end: its processes gone, its best board back in the file.
+ */
+const boardRuns = new Map<string, { abort: AbortController; ended: Promise<void> }>()
+
+app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   const { filename, graph, baseName, style, ai } = req.body || {}
   if (ai === true) {
     // the board itself is open to all (the demos); the AI rounds call the model
@@ -1549,12 +1477,16 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
     if (refusal) return refuse(req, res, refusal)
   }
   const useAi = ai === true && (process.env.SF_AI_STUB === '1' || !!process.env.OPENAI_API_KEY)
+  // cleaned as /erc_graph does: a value like 0.1" passed the netlist check there and the generator died on it here
+  // (IndexError, review of 2026-11-06)
+  const clean = graph ? cleanGraph(graph) : null
+  if (graph && !clean) return res.status(400).json({ error: 'graph with components and nets required' })
   let netPath: string
   let pcbFilename: string
   if (graph) {
     const netFilename = `${fileStem(baseName)}_${randomUUID().slice(0, 8)}.net`
     netPath = join(OUTPUTS_DIR, netFilename)
-    writeFileSync(netPath, graphToNetlist(graph as NetGraph), 'utf8')
+    writeFileSync(netPath, graphToNetlist(clean!), 'utf8')
     pcbFilename = netFilename.replace('.net', '.kicad_pcb')
   } else if (filename) {
     netPath = join(OUTPUTS_DIR, basename(filename as string))
@@ -1572,12 +1504,22 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
   res.flushHeaders()
   if (res.socket) res.socket.setNoDelay(true)
 
-  const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
-    '--style', pcbStyle(style), '--stream'])
+  const abort = new AbortController()
+  let release = () => {}
+  const run = { abort, ended: new Promise<void>(r => { release = r }) }
+  const previous = boardRuns.get(pcbPath)
+  boardRuns.set(pcbPath, run)
+  const leave = () => {
+    if (boardRuns.get(pcbPath) === run) boardRuns.delete(pcbPath)
+    release()
+  }
+
   let buf = ''
   let stderr = ''
   let finished = false
   let awaitingDrc = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const send = (event: string, data: unknown) => { if (!finished) res.write(sse(event, JSON.stringify(data))) }
   const end = (event: string, data: unknown) => {
     if (finished) return
     finished = true
@@ -1585,8 +1527,22 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
     res.write(sse(event, JSON.stringify(data)))
     res.end()
   }
-  let timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
-  res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); proc.kill() } })
+  res.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); abort.abort('closed') } })
+  abort.signal.addEventListener('abort', () => {
+    if (abort.signal.reason === 'replaced') end('error', { error: '같은 기판을 새로 만들기 시작해서 이 작업은 멈췄습니다.' })
+  })
+
+  previous?.abort.abort('replaced')
+  await previous?.ended
+  if (abort.signal.aborted) return leave()
+
+  const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
+    '--style', pcbStyle(style), '--stream'])
+  abort.signal.addEventListener('abort', () => proc.kill())
+  // the run ends when python has and the DRC and AI rounds after its done line have
+  let checked: Promise<void> = Promise.resolve()
+  void new Promise<void>(r => { proc.once('close', () => r()); proc.once('error', () => r()) }).then(() => checked).finally(leave)
+  timer = setTimeout(() => { proc.kill(); end('error', { error: 'PCB generation timed out' }) }, 60000)
 
   proc.stdout.on('data', (d: Buffer) => {
     buf += d.toString()
@@ -1602,24 +1558,28 @@ app.post('/generate_pcb_stream', optionalAuth as any, (req: AuthRequest, res: Re
           awaitingDrc = true
           // The 60 s budget is for generation. DRC and the AI loop (up to MAX_ROUNDS model calls,
           // each followed by a reroute and DRC) get their own, longer budget.
+          // With AI rounds the budget only stops them and done goes out below with the best board so far: an error here
+          // cost a board DRC had passed, because the optional rounds hung (review of 2026-11-06).
           clearTimeout(timer)
-          timer = setTimeout(() => end('error', { error: 'DRC / AI loop timed out' }), useAi ? 420000 : 120000)
-          runDrc(pcbPath).then(async drc => {
+          timer = setTimeout(() => {
+            abort.abort('budget')
+            if (!useAi) end('error', { error: 'DRC timed out' })
+          }, useAi ? AI_BUDGET_MS : 120000)
+          checked = runDrc(pcbPath, abort.signal).then(async drc => {
             if (finished) return
-            res.write(sse('drc', JSON.stringify(drc)))
+            send('drc', drc)
             let final = ev as Record<string, unknown>
             let lastDrc = drc
             if (useAi) {
-              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc,
-                                          r => res.write(sse('ai', JSON.stringify(r))))
+              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal)
               if (out) {
                 final = out.done
                 lastDrc = out.drc
-                res.write(sse('drc', JSON.stringify(lastDrc)))
+                send('drc', lastDrc)
               }
             }
             end('done', { ...final, pcbFilename, drc: lastDrc })
-          })
+          }).catch(e => end('error', { error: (e as Error).message }))
         } else res.write(sse(ev.type, line))
       } catch { /* not an event line */ }
     }
@@ -1669,7 +1629,10 @@ function mouserKeyword(q: MouserQuery): string {
   return [keepWord ? word : '', value, pkg].filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 80)
 }
 
-app.post('/mouser_search', async (req: Request, res: Response) => {
+app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Response) => {
+  // one call per line on the operator's key, and its quota is the listed accounts' too: a visitor is told refused and
+  // the BOM keeps its search links (open to anyone before, review of 2026-11-06)
+  if (memberRefusal(GUARD, req.user)) return res.json({ available: false, refused: true, results: [] })
   const { components } = req.body || {}
   if (!Array.isArray(components) || !components.length) return res.status(400).json({ error: 'No components' })
   if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `Too many components (max ${MOUSER_MAX_LINES})` })
@@ -1730,9 +1693,12 @@ app.post('/mouser_search', async (req: Request, res: Response) => {
 const WIN_KICAD_CLI = join(process.env.LOCALAPPDATA || '', 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN_KICAD_CLI : 'kicad-cli')
 
-function runKicadCli(args: string[], label: string, timeoutMs = 30000): Promise<void> {
+function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error(`${label} stopped`))
     const proc = spawn(KICAD_CLI, args)
+    const onAbort = () => proc.kill('SIGKILL')
+    signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''
     proc.stdout.on('data', () => { /* drain so a chatty kicad-cli never blocks on a full pipe */ })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
@@ -1740,10 +1706,13 @@ function runKicadCli(args: string[], label: string, timeoutMs = 30000): Promise<
     // Without this handler a missing kicad-cli crashes the whole server.
     proc.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       reject(new Error(e.code === 'ENOENT' ? 'KiCad (kicad-cli) is not installed on this server' : e.message))
     })
     proc.on('close', (code: number | null) => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      if (signal?.aborted) return reject(new Error(`${label} stopped`))
       if (code !== 0) return reject(new Error(stderr || `${label} failed`))
       resolve()
     })
@@ -1856,4 +1825,11 @@ if (existsSync(distPath)) {
 }
 
 const PORT = Number(process.env.PORT) || 8002
-app.listen(PORT, () => console.log(`SchemaForge v2 running on http://localhost:${PORT}`))
+// Express 5 hands a listen error to this callback: a port in use printed "running" and exited 0 (review of 2026-11-06)
+app.listen(PORT, err => {
+  if (err) {
+    console.error(`Cannot listen on port ${PORT}: ${err.message}`)
+    process.exit(1)
+  }
+  console.log(`SchemaForge v2 running on http://localhost:${PORT}`)
+})

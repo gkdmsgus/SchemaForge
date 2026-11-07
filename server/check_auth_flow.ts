@@ -445,6 +445,13 @@ async function flow() {
   check('A15 guard: b 403 not_allowed, a passes', cb.status === 403 && cb.body.code === 'not_allowed' && /이 계정은/.test(cb.body.error)
     && ca.status !== 401 && ca.status !== 403, `b ${brief(cb)} | a ${brief(ca)}`)
 
+  // A15b. the same for a Mouser price search, on the operator's quota: b is told refused; a gets past that (no parts sent,
+  // so the route answers 400 before any call to Mouser). The visitor with no login is D9c in check_deploy_guard.ts
+  const mb = await call('POST', '/mouser_search', { token: B, body: { components: [] } })
+  const ma = await call('POST', '/mouser_search', { token: A, body: { components: [] } })
+  check('A15b Mouser search: b refused, a passes', mb.status === 200 && mb.body.refused === true && mb.body.available === false
+    && ma.status === 400 && !ma.body.refused, `b ${brief(mb)} | a ${brief(ma)}`)
+
   // A16. /auth/me says before anything is typed whether this account may generate here
   const meA = await call('GET', '/auth/me', { token: A })
   const meB = await call('GET', '/auth/me', { token: B })

@@ -1,4 +1,4 @@
-// Checks L1-L7: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
+// Checks L1-L8: the model provider settings (model.ts), a failed model call told in words (L6b, L7), and the plan
 // prompt's part and spec rules as sent (L2b). A mock OpenAI-compatible API runs on a local port and
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
@@ -11,7 +11,8 @@ import { readFileSync } from 'fs'
 import { createServer } from 'http'
 import { createServer as createNetServer, type AddressInfo } from 'net'
 import { join } from 'path'
-import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, modelFailure, modelLabel, modelProvider } from './model'
+import OpenAI from 'openai'
+import { MODEL_BUSY, MODEL_KEY_REFUSED, MODEL_NO_CREDIT, MODEL_RETRIES, MODEL_SILENT, MODEL_TIMEOUT_MS, modelClient, modelFailure, modelLabel, modelProvider } from './model'
 
 let ok = true
 const check = (name: string, pass: boolean, info = '') => {
@@ -22,9 +23,11 @@ const check = (name: string, pass: boolean, info = '') => {
 type Seen = { path: string; auth: string; model: string; effort: string; stream: boolean; json: boolean; system: string; user: string }
 const seen: Seen[] = []
 // set for L7: every model call is answered with this error, as OpenAI answers when the credit is gone or it is busy
-let failWith: { status: number; error: Record<string, string> } | null = null
+let failWith: { status: number; error: Record<string, string>; retry?: boolean } | null = null
 // set for L4d: the AI editor's streamed answer is this tool call's arguments, ending with this finish reason
 let editArgs: { args: string; finish: string } | null = null
+// set for L4e: the AI editor's stream sends one piece and stays open; closed once the server lets go of it
+let editHold: { closed: boolean } | null = null
 // the circuit /generate gets back: a checked-in test circuit, then the guide
 const CIRCUIT = readFileSync(join('test_circuits', 'led_basic.py'), 'utf8')
 
@@ -41,9 +44,16 @@ const mock = createServer((rq, rs) => {
     })
     if (rq.url !== '/v1/chat/completions') { rs.writeHead(404); return rs.end('{}') }
     if (failWith) {
-      // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower
-      rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': 'false' })
+      // retry-after 0 and x-should-retry false: the SDK's own retries would only make the check slower (L8 asks for them)
+      rs.writeHead(failWith.status, { 'Content-Type': 'application/json', 'retry-after': '0', 'x-should-retry': failWith.retry ? 'true' : 'false' })
       return rs.end(JSON.stringify({ error: failWith.error }))
+    }
+    if (body.stream && editHold) {
+      const hold = editHold
+      rs.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      rs.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 't', type: 'function', function: { name: 'edit_circuit', arguments: '{"reply":"잠' } }] }, finish_reason: null }] })}\n\n`)
+      rs.on('close', () => { hold.closed = true })
+      return
     }
     if (body.stream && editArgs) {   // the edit as a tool call, in two pieces
       const { args, finish } = editArgs, half = Math.ceil(args.length / 2)
@@ -107,8 +117,9 @@ async function stopServer(proc: ChildProcess) {
 
 type Health = { model?: string; provider?: string }
 
-const post = (base: string, path: string, body: unknown) =>
-  fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+const post2 = (base: string, path: string, body: unknown, signal?: AbortSignal) =>
+  fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+const post = (base: string, path: string, body: unknown) => post2(base, path, body)
 
 async function main() {
   // M6 first: the names the screen shows, without a server
@@ -132,6 +143,26 @@ async function main() {
     shapes.sdkQuota === MODEL_NO_CREDIT && shapes.axiosQuota === MODEL_NO_CREDIT && shapes.xaiCredit === MODEL_NO_CREDIT
     && shapes.busy === MODEL_BUSY && shapes.key === MODEL_KEY_REFUSED && shapes.other === null && shapes.plain === null,
     JSON.stringify(Object.fromEntries(Object.entries(shapes).map(([k, v]) => [k, v?.slice(0, 18) ?? null]))))
+
+  // L8. every OpenAI SDK call site takes its client from modelClient(): the SDK's own 10 minutes and 2 retries outlast
+  // the whole AI budget, so a stalled model cost a finished board (review of 2026-11-06). 60 s, one retry: about 2 minutes
+  const client = (() => { process.env.OPENAI_API_KEY ||= 'check-only'; return modelClient() })()
+  const callers = ['index.ts', 'ai_layout.ts'].map(f => [f, readFileSync(f, 'utf8')] as const)
+  const own = callers.filter(([, text]) => text.includes('new OpenAI(') || !text.includes('modelClient()')).map(([f]) => f)
+  check('L8 model client: 60 s, one retry, used by every call site', client.timeout === 60000 && client.maxRetries === 1
+    && MODEL_TIMEOUT_MS === 60000 && MODEL_RETRIES === 1 && own.length === 0,
+    `timeout ${client.timeout} ms, retries ${client.maxRetries}${own.length ? `; its own client: ${own.join(', ')}` : ''}`)
+
+  // L8c. a call the SDK gives up on is told in words: with those limits a stalled model's "Request timed out." reached
+  // the AI rounds list, which is Korean (21b in pcb/check_ai_loop.py). The real SDK, a port that never answers, a short limit
+  const silent = createServer(() => { /* never answers */ })
+  await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', () => resolve()))
+  const quick = new OpenAI({ apiKey: 'check-only', baseURL: `http://127.0.0.1:${(silent.address() as AddressInfo).port}/v1`, timeout: 200, maxRetries: 0 })
+  const gaveUp = await quick.chat.completions.create({ model: 'fake', messages: [] }).catch((e: unknown) => e)
+  silent.closeAllConnections()
+  silent.close()
+  const told = modelFailure(gaveUp)
+  check('L8c a stalled call is told in words', told?.text === MODEL_SILENT && told.status === 504, told?.text ?? String(gaveUp))
 
   await new Promise<void>(resolve => mock.listen(0, '127.0.0.1', () => resolve()))
   const mockBase = `http://127.0.0.1:${(mock.address() as AddressInfo).port}/v1`
@@ -179,7 +210,7 @@ async function main() {
     const events = await gen.text()
     const done = /event: done/.test(events)
     check('L3 circuit code: SF_MODEL at the base URL (was api.openai.com by name), and the circuit is built',
-      done && asked(at(n), 'grok-4.3', s => !s.stream && !s.json) && events.includes('Grok 4.3 is analysing'),
+      done && asked(at(n), 'grok-4.3', s => !s.stream && !s.json) && events.includes('Grok 4.3 is analysing') && !events.includes('"sources"'),
       `${at(n).length} call(s) ${JSON.stringify(at(n).map(s => [s.model, s.effort]))} done=${done}`)
 
     // L3b. the approved plan reaches the circuit request (it was approved on screen and never sent); none without one
@@ -200,8 +231,10 @@ async function main() {
     n = seen.length
     const edit = await post(grok.base, '/chat_edit', { graph: { components: [{ ref: 'R1', value: '1k' }], nets: [] }, message: 'R1 값을 2k로 바꿔줘' })
     await edit.text()
-    check('L4 AI editor: SF_MODEL_MINI at the base URL, streamed', asked(at(n), 'grok-mini-test', s => s.stream),
-      JSON.stringify(at(n).map(s => [s.model, s.effort, s.stream])))
+    // no-transform as the other streams: a compressing proxy in front (Caddy's encode) would compress only this one
+    const editCache = edit.headers.get('cache-control')
+    check('L4 AI editor: SF_MODEL_MINI at the base URL, streamed, not to be transformed', asked(at(n), 'grok-mini-test', s => s.stream) && editCache === 'no-cache, no-transform',
+      `${JSON.stringify(at(n).map(s => [s.model, s.effort, s.stream]))} ${editCache}`)
 
     // L4b. the AI editor is told the free refs and to leave unnamed parts alone (live, 2026-10-30, the 555 blinker:
     // a new capacitor took C3, which exists, and the battery's + pin was moved off VCC)
@@ -247,6 +280,19 @@ async function main() {
       && esc2.reply.startsWith(String.raw`see \u0041 and C:\temp` + '\t끝\n\n'),
       JSON.stringify({ empty, cut, whole, esc, esc2 }))
 
+    // L4e. the visitor leaves in the middle of an AI edit: the model's stream is dropped at once (it ran on for up to 45 s
+    // at the operator's cost, review of 2026-11-06)
+    const hold = { closed: false }
+    editHold = hold
+    const leave = new AbortController()
+    const leaving = await post2(grok.base, '/chat_edit', { graph: blinker, message: 'C1을 연결해줘' }, leave.signal)
+    await leaving.body!.getReader().read()
+    leave.abort()
+    const t0 = Date.now()
+    while (!hold.closed && Date.now() - t0 < 10000) await new Promise(r => setTimeout(r, 50))
+    editHold = null
+    check('L4e AI editor: the model stream ends when the visitor leaves', hold.closed, `${hold.closed ? `dropped ${Date.now() - t0} ms after the visitor left` : 'still open 10 s after the visitor left'}`)
+
     // L7. the model's credit is gone (OpenAI: 429 insufficient_quota): the plan, the circuit and the AI editor say so
     // in words. The circuit said "Server error: Request failed with status code 429" before (2026-11-01)
     failWith = { status: 429, error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota' } }
@@ -266,6 +312,12 @@ async function main() {
     const busyError = String((await busy.json() as { error?: string }).error ?? '')
     check('L7b model busy: the plan answers 429 and asks to try again shortly', busy.status === 429 && busyError === MODEL_BUSY,
       `${busy.status} ${busyError}`)
+
+    // L8b. the same on the wire: an answer the SDK may retry (500) is asked twice from a route, not three times
+    failWith = { status: 500, error: { message: 'down', type: 'server_error', code: 'server_error' }, retry: true }
+    n = seen.length
+    const down = await post(grok.base, '/plan', { description: 'LED 하나를 켜는 회로' })
+    check('L8b a retryable failure is asked once more, no further', down.status === 500 && at(n).length === 2, `${down.status} after ${at(n).length} call(s)`)
     failWith = null
   } finally {
     await stopServer(grok.proc)

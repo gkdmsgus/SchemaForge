@@ -21,7 +21,7 @@ export interface NetGraph {
   nets: NetEntry[]
 }
 
-/** Summary returned by /generate_pcb (from server/pcb_generator.py). */
+/** Summary in /generate_pcb_stream's done event (from server/pcb_generator.py). */
 export interface PcbSummary {
   components: number
   nets: number

@@ -48,5 +48,3 @@ services:
         sync: false
       - key: MOUSER_API_KEY
         sync: false
-      - key: TAVILY_API_KEY
-        sync: false

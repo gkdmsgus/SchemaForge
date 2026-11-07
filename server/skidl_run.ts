@@ -20,10 +20,13 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return { ...kept, PYTHON_COLORS: '0', NO_COLOR: '1' }
 }
 
+/** How much of Python's stderr is kept, from its end (characters). */
+export const STDERR_KEPT = 64_000
+
 /**
  * Run skidl code and copy the netlist it writes into outDir as <random>.net; resolves with that path.
  * The code is written exactly as given, so traceback line numbers match what the user sees.
- * Rejects with Python's stderr. The temp folder is removed after every outcome, timeout included.
+ * Rejects with the end of Python's stderr. The temp folder is removed after every outcome, timeout included.
  */
 export function runSkidl(code: string, outDir: string, timeout = 90000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -36,7 +39,8 @@ export function runSkidl(code: string, outDir: string, timeout = 90000): Promise
     // its own process group on POSIX, so what the code starts can be killed with it: python alone was, and the children
     // it left held the container's process slots (--pids-limit) for good (review of 2026-11-03)
     const posix = process.platform !== 'win32'
-    const proc = spawn('python', [codePath], { cwd: tmpDir, env: childEnv(), detached: posix })
+    // stdout goes nowhere: nobody read it, so a full pipe stalled code that works until the time limit (review of 2026-11-06)
+    const proc = spawn('python', [codePath], { cwd: tmpDir, env: childEnv(), detached: posix, stdio: ['ignore', 'ignore', 'pipe'] })
     const killTree = () => {
       if (proc.pid === undefined) return
       if (posix) { try { process.kill(-proc.pid, 'SIGKILL') } catch { /* nothing left */ } }
@@ -50,7 +54,9 @@ export function runSkidl(code: string, outDir: string, timeout = 90000): Promise
       clearTimeout(timer)
       fn()
     }
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    // only the end: the traceback's last lines are what the Code tab reads, and code writing here forever took the whole
+    // server down (RangeError: Invalid string length, in this handler, so uncaught)
+    proc.stderr.on('data', (d: Buffer) => { stderr = (stderr + d.toString()).slice(-STDERR_KEPT) })
 
     // A killed process still fires 'close'; the folder is removed there, once Python has let go of it.
     const timer = setTimeout(() => { killTree(); settle(() => reject(new Error('skidl execution timed out'))) }, timeout)

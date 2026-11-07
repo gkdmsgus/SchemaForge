@@ -10,8 +10,8 @@ import { copyFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } fro
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import OpenAI from 'openai'
-import { MODEL_BASE, MODEL_MINI, modelExtra } from './model'
+import type OpenAI from 'openai'
+import { MODEL_MINI, modelClient, modelExtra } from './model'
 
 // SF_AI_MODEL picks another model than the server's SF_MODEL_MINI (the provider is OPENAI_BASE_URL, model.ts).
 // SF_AI_JSON=1 is for gateways that drop `tools`: the model answers with the same object as plain JSON.
@@ -164,9 +164,12 @@ const HEAVY_PART = (p: BoardPart) =>
   DRIVER_IC.test(`${p.part} ${p.value}`) ||
   (/^J\d/i.test(p.ref) && /MOTOR|\bMOT\b|FAN|PUMP|SOLENOID|HEATER|LOAD/i.test(p.value || ''))
 
-/** Resistance in ohms from a value like 0.1, 100m, R10, 0R1, 10mR, 2.2k — NaN when it is not a resistance. */
+/** A value without the rating after it: "0.1 1W" -> "0.1", "680 1/4W" -> "680" (src/lib/operatingCheck.ts valuePart; the server image has no src/). */
+const valuePart = (v: string) => String(v ?? '').trim().replace(/(?:(?<=[A-Za-zµμΩ])\s*[,/]\s*|\s+)(?=\d+(?:\.\d+)?\s*(?:V|W|%)|\d+\s*\/\s*\d+\s*W).*$/i, '')
+
+/** Resistance in ohms from a value like 0.1, 100m, R10, 0R1, 10mR, 2.2k, 0.1 1W — NaN when it is not a resistance. */
 export function parseOhms(value: string): number {
-  const v = (value || '').trim().replace(/Ω|ohms?/gi, '')
+  const v = valuePart(value).replace(/Ω|ohms?/gi, '')
   let m = v.match(/^(\d*)R(\d+)$/i)                          // 0R1, R10
   if (m) return Number(`${m[1] || '0'}.${m[2]}`)
   m = v.match(/^(\d+(?:\.\d+)?)\s*([mkM]?)R?$/)
@@ -502,18 +505,22 @@ const TOOL = {
   },
 }
 
-/** Deterministic stand-in for the model, used by the checks (SF_AI_STUB=1). */
+/**
+ * Deterministic stand-in for the model, used by the checks (SF_AI_STUB=1).
+ * SF_AI_STUB_MODE=fail2: round 2 fails, as a 429 or JSON that does not parse does (pcb/check_ai_loop.py).
+ */
 export function stubEdit(round: number): BoardEdit {
   // One mixed proposal: the width change should be kept and the move rolled back, in the same round.
   if (round === 1) return { reason: '(테스트) GND를 0.8 mm로 넓히고 R1을 기판 밖으로 옮깁니다',
                             net_widths: [{ net: 'GND', mm: 0.8 }], moves: [{ ref: 'R1', dx: 40, dy: 40 }] }
+  if (process.env.SF_AI_STUB_MODE === 'fail2') throw new Error('stub: the model call failed')
   return { reason: '더 고칠 것이 없습니다', stop: true }
 }
 
-export async function askModel(prompt: string, history: string[]): Promise<BoardEdit> {
+export async function askModel(prompt: string, history: string[], signal?: AbortSignal): Promise<BoardEdit> {
   if (process.env.SF_AI_STUB === '1') return stubEdit(history.length + 1)
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: MODEL_BASE })
-  if (JSON_MODE) return askModelJson(openai, prompt, history)
+  const openai = modelClient()
+  if (JSON_MODE) return askModelJson(openai, prompt, history, signal)
   const res = await openai.chat.completions.create({
     model: AI_MODEL, ...modelExtra(),
     temperature: 0.2,
@@ -524,14 +531,14 @@ export async function askModel(prompt: string, history: string[]): Promise<Board
     ],
     tools: [TOOL],
     tool_choice: { type: 'function', function: { name: 'edit_board' } },
-  })
+  }, { signal })
   const call = res.choices[0]?.message?.tool_calls?.[0]
   if (!call || call.type !== 'function') throw new Error('model returned no edit')
   return JSON.parse(call.function.arguments) as BoardEdit
 }
 
 /** Same question without `tools`: the schema goes into the prompt and the reply is parsed as JSON. */
-async function askModelJson(openai: OpenAI, prompt: string, history: string[]): Promise<BoardEdit> {
+async function askModelJson(openai: OpenAI, prompt: string, history: string[], signal?: AbortSignal): Promise<BoardEdit> {
   const system = SYSTEM.replace('Always call the edit_board function.',
     'Reply with ONLY one JSON object, no prose and no code fence, matching this JSON schema:\n' +
     JSON.stringify(TOOL.function.parameters))
@@ -542,7 +549,7 @@ async function askModelJson(openai: OpenAI, prompt: string, history: string[]): 
       ...history.map(h => ({ role: 'assistant' as const, content: h })),
       { role: 'user', content: prompt },
     ],
-  })
+  }, { signal })
   const text = res.choices[0]?.message?.content || ''
   const start = text.indexOf('{'), end = text.lastIndexOf('}')
   if (start < 0 || end <= start) throw new Error('model returned no JSON edit')
@@ -575,8 +582,9 @@ export function applyEdit(ov: Overrides, edit: BoardEdit, board: BoardJson): str
 }
 
 export function runGenerator(netPath: string, pcbPath: string, style: string, ov: Overrides,
-                             cwd: string): Promise<Record<string, unknown>> {
+                             cwd: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('generator stopped'))
     const ovPath = join(tmpdir(), `sf_ov_${randomUUID().slice(0, 8)}.json`)
     writeFileSync(ovPath, JSON.stringify(ov), 'utf8')
     const proc = spawn('python', [join(cwd, 'pcb_generator.py'), netPath, pcbPath,
@@ -584,11 +592,19 @@ export function runGenerator(netPath: string, pcbPath: string, style: string, ov
     let stdout = '', stderr = ''
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('generator timed out')) }, 60000)
-    proc.on('error', e => { clearTimeout(timer); reject(e) })
+    // stopped or out of time, the error comes at 'close': the caller restores the board, which must not run while this
+    // process is still writing it
+    let stopped = ''
+    const stop = (why: string) => { stopped = why; proc.kill('SIGKILL') }
+    const onAbort = () => stop('generator stopped')
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const timer = setTimeout(() => stop('generator timed out'), 60000)
+    proc.on('error', e => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(e) })
     proc.on('close', code => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       try { unlinkSync(ovPath) } catch { /* already gone */ }
+      if (stopped) return reject(new Error(stopped))
       if (code !== 0) return reject(new Error(stderr || 'generator failed'))
       try {
         resolve(JSON.parse(stdout.trim().split('\n').pop() || '{}') as Record<string, unknown>)
@@ -597,13 +613,18 @@ export function runGenerator(netPath: string, pcbPath: string, style: string, ov
   })
 }
 
-export function backup(paths: string[]): () => void {
+/**
+ * Copies of files for one trial: restore() puts them back, drop() is for a trial that is kept. Either one removes the
+ * copies: a kept trial left its two for the container's life (about 113 KB each time, review of 2026-11-06).
+ */
+export function backup(paths: string[]): { restore: () => void; drop: () => void } {
   const copies = paths.filter(existsSync).map(p => {
     const b = join(tmpdir(), `sf_bak_${randomUUID().slice(0, 8)}`)
     copyFileSync(p, b)
     return [p, b] as const
   })
-  return () => copies.forEach(([p, b]) => { copyFileSync(b, p); try { unlinkSync(b) } catch { /* gone */ } })
+  const drop = () => copies.forEach(([, b]) => { try { unlinkSync(b) } catch { /* gone */ } })
+  return { restore: () => { copies.forEach(([p, b]) => copyFileSync(b, p)); drop() }, drop }
 }
 
 export function readBoard(path: string): BoardJson {

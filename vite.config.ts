@@ -18,11 +18,9 @@ export default defineConfig({
           })
         },
       },
-      '/render_board': 'http://localhost:8080',
       '/board_model': 'http://localhost:8080',
       '/download': 'http://localhost:8080',
       '/download_pcb': 'http://localhost:8080',
-      '/generate_pcb': 'http://localhost:8080',
       '/generate_gerber': 'http://localhost:8080',
       '/mouser_search': 'http://localhost:8080',
       '/erc_graph': 'http://localhost:8080',
