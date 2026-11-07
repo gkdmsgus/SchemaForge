@@ -217,6 +217,16 @@ npx tsx scripts/check_styles.ts
 스타일시트 3항목. `src/styles`의 부분 파일이 모두 `main.scss`에 들어 있고 어디서도 import하지 않는 `.css`가 없는지, `main.scss`가 컴파일되는지, 코드와 스타일시트가 이름으로 부르는 애니메이션마다 `@keyframes`가 있는지 확인한다(없으면 오류 없이 움직임만 멈춘다).
 
 ```bash
+npx tsx scripts/check_auth_modal.ts
+```
+로그인·가입 창 7항목 (`src/components/AuthModal.tsx`, 브라우저 없이). 이모지, 그라데이션·흐림, 토큰보다 큰 모서리(8 px 초과), 손으로 적은 글꼴 이름(한글이 IBM Plex Sans KR 대신 시스템 글꼴로 나온다), 영어 큰 제목과 근거 없는 최상급("가장 빠른")이 없는지 본다. 다른 화면은 2026-09-17에 이것들을 걷어냈는데 로그인 창만 남아 있었다. 열린 창이 제목으로 이름 붙은 `<dialog>`이고 닫기 버튼에 이름이 있으며 오류 상자가 `role="alert"`인지, 가입 화면에 이용약관·개인정보 처리방침 링크(새 탭)가 있는지도 본다.
+
+```bash
+npx tsx scripts/check_legal.ts
+```
+이용약관과 개인정보 처리방침 7항목 (`src/components/LegalPage.tsx`를 화면처럼 그려 읽는다, 브라우저 없이). 서버·화면 코드와 `index.html`·스타일시트가 부르는 바깥 주소마다 그 회사(Google 글꼴, OpenAI, Mouser, Supabase)가 방침에 있는지(표에 없는 새 주소는 방침과 표에 적을 때까지 실패), 파이프라인의 파이썬 파일이 바깥에 연결하지 않는지, 방침의 outputs 정리(15분마다, 24시간, 1 GB)가 서버 기본값과 같고 두 배포 이미지가 정리를 켜는지, 서버가 쓰는 Supabase 표가 모두 방침에 있는지, 방침이 말하는 기록 서랍의 전체 삭제와 그때 채팅·즐겨찾기도 지워지는 것(ON DELETE CASCADE)이 실제로 있는지, 두 문서가 이 저장소의 이슈로 링크하는지, 모델 회사 문장이 `/health`의 provider를 따르는지(로컬 모델이면 운영자의 컴퓨터, 답이 오기 전에는 기본값 OpenAI) 본다. 2026-09-17의 방침은 Google 글꼴을 적지 않고 "그 밖의 제3자에게 제공하지 않는다"고 했으며, 생성 파일이 남는다고만 적었다.
+
+```bash
 npx tsx scripts/check_test_chain.ts
 ```
 `npm test` 목록 2항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
@@ -245,6 +255,11 @@ node scripts/check_live.mjs https://schemaforge.kro.kr
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로
 ```
 기록 서랍과 로그인 창 12항목 (로그인과 기록 API는 브라우저 안에서 흉내 낸다). ✎ 버튼이 서랍을 연 채 이름 칸을 여는지, Enter가 새 이름으로 `PATCH /sessions/:id`를 보내는지, Esc는 아무것도 보내지 않는지, 항목을 누르면 회로가 열리고 서랍이 닫히는지, 즐겨찾기에는 ✎가 없는지, 목록이 늦게 와도(1.5초) 그동안 "저장된 회로가 없습니다" 대신 불러오는 중이라고 보이는지(목록이 있을 때와 빈 목록일 때), 로그아웃하면 서랍의 목록이 바로 지워지고 다음 계정의 서랍에 이전 계정의 회로가 보이지 않는지, 로그인하거나 창을 닫으면 비밀번호 칸이 비는지(가입 확인 메일을 기다릴 때는 남는지) 확인한다.
+
+```bash
+node scripts/check_auth_dialog.mjs     # npm run dev 를 켠 채로
+```
+로그인·가입 창 10항목 (로그인 API는 브라우저 안에서 흉내 낸다). 로그인과 가입 화면 각각에서 그라데이션·흐림·이모지·영어 제목이 없고 모서리가 8 px 이하인지, 크롬이 실제로 그린 글자가 모두 앱 글꼴(Space Grotesk, IBM Plex Sans KR)이고 글자 대비가 4.5:1 이상인지(큰 글자는 3:1) 본다. 창이 제목으로 이름 붙은 모달 대화상자 하나인지, 열면 메일 칸에 포커스가 가고 Tab·Shift+Tab 15번씩에도 창 밖으로 나가지 않는지(예전에는 세 번 만에 뒤 화면으로 나갔다), 버튼마다 이름이 있는지, 로그인 실패를 알림(alert)으로 읽어 주는지, Esc와 창 밖 클릭으로 닫히고 포커스가 헤더의 로그인 버튼으로 돌아오는지, 가입 화면에만 이용약관·개인정보 처리방침 링크가 새 탭으로 하나씩 있는지도 본다. 글꼴은 fonts.googleapis.com에서 받으므로 인터넷이 없으면 시스템 글꼴로 그려져 실패한다.
 
 ```bash
 node scripts/check_saved_offer.mjs     # npm run dev 를 켠 채로

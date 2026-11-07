@@ -24,3 +24,23 @@ export function useModelName(): ModelName {
   }, [])
   return name
 }
+
+/** a host on this machine or the operator's own network: a container name (no dot), localhost, a private address */
+function operatorsOwn(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
+  if (!h.includes('.') && !h.includes(':')) return true   // localhost, ollama
+  return h === '::1' || h.endsWith('.local') || h.endsWith('.lan') || h === 'host.docker.internal'
+    || /^(127|10)\.\d+\.\d+\.\d+$/.test(h) || /^192\.168\.\d+\.\d+$/.test(h) || /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)
+}
+
+/**
+ * Where the circuit goes, for the terms and the privacy policy: /health's provider in words. OpenAI and xAI by name, a
+ * host of the operator's own (a local model) as such, any other host by its name, and before /health answers (or when
+ * it does not) the server's default. The policy named OpenAI alone while OPENAI_BASE_URL could send it anywhere.
+ */
+export function modelCompany(provider: string): string {
+  if (provider === UNKNOWN.provider) return '이 서버가 쓰는 AI 모델 API(기본은 OpenAI)'
+  if (provider === 'OpenAI' || provider === 'xAI') return `${provider}의 API`
+  if (operatorsOwn(provider)) return '운영자의 컴퓨터에서 도는 AI 모델'
+  return `${provider}의 AI 모델 API`
+}

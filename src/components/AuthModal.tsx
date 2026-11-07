@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref } from 'react'
 import { login, register, saveAuth, type AuthUser } from '../api'
+import Logo from './Logo.tsx'
+import { Button, IconCheck, IconClose, Spinner } from './primitives.tsx'
 
 /** a line shown above the form when it opens: the sign-up mail was confirmed, its link failed, or the login ran out */
 export interface AuthNotice { tone: 'info' | 'error'; text: string }
@@ -16,6 +18,10 @@ type Mode = 'login' | 'register'
 // a mail address as Supabase takes it: something@domain.tld
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// One plain panel like the settings, from the tokens (2026-11-08): the dark gradient half with its feature cards, the
+// English headline, the emoji and the blur over the page went, as they went from the other screens on 2026-09-17.
+// A modal <dialog> (showModal): the page behind is inert while it is open, Esc closes it, Tab and Shift+Tab go round
+// inside it, and the focus goes back to what opened it (Tab used to leave it after three presses for the home screen).
 export default function AuthModal({ open, onClose, onSuccess, notice = null }: AuthModalProps) {
   const [mode, setMode]         = useState<Mode>('login')
   const [email, setEmail]       = useState('')
@@ -26,6 +32,9 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
   const [loading, setLoading]   = useState(false)
   const [success, setSuccess]   = useState(false)
   const emailRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const titleId = useId()
 
   // a notice opens the login tab (after the mail link, or when the login ran out)
   useEffect(() => {
@@ -42,16 +51,26 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     if (!open) { setPassword(''); setConfirm('') }
   }, [open])
 
+  // opened as a modal once (StrictMode runs this twice: the second finds it open), with what had the focus kept
+  useEffect(() => {
+    const d = dialogRef.current
+    if (!open || !d || d.open) return
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    d.showModal()
+    emailRef.current?.focus()
+  }, [open])
+
+  // closed (by Esc, 닫기, a click outside or a login): the focus goes back to the header's 로그인 or whatever opened it
+  useEffect(() => {
+    if (open) return
+    const opener = openerRef.current
+    openerRef.current = null
+    if (opener?.isConnected) opener.focus()
+  }, [open])
+
   useEffect(() => {
     if (open) setTimeout(() => emailRef.current?.focus(), 100)
   }, [open, mode])
-
-  useEffect(() => {
-    if (!open) return
-    const fn = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', fn)
-    return () => window.removeEventListener('keydown', fn)
-  }, [open, onClose])
 
   if (!open) return null
 
@@ -70,7 +89,7 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     setTimeout(() => { onSuccess(user, token); onClose() }, 800)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
     setInfo('')
@@ -102,585 +121,304 @@ export default function AuthModal({ open, onClose, onSuccess, notice = null }: A
     }
   }
 
+  /** Tab from the last control goes to the first and Shift+Tab from the first to the last (not to the browser's bar) */
+  function keepFocusIn(e: KeyboardEvent<HTMLDialogElement>) {
+    if (e.key !== 'Tab') return
+    const all = [...e.currentTarget.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled])')]
+      .filter(el => el.getClientRects().length)
+    const first = all[0], last = all[all.length - 1]
+    if (!first) return
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === e.currentTarget)) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
+
+  /** a click on the dim page around it (the dialog's ::backdrop is the dialog's own box to the click) */
+  function closeOutside(e: MouseEvent<HTMLDialogElement>) {
+    if (e.target !== e.currentTarget) return
+    const r = e.currentTarget.getBoundingClientRect()
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose()
+  }
+
   const isLogin = mode === 'login'
   const emailOk = EMAIL_RE.test(email.trim())
 
   return (
     <>
       <style>{STYLES}</style>
-      <div className="auth-overlay" onClick={onClose}>
-        <div className="auth-card" onClick={e => e.stopPropagation()}>
-
-          {/* ── Left panel ─────────────────────────────────── */}
-          <div className="auth-left">
-            <div className="auth-left-inner">
-              {/* Logo */}
-              <div className="auth-logo">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                  <rect width="28" height="28" rx="8" fill="rgba(255,255,255,0.15)"/>
-                  <path d="M6 14h4M18 14h4M14 6v4M14 18v4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                  <circle cx="14" cy="14" r="3" stroke="white" strokeWidth="2"/>
-                  <circle cx="6" cy="14" r="1.5" fill="white"/>
-                  <circle cx="22" cy="14" r="1.5" fill="white"/>
-                  <circle cx="14" cy="6" r="1.5" fill="white"/>
-                  <circle cx="14" cy="22" r="1.5" fill="white"/>
-                </svg>
-                <span>SchemaForge</span>
-              </div>
-
-              {/* Headline */}
-              <div className="auth-left-headline">
-                <h1>{isLogin ? 'Welcome\nback.' : 'Start\nbuilding.'}</h1>
-                <p>{isLogin
-                  ? 'AI가 설계한 회로들이\n당신을 기다리고 있어요.'
-                  : 'AI와 함께 전자 회로를\n설계하는 가장 빠른 방법.'
-                }</p>
-              </div>
-
-              {/* Features */}
-              <div className="auth-features">
-                {(isLogin ? LOGIN_FEATURES : REGISTER_FEATURES).map(f => (
-                  <div key={f.text} className="auth-feature-item">
-                    <div className="auth-feature-icon">{f.icon}</div>
-                    <div>
-                      <div className="auth-feature-title">{f.title}</div>
-                      <div className="auth-feature-desc">{f.text}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Circuit decoration */}
-              <CircuitDecoration />
-            </div>
-          </div>
-
-          {/* ── Right panel ────────────────────────────────── */}
-          <div className="auth-right">
-            <button className="auth-close" onClick={onClose}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-              </svg>
-            </button>
-
-            <div className="auth-form-wrap">
-              {/* Tab switcher */}
-              <div className="auth-tabs">
-                <button className={`auth-tab ${isLogin ? 'active' : ''}`} onClick={() => switchMode('login')}>로그인</button>
-                <button className={`auth-tab ${!isLogin ? 'active' : ''}`} onClick={() => switchMode('register')}>회원가입</button>
-              </div>
-
-              <div className="auth-form-header">
-                <h2>{isLogin ? '다시 만나요 👋' : '계정 만들기'}</h2>
-                <p>{isLogin ? '계속하려면 로그인하세요.' : '몇 초면 시작할 수 있어요.'}</p>
-              </div>
-
-              <form onSubmit={handleSubmit} className="auth-form">
-                <FloatingInput
-                  ref={emailRef}
-                  label="이메일"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={setEmail}
-                  placeholder="you@example.com"
-                  required
-                />
-                <FloatingInput
-                  label="비밀번호"
-                  type="password"
-                  autoComplete={isLogin ? 'current-password' : 'new-password'}
-                  value={password}
-                  onChange={setPassword}
-                  placeholder={isLogin ? '••••••••' : '6자 이상 입력'}
-                  required
-                  minLength={6}
-                />
-                {!isLogin && (
-                  <FloatingInput
-                    label="비밀번호 확인"
-                    type="password"
-                    autoComplete="new-password"
-                    value={confirm}
-                    onChange={setConfirm}
-                    placeholder="비밀번호 재입력"
-                    required
-                    error={confirm.length > 0 && confirm !== password ? '비밀번호가 일치하지 않아요' : ''}
-                  />
-                )}
-
-                {info && !error && (
-                  <div className="auth-info" role="status">{info}</div>
-                )}
-
-                {error && (
-                  <div className="auth-error">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5"/>
-                      <path d="M7 4v3.5M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className={`auth-submit ${success ? 'success' : ''}`}
-                  disabled={loading || success}
-                >
-                  {success ? (
-                    <><CheckIcon /> 완료!</>
-                  ) : loading ? (
-                    <><Spinner /> {isLogin ? '로그인 중...' : '계정 생성 중...'}</>
-                  ) : (
-                    <>{isLogin ? '로그인' : '계정 만들기'} <ArrowIcon /></>
-                  )}
-                </button>
-              </form>
-
-              {/* no password reset yet: the '비밀번호를 잊으셨나요?' link comes back with that flow */}
-
-              {/* Register checklist */}
-              {!isLogin && (
-                <div className="auth-checklist">
-                  <CheckItem done={emailOk}>메일 주소 형식</CheckItem>
-                  <CheckItem done={password.length >= 6}>6자 이상</CheckItem>
-                  <CheckItem done={confirm.length > 0 && confirm === password}>비밀번호 일치</CheckItem>
-                </div>
-              )}
-
-              <div className="auth-divider"><span>또는</span></div>
-
-              <div className="auth-switch">
-                {isLogin ? '처음이신가요?' : '이미 계정이 있으신가요?'}
-                {' '}
-                <button onClick={() => switchMode(isLogin ? 'register' : 'login')}>
-                  {isLogin ? '회원가입 →' : '로그인 →'}
-                </button>
-              </div>
-            </div>
-          </div>
+      <dialog
+        ref={dialogRef}
+        className="auth-card"
+        aria-labelledby={titleId}
+        onCancel={e => { e.preventDefault(); onClose() }}
+        onKeyDown={keepFocusIn}
+        onClick={closeOutside}
+      >
+        <div className="auth-head">
+          <Logo size={20} />
+          <Button variant="ghost" size="sm" icon={<IconClose size={14} />} onClick={onClose} aria-label="닫기" />
         </div>
-      </div>
+
+        <div className="auth-tabs">
+          <button type="button" className={`auth-tab ${isLogin ? 'active' : ''}`} aria-pressed={isLogin} onClick={() => switchMode('login')}>로그인</button>
+          <button type="button" className={`auth-tab ${!isLogin ? 'active' : ''}`} aria-pressed={!isLogin} onClick={() => switchMode('register')}>회원가입</button>
+        </div>
+
+        <h2 className="auth-title" id={titleId}>{isLogin ? '로그인' : '계정 만들기'}</h2>
+        <p className="auth-lead">{isLogin
+          ? '로그인하면 만든 회로가 기록에 남고 즐겨찾기를 쓸 수 있습니다.'
+          : '메일 주소와 비밀번호로 계정을 만듭니다. 만든 회로는 기록에 남고 즐겨찾기를 쓸 수 있습니다.'}</p>
+
+        <form onSubmit={handleSubmit} className="auth-form">
+          <Field
+            ref={emailRef}
+            label="이메일"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={setEmail}
+            placeholder="you@example.com"
+            required
+          />
+          <Field
+            label="비밀번호"
+            type="password"
+            autoComplete={isLogin ? 'current-password' : 'new-password'}
+            value={password}
+            onChange={setPassword}
+            placeholder={isLogin ? '' : '6자 이상'}
+            required
+            minLength={6}
+          />
+          {!isLogin && (
+            <Field
+              label="비밀번호 확인"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={setConfirm}
+              placeholder="한 번 더 입력"
+              required
+              error={confirm.length > 0 && confirm !== password ? '비밀번호가 일치하지 않습니다.' : ''}
+            />
+          )}
+
+          {!isLogin && (
+            <div className="auth-checklist">
+              <CheckItem done={emailOk}>메일 주소 형식</CheckItem>
+              <CheckItem done={password.length >= 6}>6자 이상</CheckItem>
+              <CheckItem done={confirm.length > 0 && confirm === password}>비밀번호 일치</CheckItem>
+            </div>
+          )}
+
+          {info && !error && (
+            <div className="auth-info" role="status">{info}</div>
+          )}
+
+          {error && (
+            <div className="auth-error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M7 4v3.5M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* a sentence of fact, no box to tick (whether the law asks for more is not settled: the user decides) */}
+          {!isLogin && (
+            <p className="auth-terms">
+              가입하면 <a href="/terms" target="_blank" rel="noopener">이용약관</a>이 적용되고, 개인정보는{' '}
+              <a href="/privacy" target="_blank" rel="noopener">개인정보 처리방침</a>에 따라 처리됩니다.
+            </p>
+          )}
+
+          {/* no password reset yet: the '비밀번호를 잊으셨나요?' link comes back with that flow */}
+          <button
+            type="submit"
+            className={`auth-submit ${success ? 'success' : ''}`}
+            disabled={loading || success}
+          >
+            {success ? (
+              <><IconCheck size={16} /> 로그인했습니다</>
+            ) : loading ? (
+              <><Spinner size={14} /> {isLogin ? '로그인 중' : '계정 만드는 중'}</>
+            ) : (
+              isLogin ? '로그인' : '계정 만들기'
+            )}
+          </button>
+        </form>
+      </dialog>
     </>
   )
 }
 
 // ── Sub-components ────────────────────────────────────────────────
 
-import React from 'react'
-
-const FloatingInput = React.forwardRef<HTMLInputElement, {
+/** a field with its name above it (it used to float inside the box, in amber at 10 px) */
+function Field({ ref, label, type, value, onChange, placeholder, required, minLength, error, autoComplete }: {
+  ref?: Ref<HTMLInputElement>
   label: string; type: string; value: string; onChange: (v: string) => void
   placeholder?: string; required?: boolean; minLength?: number; error?: string; autoComplete?: string
-}>(({ label, type, value, onChange, placeholder, required, minLength, error, autoComplete }, ref) => {
-  const [focused, setFocused] = useState(false)
-  const raised = focused || value.length > 0
+}) {
+  const id = useId()
   return (
-    <div className={`fi-wrap ${error ? 'fi-error' : ''} ${focused ? 'fi-focused' : ''}`}>
-      <label className={`fi-label ${raised ? 'raised' : ''}`}>{label}</label>
+    <div className="auth-field">
+      <label htmlFor={id}>{label}</label>
       <input
         ref={ref}
+        id={id}
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={focused ? placeholder : ''}
+        placeholder={placeholder}
         required={required}
         minLength={minLength}
         autoComplete={autoComplete}
         aria-label={label}
-        className="fi-input"
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        className={`auth-input ${error ? 'invalid' : ''}`}
       />
-      {error && <span className="fi-err-msg">{error}</span>}
+      {error && <span id={`${id}-error`} className="auth-field-error">{error}</span>}
     </div>
   )
-})
-FloatingInput.displayName = 'FloatingInput'
+}
 
-function CheckItem({ done, children }: { done: boolean; children: React.ReactNode }) {
+function CheckItem({ done, children }: { done: boolean; children: ReactNode }) {
   return (
     <div className={`auth-check-item ${done ? 'done' : ''}`}>
-      <span className="auth-check-dot" />
+      <span className="auth-check-dot" aria-hidden="true" />
       {children}
     </div>
   )
 }
 
-function Spinner() {
-  return <span className="auth-spinner" />
-}
-function CheckIcon() {
-  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-}
-function ArrowIcon() {
-  return <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-}
-
-function CircuitDecoration() {
-  return (
-    <svg className="auth-circuit" viewBox="0 0 220 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M10 90h30M70 90h30M130 90h30M180 90h30" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5" strokeLinecap="round"/>
-      <path d="M110 10v30M110 70v30M110 120v30M110 160v20" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5" strokeLinecap="round"/>
-      <rect x="40" y="78" width="24" height="24" rx="4" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5"/>
-      <rect x="100" y="40" width="20" height="20" rx="4" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5"/>
-      <rect x="150" y="78" width="24" height="24" rx="4" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5"/>
-      <circle cx="110" cy="90" r="6" stroke="rgba(255,255,255,0.35)" strokeWidth="1.5"/>
-      <circle cx="40" cy="90" r="3" fill="rgba(255,255,255,0.2)"/>
-      <circle cx="180" cy="90" r="3" fill="rgba(255,255,255,0.2)"/>
-      <circle cx="110" cy="10" r="3" fill="rgba(255,255,255,0.2)"/>
-      <circle cx="110" cy="170" r="3" fill="rgba(255,255,255,0.2)"/>
-      <path d="M70 60 Q90 60 90 78" stroke="rgba(255,255,255,0.1)" strokeWidth="1.5"/>
-      <path d="M150 60 Q130 60 130 78" stroke="rgba(255,255,255,0.1)" strokeWidth="1.5"/>
-    </svg>
-  )
-}
-
-// ── Feature Icons (SVG) ───────────────────────────────────────────
-
-function IcCircuit() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <rect x="5" y="5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
-      <path d="M8 2v3M8 11v3M2 8h3M11 8h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-      <circle cx="2" cy="8" r="1" fill="currentColor"/>
-      <circle cx="14" cy="8" r="1" fill="currentColor"/>
-      <circle cx="8" cy="2" r="1" fill="currentColor"/>
-      <circle cx="8" cy="14" r="1" fill="currentColor"/>
-    </svg>
-  )
-}
-
-function IcHistory() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M3 8a5 5 0 1 1 1.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-      <path d="M2 5.5V8h2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  )
-}
-
-function IcBookmark() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M4 2h8a1 1 0 0 1 1 1v10.5l-5-3-5 3V3a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
-    </svg>
-  )
-}
-
-function IcBolt() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M9.5 2L4 9h4.5L6.5 14 13 7H8.5L9.5 2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round"/>
-    </svg>
-  )
-}
-
-// ── Data ──────────────────────────────────────────────────────────
-
-const LOGIN_FEATURES = [
-  { icon: <IcBolt />,     title: '빠른 재접근', text: '저장된 회로 세션 즉시 불러오기' },
-  { icon: <IcBookmark />, title: '즐겨찾기',   text: '자주 쓰는 회로 북마크 관리' },
-]
-
-const REGISTER_FEATURES = [
-  { icon: <IcCircuit />,  title: 'AI 회로 설계', text: 'AI 기반 자동 회로 생성' },
-  { icon: <IcHistory />,  title: '세션 저장',    text: '모든 설계 히스토리 자동 보관' },
-  { icon: <IcBookmark />, title: '즐겨찾기',    text: '나만의 회로 라이브러리 구축' },
-]
-
-// ── Styles ────────────────────────────────────────────────────────
+// ── Styles (tokens from src/styles/_sf-tokens.scss) ───────────────
 
 const STYLES = `
-.auth-overlay {
-  position: fixed; inset: 0; z-index: 200;
-  background: rgba(15,12,8,0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-  animation: authFadeIn 0.18s ease;
-}
 .auth-card {
-  display: flex;
-  width: 100%; max-width: 780px;
-  min-height: 520px;
-  border-radius: 24px;
-  overflow: hidden;
-  box-shadow: 0 32px 80px rgba(10,8,4,0.45), 0 2px 0 rgba(255,255,255,0.06) inset;
-  animation: authSlideUp 0.22s cubic-bezier(0.34,1.4,0.64,1);
+  width: calc(100% - 24px); max-width: 400px;
+  max-height: calc(100% - 24px); overflow: auto;
+  margin: auto;
+  background: var(--sf-bg-2);
+  border: 1px solid var(--sf-line-strong);
+  border-radius: var(--sf-r-lg);
+  box-shadow: var(--sf-shadow-lg);
+  padding: 16px 24px 24px;
+  font-family: var(--sf-font-sans);
+  color: var(--sf-fg);
+  animation: authFadeIn var(--sf-dur-fast) var(--sf-ease);
 }
-
-/* ── Left panel ── */
-.auth-left {
-  width: 42%;
-  background: linear-gradient(145deg, #1a1207 0%, #2d1f0a 50%, #1a1207 100%);
-  position: relative; overflow: hidden; flex-shrink: 0;
+.auth-card::backdrop { background: rgba(26, 22, 17, 0.45); }
+.auth-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
 }
-.auth-left::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 30% 40%, rgba(200,117,21,0.18) 0%, transparent 60%),
-              radial-gradient(ellipse at 80% 80%, rgba(29,122,106,0.12) 0%, transparent 50%);
-}
-.auth-left-inner {
-  position: relative; z-index: 1;
-  padding: 36px 32px;
-  height: 100%;
-  display: flex; flex-direction: column; gap: 0;
-}
-.auth-logo {
-  display: flex; align-items: center; gap: 10px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 15px; font-weight: 700;
-  color: rgba(255,255,255,0.9);
-  letter-spacing: -0.02em;
-  margin-bottom: 40px;
-}
-.auth-left-headline {
-  flex: 1;
-}
-.auth-left-headline h1 {
-  margin: 0 0 12px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 38px; font-weight: 700;
-  color: #fff; line-height: 1.1;
-  letter-spacing: -0.03em;
-  white-space: pre-line;
-}
-.auth-left-headline p {
-  margin: 0;
-  font-size: 13.5px; color: rgba(255,255,255,0.5);
-  line-height: 1.6; white-space: pre-line;
-}
-.auth-features {
-  display: flex; flex-direction: column; gap: 14px;
-  margin-top: 32px;
-}
-.auth-feature-item {
-  display: flex; align-items: flex-start; gap: 12px;
-}
-.auth-feature-icon {
-  width: 32px; height: 32px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  color: rgba(255,255,255,0.75);
-}
-.auth-feature-title {
-  font-size: 13px; font-weight: 600;
-  color: rgba(255,255,255,0.85);
-  font-family: 'Space Grotesk', sans-serif;
-  margin-bottom: 2px;
-}
-.auth-feature-desc {
-  font-size: 12px; color: rgba(255,255,255,0.4);
-  font-family: 'Space Grotesk', sans-serif;
-}
-.auth-circuit {
-  position: absolute; bottom: -10px; right: -20px;
-  width: 180px; opacity: 0.6; pointer-events: none;
-}
-
-/* ── Right panel ── */
-.auth-right {
-  flex: 1;
-  background: #fbf7ec;
-  position: relative;
-  display: flex; align-items: center; justify-content: center;
-  padding: 40px 36px;
-}
-.auth-close {
-  position: absolute; top: 18px; right: 18px;
-  width: 30px; height: 30px; border-radius: 50%;
-  background: rgba(0,0,0,0.06); border: none;
-  color: #8a8270; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
-}
-.auth-close:hover { background: rgba(0,0,0,0.1); color: #1a1611; }
-.auth-form-wrap { width: 100%; max-width: 320px; }
 
 /* ── Tabs ── */
 .auth-tabs {
-  display: flex; gap: 0;
-  background: #f0ead8;
-  border-radius: 10px; padding: 3px;
-  margin-bottom: 28px;
+  display: flex; gap: 2px;
+  background: var(--sf-bg-3);
+  border: 1px solid var(--sf-line-soft);
+  border-radius: var(--sf-r-md); padding: 2px;
+  margin-bottom: 20px;
 }
 .auth-tab {
-  flex: 1; padding: 7px; border: none;
-  border-radius: 8px; cursor: pointer;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px; font-weight: 600;
-  transition: all 0.15s;
-  background: transparent; color: #8a8270;
+  flex: 1; height: 32px; border: 1px solid transparent;
+  border-radius: var(--sf-r-sm); cursor: pointer;
+  font-family: var(--sf-font-sans);
+  font-size: 13px; font-weight: 500;
+  background: transparent; color: var(--sf-fg-muted);
+  transition: background var(--sf-dur-fast) var(--sf-ease), color var(--sf-dur-fast) var(--sf-ease);
 }
+.auth-tab:hover { color: var(--sf-fg); }
 .auth-tab.active {
-  background: #fff;
-  color: #1a1611;
-  box-shadow: 0 1px 6px rgba(74,52,18,0.14);
+  background: var(--sf-bg-2);
+  border-color: var(--sf-line-strong);
+  color: var(--sf-fg); font-weight: 600;
 }
 
-/* ── Form header ── */
-.auth-form-header { margin-bottom: 24px; }
-.auth-form-header h2 {
+/* ── Title ── */
+.auth-title {
   margin: 0 0 4px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 22px; font-weight: 700; color: #1a1611;
-  letter-spacing: -0.02em;
+  font-size: 20px; font-weight: 600; line-height: 1.25;
+  letter-spacing: -0.01em; color: var(--sf-fg);
 }
-.auth-form-header p {
-  margin: 0; font-size: 13px; color: #8a8270;
+.auth-lead {
+  margin: 0 0 20px;
+  font-size: 13.5px; line-height: 1.55; color: var(--sf-fg-muted);
+  word-break: keep-all;
 }
 
 /* ── Form ── */
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-field { display: flex; flex-direction: column; gap: 6px; }
+.auth-field label { font-size: 13px; font-weight: 500; color: var(--sf-fg); }
+.auth-input {
+  height: 40px; padding: 0 12px;
+  background: var(--sf-bg-2); color: var(--sf-fg);
+  border: 1px solid var(--sf-line-strong);
+  border-radius: var(--sf-r-sm);
+  font: 14px var(--sf-font-sans);
+  outline: none;
+  transition: border-color var(--sf-dur-fast) var(--sf-ease), box-shadow var(--sf-dur-fast) var(--sf-ease);
+}
+.auth-input::placeholder { color: var(--sf-fg-dim); }
+.auth-input:focus { border-color: var(--sf-fg); box-shadow: 0 0 0 1px var(--sf-fg); }
+.auth-input.invalid { border-color: var(--sf-danger); }
+.auth-input.invalid:focus { box-shadow: 0 0 0 1px var(--sf-danger); }
+.auth-field-error { font-size: 12px; color: var(--sf-danger); }
 
-/* ── Floating input ── */
-.fi-wrap {
-  position: relative;
-  background: #fff;
-  border: 1.5px solid #d6cdb6;
-  border-radius: 12px;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  padding: 10px 14px 8px;
+/* ── Sign-up: the terms and the privacy policy ── */
+.auth-terms {
+  margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--sf-fg-muted);
+  word-break: keep-all;
 }
-.fi-wrap.fi-focused {
-  border-color: #c87515;
-  box-shadow: 0 0 0 3px rgba(200,117,21,0.1);
-}
-.fi-wrap.fi-error {
-  border-color: #b04826;
-  box-shadow: 0 0 0 3px rgba(176,72,38,0.08);
-}
-.fi-label {
-  position: absolute; left: 14px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px; color: #8a8270;
-  pointer-events: none;
-  transition: all 0.15s cubic-bezier(0.4,0,0.2,1);
-  top: 50%; transform: translateY(-50%);
-}
-.fi-label.raised {
-  top: 8px; transform: none;
-  font-size: 10px; font-weight: 600;
-  color: #c87515; letter-spacing: 0.04em; text-transform: uppercase;
-}
-.fi-input {
-  width: 100%; border: none; outline: none;
-  background: transparent; padding: 12px 0 0;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px; color: #1a1611;
-  box-sizing: border-box;
-}
-.fi-input::placeholder { color: #b0a895; }
-.fi-err-msg {
-  display: block; font-size: 11px; color: #b04826;
-  margin-top: 3px; font-family: 'Space Grotesk', sans-serif;
-}
+.auth-terms a { color: var(--sf-fg); text-decoration: underline; text-underline-offset: 2px; }
 
-/* ── Error box ── */
+/* ── Sign-up checklist ── */
+.auth-checklist { display: flex; gap: 14px; flex-wrap: wrap; margin-top: -4px; }
+.auth-check-item {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--sf-fg-muted);
+}
+.auth-check-item.done { color: var(--sf-cyan-deep); }
+.auth-check-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1px solid var(--sf-line-strong); flex-shrink: 0;
+}
+.auth-check-item.done .auth-check-dot { background: var(--sf-cyan); border-color: var(--sf-cyan); }
+
+/* ── Notice and error ── */
+.auth-info, .auth-error {
+  padding: 10px 12px; border-radius: var(--sf-r-sm);
+  font-size: 13px; line-height: 1.5; color: var(--sf-fg);
+  word-break: keep-all;
+}
+.auth-info { background: var(--sf-cyan-soft); border: 1px solid var(--sf-cyan-line); }
 .auth-error {
-  display: flex; align-items: center; gap: 7px;
-  padding: 10px 14px; border-radius: 10px;
-  background: rgba(176,72,38,0.07);
-  border: 1px solid rgba(176,72,38,0.18);
-  font-size: 13px; color: #b04826;
-  font-family: 'Space Grotesk', sans-serif;
+  display: flex; align-items: flex-start; gap: 8px;
+  background: var(--sf-danger-soft); border: 1px solid var(--sf-danger-line);
 }
+.auth-error svg { flex-shrink: 0; margin-top: 3px; color: var(--sf-danger); }
 
-/* ── Submit button ── */
+/* ── Submit: dark, as before, until the filled amber reaches 4.5:1 (bd-token-contrast); then Button primary ── */
 .auth-submit {
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%; padding: 14px;
-  background: #1a1611;
-  border: none; border-radius: 12px;
-  color: #fff; font-family: 'Space Grotesk', sans-serif;
-  font-size: 14.5px; font-weight: 700; cursor: pointer;
-  transition: all 0.2s; letter-spacing: -0.01em;
+  width: 100%; height: 44px; margin-top: 4px;
+  background: var(--sf-fg); color: var(--sf-bg-2);
+  border: 1px solid var(--sf-fg); border-radius: var(--sf-r-sm);
+  font: 500 15px var(--sf-font-sans); letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--sf-dur-fast) var(--sf-ease);
 }
-.auth-submit:hover:not(:disabled) {
-  background: #2d2418;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(26,22,17,0.25);
-}
-.auth-submit:active:not(:disabled) { transform: none; }
-.auth-submit:disabled { opacity: 0.7; cursor: default; transform: none !important; }
-.auth-submit.success { background: #1d7a6a; }
+.auth-submit:hover:not(:disabled) { background: var(--sf-bg-inverse); }
+.auth-submit:disabled { opacity: 0.7; cursor: default; }
+.auth-submit.success { background: var(--sf-cyan-deep); border-color: var(--sf-cyan-deep); opacity: 1; }
 
-/* ── Spinner ── */
-.auth-spinner {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  display: inline-block;
-  animation: authSpin 0.65s linear infinite;
-}
+@keyframes authFadeIn { from { opacity: 0 } to { opacity: 1 } }
 
-/* ── Checklist ── */
-.auth-checklist {
-  display: flex; gap: 12px; flex-wrap: wrap;
-  margin-top: 10px;
-}
-.auth-check-item {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 11.5px; color: #b0a895;
-  font-family: 'IBM Plex Mono', monospace;
-  transition: color 0.2s;
-}
-.auth-check-item.done { color: #1d7a6a; }
-.auth-check-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: #d6cdb6; transition: background 0.2s;
-  flex-shrink: 0;
-}
-.auth-check-item.done .auth-check-dot { background: #1d7a6a; }
-
-/* ── Notice (mail sent, link confirmed) ── */
-.auth-info {
-  padding: 10px 14px; border-radius: 10px;
-  background: rgba(29,122,106,0.08);
-  border: 1px solid rgba(29,122,106,0.25);
-  font-size: 13px; color: #16594d; line-height: 1.5;
-  font-family: 'Space Grotesk', sans-serif;
-}
-
-/* ── Divider / switch ── */
-.auth-divider {
-  display: flex; align-items: center; gap: 12px;
-  margin: 16px 0 14px;
-  color: #b0a895; font-size: 12px;
-  font-family: 'IBM Plex Mono', monospace;
-}
-.auth-divider::before, .auth-divider::after {
-  content: ''; flex: 1; height: 1px; background: #e8e1d1;
-}
-.auth-switch {
-  text-align: center; font-size: 13px; color: #8a8270;
-  font-family: 'Space Grotesk', sans-serif;
-}
-.auth-switch button {
-  background: none; border: none; cursor: pointer;
-  color: #c87515; font-weight: 700; font-size: 13px;
-  font-family: 'Space Grotesk', sans-serif;
-  padding: 0; transition: opacity 0.15s;
-}
-.auth-switch button:hover { opacity: 0.75; }
-
-/* ── Animations ── */
-@keyframes authFadeIn  { from { opacity:0 } to { opacity:1 } }
-@keyframes authSlideUp { from { opacity:0; transform:translateY(20px) scale(0.97) } to { opacity:1; transform:none } }
-@keyframes authSpin    { to { transform:rotate(360deg) } }
-
-/* ── Responsive ── */
-@media (max-width: 580px) {
-  .auth-left { display: none; }
-  .auth-card { max-width: 400px; }
-  .auth-right { padding: 32px 24px; }
+@media (max-width: 480px) {
+  .auth-card { padding: 12px 16px 20px; }
 }
 `
