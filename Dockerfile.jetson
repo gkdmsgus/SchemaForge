@@ -67,6 +67,10 @@ ENV NODE_ENV=production \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
     KICAD10_3DMODEL_DIR=/app/server/pcb/3dmodels \
     HOME=/tmp
+# the commit this image was built from (scripts/jetson_run.sh passes it; docker exec schemaforge printenv SF_COMMIT).
+# After every RUN, so a new commit does not rebuild the layers above
+ARG SF_COMMIT=unknown
+ENV SF_COMMIT=$SF_COMMIT
 EXPOSE 8002
 
 # tini as the first process: node does not reap the children the skidl code leaves, and their zombies piled up under

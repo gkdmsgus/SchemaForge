@@ -222,6 +222,11 @@ npx tsx scripts/check_test_chain.ts
 `npm test` 목록 2항목. `scripts/`, `server/`, `server/pcb/`의 모든 `check_*` 파일이 `npm test`에 들어 있거나, 넣지 않는 이유(브라우저, Docker, 배포 이미지 안의 Linux)와 함께 목록에 적혀 있는지, 검사용 기판을 읽는 검사가 `make_check_boards.ts` 뒤에 도는지 확인한다. 동작 검사·기판 검사 목록·회로 검사가 `npm test` 밖에 있어 그 코드를 고쳐도 돌지 않았다.
 
 ```bash
+npx tsx scripts/check_jetson_run.ts
+```
+젯슨 배포 스크립트 8항목. `scripts/jetson_run.sh`를 docker·curl·git·sleep 대역으로 돌린다 (Docker도 젯슨도 쓰지 않는다. Windows에서는 Git의 bash). 새 이미지가 뜨면 그 전에 돌던 이미지가 `schemaforge:jetson-prev`가 되는지, 새 이미지의 KiCad가 답하지 않으면 전 이미지를 다시 띄우고도 exit 1로 끝나는지, `--no-build`를 두 번 돌려도 진짜 전 이미지가 남는지, `--rollback`이 빌드 없이 전 이미지를 띄우는지, 빌드가 실패하면 돌던 컨테이너를 건드리지 않는지, `IMAGE`·`NAME`으로 시험 이미지와 컨테이너를 따로 띄우는지, 이미지가 마지막 RUN 뒤에 커밋(`SF_COMMIT`)을 받는지 확인한다. 전에는 빌드가 같은 이름으로 이미지를 덮고 돌던 컨테이너를 먼저 지워서, 새 이미지가 뜨지 않으면 사이트가 내려간 채 돌아갈 이미지도 없었다.
+
+```bash
 cd server && npx tsx check_demo_cache.ts
 ```
 데모 넷리스트 미리 만들기 6항목. 배포 이미지는 빌드할 때 데모 회로를 한 번 실행해 `server/demo_cache/`에 넷리스트를 넣어 두고, 데모를 열면 skidl을 다시 돌리지 않고 그 복사본을 쓴다 (무료 인스턴스에서 7~9초 걸리던 단계). 모든 데모가 만들어지는지, 저장된 넷리스트가 지금 skidl 결과와 같은지(실행마다 바뀌는 날짜·태그 제외), 방문마다 따로 복사되는지, 회로 파일이 바뀌면 다시 실행하는지 확인한다.
