@@ -1128,8 +1128,9 @@ export default function ResultPanel({
             {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} circuitErrors={circuitErrors.length} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
+              // under the schematic's tool row (37 px): a hand edit that breaks the circuit brings this box, and that row has its undo
               <div role="alert" data-testid="circuit-diagnostics" style={{
-                position: 'absolute', left: 14, top: 14, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
+                position: 'absolute', left: 14, top: 48, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
                 background: 'rgba(25,20,18,0.96)', border: '1px solid rgba(255,92,92,0.55)', borderRadius: 8,
                 boxShadow: '0 10px 30px rgba(0,0,0,0.28)', color: '#f6eee5', fontFamily: 'var(--sf-font-mono)',
               }}>

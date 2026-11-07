@@ -19,7 +19,8 @@
 // goes up on blur or Enter, once, not per keystroke, and Escape keeps the old one, S16 a deleted wire leaves its pin on the
 // part and its toast takes it back, S17 a hand-changed value moves the operating check, S18 opened again from this
 // browser's record it is the edited circuit, not called an AI edit, S19 a typed " or \ does not reach the netlist (the check
-// cleans them and passed; the PCB stopped with a Python traceback).
+// cleans them and passed; the PCB stopped with a Python traceback), S20 a hand edit that breaks the circuit leaves the
+// schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -613,6 +614,39 @@ try {
   for (let i = 0; i < 30 && !pcb19; i++) await p17.waitForTimeout(100)
   const sent19 = pcb19?.graph?.components?.find(c => c.ref === 'R1')?.value
   check('S19 a typed quote or backslash does not reach the netlist', sent19 === '2k2', `sent ${JSON.stringify(sent19)}`)
+
+  // S20: wires deleted until the circuit check speaks up
+  const p20 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  await p20.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p20.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await p20.locator('g[data-comp]').first().waitFor({ timeout: 60000 })
+  await p20.waitForTimeout(500)
+  const box20 = p20.getByTestId('circuit-diagnostics')
+  const nets20 = await p20.locator('g[data-net]').count()
+  let deleted20 = 0
+  for (let i = 0; i < nets20 && !(await box20.isVisible()); i++) {
+    const at = await p20.evaluate(() => {
+      const w = document.querySelector("g[data-net] path[stroke='transparent']")
+      if (!w) return null
+      const m = w.getPointAtLength(w.getTotalLength() / 2), c = w.getScreenCTM()
+      return { x: m.x * c.a + m.y * c.c + c.e, y: m.x * c.b + m.y * c.d + c.f }
+    })
+    await p20.mouse.click(at.x, at.y)
+    await p20.getByRole('button', { name: '✕ 삭제' }).click({ timeout: 3000 })
+    deleted20++
+    await p20.waitForTimeout(500)
+  }
+  const undo20 = p20.getByTestId('schematic-undo')
+  const onTop = await undo20.evaluate(b => {
+    const r = b.getBoundingClientRect()
+    return b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+  })
+  const said20 = await box20.isVisible()
+  await undo20.click({ timeout: 3000 }).catch(() => {})
+  await p20.waitForTimeout(400)
+  const undone20 = await p20.locator('g[data-net]').count()
+  check('S20 a hand edit that breaks the circuit leaves the schematic\'s undo in reach', said20 && onTop && undone20 === nets20 - deleted20 + 1,
+    `${deleted20} wires deleted, check's box ${said20}, undo on top ${onTop}, nets ${nets20}→${undone20}`)
 } finally {
   await browser.close()
 }
