@@ -63,17 +63,6 @@ function withoutErc(r: GenerateResult): GenerateResult {
   return rest
 }
 
-export function saveResultToLocal(result: GenerateResult, prompt: string) {
-  const saved = getSavedResults()
-  const existing = saved.findIndex(s => s.prompt === prompt)
-  if (existing >= 0) saved.splice(existing, 1)
-  const entry = { id: Date.now(), name: prompt.slice(0, 40), prompt, result, time: Date.now() }
-  saved.unshift(entry)
-  while (saved.length > 30) saved.pop()
-  localStorage.setItem('sf_saved_results', JSON.stringify(saved))
-  return saved
-}
-
 interface ResultPanelProps {
   result: GenerateResult
   setResult: Dispatch<SetStateAction<GenerateResult | null>>

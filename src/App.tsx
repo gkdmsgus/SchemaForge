@@ -8,8 +8,7 @@ import PlanPanel from './components/PlanPanel'
 import SideDrawer from './components/SideDrawer'
 import AuthModal, { type AuthNotice } from './components/AuthModal'
 import LegalPage from './components/LegalPage'
-import { saveResultToLocal } from './components/ResultPanel'
-import { getSavedResults } from './lib/storage'
+import { getSavedResults, saveResultToLocal } from './lib/storage'
 import { Button, Spinner } from './components/primitives.tsx'
 import {
   loadAuth, logout as apiLogout, authFetch, clearAuth, errorText, getMe, getMessages, restoreNetlist, saveSession,
