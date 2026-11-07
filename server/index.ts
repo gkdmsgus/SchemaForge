@@ -15,6 +15,7 @@ import {
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
 import { runSkidl as runSkidlIn } from './skidl_run'
+import { parseNetlist, type NetGraph, type NetNode } from './netlist'
 import { fileStem, guardFromEnv, localLoginRefusal, memberRefusal, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
 import { sweepOutputs } from './outputs_sweep'
@@ -28,10 +29,6 @@ import { createClient, isAuthRetryableFetchError, type AuthError, type Session }
 
 // ── Types ──────────────────────────────────────────────────────────
 
-interface NetNode { ref: string; pin: string }
-interface NetEntry { name: string; nodes: NetNode[] }
-interface ComponentEntry { ref: string; value: string; name?: string }
-interface NetGraph { components: ComponentEntry[]; nets: NetEntry[] }
 
 interface ChatAction {
   type: string
@@ -594,50 +591,6 @@ const flat = (s: string) => s.replace(/\s*\r?\n\s*/g, ' / ').trim()
 
 /** Run skidl code (secrets stripped from its environment, temp folder removed); the netlist lands in outputs/. */
 const runSkidl = (code: string): Promise<string> => runSkidlIn(code, OUTPUTS_DIR)
-
-function parseNetlist(text: string): NetGraph {
-  const components: ComponentEntry[] = []
-  const nets: NetEntry[] = []
-
-  const compRe = /\(comp\s*\(ref\s+"([^"]+)"\)\s*\(value\s+"([^"]*)"\)/g
-  const compStarts: { idx: number; ref: string; value: string }[] = []
-  let m: RegExpExecArray | null
-  while ((m = compRe.exec(text)) !== null) {
-    compStarts.push({ idx: m.index, ref: m[1], value: m[2] })
-  }
-  // The part template name (libsource part) picks the PCB footprint downstream.
-  const netsIdx = text.search(/\(nets\b/)
-  compStarts.forEach((c, i) => {
-    const end = i + 1 < compStarts.length ? compStarts[i + 1].idx : (netsIdx >= 0 ? netsIdx : text.length)
-    const part = /\(part\s+"([^"]+)"\)/.exec(text.slice(c.idx, end))
-    components.push(part ? { ref: c.ref, value: c.value, name: part[1] } : { ref: c.ref, value: c.value })
-  })
-
-  const netSectionMatch = text.match(/\(nets[\s\S]*$/)
-  if (netSectionMatch) {
-    const netSection = netSectionMatch[0]
-    const netStartRe = /\(net\s*\n?\s*\(code\s+(\d+)\)\s*\n?\s*\(name\s+"([^"]+)"\)/g
-    let nm: RegExpExecArray | null
-    const netStarts: { idx: number; name: string }[] = []
-    while ((nm = netStartRe.exec(netSection)) !== null) {
-      netStarts.push({ idx: nm.index, name: nm[2] })
-    }
-    for (let i = 0; i < netStarts.length; i++) {
-      const start = netStarts[i].idx
-      const end = i + 1 < netStarts.length ? netStarts[i + 1].idx : netSection.length
-      const block = netSection.slice(start, end)
-      const nodes: NetNode[] = []
-      let nodeM: RegExpExecArray | null
-      const nodeRe = /\(node\s*\n?\s*\(ref\s+"([^"]+)"\)\s*\n?\s*\(pin\s+"([^"]+)"\)/g
-      while ((nodeM = nodeRe.exec(block)) !== null) {
-        nodes.push({ ref: nodeM[1], pin: nodeM[2] })
-      }
-      if (nodes.length > 0) nets.push({ name: netStarts[i].name, nodes })
-    }
-  }
-
-  return { components, nets }
-}
 
 const sse = (event: string, data: string) => `event: ${event}\ndata: ${data}\n\n`
 

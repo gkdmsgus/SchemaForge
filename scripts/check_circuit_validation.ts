@@ -1,5 +1,20 @@
+/**
+ * Checks for the circuit check above the schematic (src/lib/circuitValidation.ts): the four demo circuits pass, each with
+ * one part taken out fails on it, and hand-made LED strings.
+ *
+ * Run: npx tsx scripts/check_circuit_validation.ts   (npm test runs it). Python + skidl, no server, no model.
+ * The demos are the checked-in skidl files run as /demo_result runs them, read with the server's own netlist reader
+ * (server/netlist.ts). They came from a running dev server, so the check stayed out of npm test (2026-11-07).
+ * Exit code 0 only if every check passes.
+ */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import type { NetGraph } from '../src/types.ts'
+import { DEMOS } from '../server/demo_cache.ts'
+import { parseNetlist } from '../server/netlist.ts'
+import { runSkidl } from '../server/skidl_run.ts'
 
 function remove(graph: NetGraph, ref: string): NetGraph {
   return {
@@ -11,19 +26,14 @@ function remove(graph: NetGraph, ref: string): NetGraph {
   }
 }
 
-// Usage: npx tsx scripts/check_circuit_validation.ts [BASE]   (default http://localhost:3000)
-const BASE = (process.argv[2] || 'http://localhost:3000').replace(/\/$/, '')
-
+const work = fs.mkdtempSync(path.join(os.tmpdir(), 'sf_cirval_'))
 async function demo(name: string): Promise<NetGraph> {
-  const response = await fetch(`${BASE}/demo_result/${name}`)
-  if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`)
-  return (await response.json()).graph as NetGraph
+  const code = fs.readFileSync(path.join('server', 'test_circuits', `${DEMOS[name]}.py`), 'utf8')
+  return parseNetlist(fs.readFileSync(await runSkidl(code, work), 'utf8'))
 }
 
-const motor = await demo('motor')
-const led = await demo('led')
-const ne555 = await demo('ne555')
-const relay = await demo('relay')
+const [motor, led, ne555, relay] = await Promise.all(['motor', 'led', 'ne555', 'relay'].map(demo))
+  .finally(() => fs.rmSync(work, { recursive: true, force: true }))
 // the resistor gone, the LED left beside its two cut nets: the string has no resistor, and says which LED
 const noLimiter = validateCircuit(remove(led, 'R1')).filter(i => i.code === 'CIR101')
 // CIR101 blocks the PCB, so a resistor reached across a diode, a switch or a relay contact, past a net with other pins on
@@ -79,5 +89,7 @@ const checks: [string, boolean][] = [
     !cir101(unknownLedPin).length && !cir101(unknownRPin).length],
 ]
 
-for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`)
-if (checks.some(([, ok]) => !ok)) process.exitCode = 1
+for (const [name, ok] of checks) console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}`)
+const failed = checks.filter(([, ok]) => !ok).length
+console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
+process.exitCode = failed ? 1 : 0

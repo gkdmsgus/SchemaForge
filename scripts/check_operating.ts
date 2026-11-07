@@ -17,6 +17,7 @@ import {
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { SPECS } from '../src/lib/partSpecs.ts'
 import type { BoardModel, NetGraph } from '../src/types.ts'
+import { parseNetlist } from '../server/netlist.ts'
 
 let failed = 0
 function check(name: string, ok: boolean, info = '') {
@@ -1582,24 +1583,7 @@ function verdictProblems(rs: OpResult[]): string[] {
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
-function parseNetlist(text: string): NetGraph {
-  const components: NetGraph['components'] = []
-  const starts = [...text.matchAll(/\(comp\s*\(ref\s+"([^"]+)"\)\s*\(value\s+"([^"]*)"\)/g)].map(m => ({ idx: m.index!, ref: m[1], value: m[2] }))
-  const netsIdx = text.search(/\(nets\b/)
-  starts.forEach((c, i) => {
-    const end = i + 1 < starts.length ? starts[i + 1].idx : (netsIdx >= 0 ? netsIdx : text.length)
-    const part = /\(part\s+"([^"]+)"\)/.exec(text.slice(c.idx, end))
-    components.push({ ref: c.ref, value: c.value, name: part?.[1] })
-  })
-  const section = text.slice(Math.max(netsIdx, 0))
-  const netStarts = [...section.matchAll(/\(net\s*\n?\s*\(code\s+(\d+)\)\s*\n?\s*\(name\s+"([^"]+)"\)/g)].map(m => ({ idx: m.index!, name: m[2] }))
-  const nets = netStarts.map((n, i) => ({
-    name: n.name,
-    nodes: [...section.slice(n.idx, netStarts[i + 1]?.idx ?? section.length).matchAll(/\(node\s*\n?\s*\(ref\s+"([^"]+)"\)\s*\n?\s*\(pin\s+"([^"]+)"\)/g)]
-      .map(m => ({ ref: m[1], pin: m[2] })),
-  })).filter(n => n.nodes.length)
-  return { components, nets }
-}
+// the netlists are read with the server's own reader (server/netlist.ts), as /generate and /demo_result read them
 {
   const dir = path.join('server', 'outputs')
   const pairs = fs.readdirSync(dir).filter(f => f.endsWith('.board.json')).map(f => f.replace('.board.json', ''))
