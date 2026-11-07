@@ -110,7 +110,7 @@ export function parseOhms(v: string): number | null {
 /** "100nF", "10uF", "0.1µF", "22μF", "22p", "1u", "4u7", "2n2" -> farads */
 export function parseFarads(v: string): number | null {
   const s = valuePart(v)
-  const point = /^(\d+)([pnuµμm])(\d+)f?$/i.exec(s)      // 4u7 is 4.7 uF (2026-11-06 sweep: read as no value, "단위가 필요합니다")
+  const point = /^(\d+)([pnuµμm])(\d)f?$/i.exec(s)       // 4u7 is 4.7 uF (2026-11-06 sweep: read as no value, "단위가 필요합니다"); 1n4148 is no value
   const m = point ?? /^(\d+(?:\.\d+)?)\s*([pnuµμm])?(f)?$/i.exec(s)
   if (!m || (!m[2] && !m[3])) return null      // "104" is a code, not 104 F
   if (m[2] === 'M') return null                // "100MF" is an old way to write µF, not 0.1 F: not read at all

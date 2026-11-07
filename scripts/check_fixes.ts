@@ -253,12 +253,17 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
     [{ ref: 'X1', name: 'Widget', value: '100nF' }, 'Widget', 'X1'], [{ ref: 'U7', value: 'LM358' }, 'U7', 'U7'], [{ ref: 'R5', name: '  ', value: 'x' }, 'R5', 'R5'],
     // a part number that ends like a unit tells no kind
     [{ ref: 'U8', value: 'LM7805F' }, 'U8', 'U8'], [{ ref: 'Q8', value: '2N3904H' }, 'Q8', 'Q8'],
+    // nor one that reads like 2n2 in lower case: a diode or a transistor on a capacitor's footprint, with no word of it
+    [{ ref: 'D5', value: '1n4148' }, 'D5', 'D5'], [{ ref: 'D6', value: '1n60' }, 'D6', 'D6'], [{ ref: 'Q6', value: '2n7000' }, 'Q6', 'Q6'], [{ ref: 'Q7', value: '2n2222' }, 'Q7', 'Q7'],
   ]
   const wrong = table.filter(([a, name, ref]) => { const c = added(a); return c?.name !== name || c?.ref !== ref }).map(([a]) => `${JSON.stringify(a)} -> ${JSON.stringify(added(a))}`)
   // every template it names is one the footprint table has, in both styles
   const footprints = fs.readFileSync(path.join('server', 'pcb', 'footprints_table.py'), 'utf8')
-  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'U8', 'Q8', 'R5', 'Conn_01x02'].includes(n))
+  const missing = [...new Set(table.map(([, name]) => name))].filter(n => !['Q', 'U', 'conn', 'SW_SPDT', 'Widget', 'U7', 'U8', 'Q8', 'R5', 'D5', 'D6', 'Q6', 'Q7', 'Conn_01x02'].includes(n))
     .filter(n => !footprints.includes(`('${n}', 'smd')`) || !footprints.includes(`('${n}', 'tht')`))
+  // with no reference and no name either, a part number gets no reference from it: the chat says the part was not added
+  const guessed = ['1n4148', '1n60', '2n7000', '2n2222'].filter(value => withRefs(g, [{ type: 'add_component', value }])[0].ref)
+  wrong.push(...guessed.map(value => `{"value":"${value}"} was given a reference`))
   // 22uF added with no name counts as the regulator's output capacitor
   const edit = chatEdit(g, [{ type: 'add_component', value: '22uF' }, { type: 'add_net', name: 'VOUT', nodes: [{ ref: 'C2', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C2', pin: '2' }] }], '출력에 22uF를 추가해줘')
   const reg = operatingChecks(fromGraph(edit.graph)).find(r => r.rule === 'op_reg' && r.ref === 'U1')

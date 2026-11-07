@@ -76,11 +76,12 @@ const refPrefix = (ref: string) => ref.replace(/\d+$/, '')
 
 /**
  * the kind a value's unit tells: C, L or R, each its own template and reference prefix. The whole value is a number and a
- * unit: this picks a footprint, and a part number can end like one (LM7805F, 2N3904H)
+ * unit: this picks a footprint, and a part number can end like one (LM7805F, 2N3904H) or read like 2n2 in lower case
+ * (1n4148, 2n7000), so a letter for the point has one digit after it
  */
 function kindOfValue(value?: string): string | null {
   const v = (value || '').trim()
-  if (/^\d+(\.\d+)?\s*[pnuµμm]?[fF]$/.test(v) || /^\d+[pnuµμ]\d+$/.test(v)) return 'C'
+  if (/^\d+(\.\d+)?\s*[pnuµμm]?[fF]$/.test(v) || /^\d+[pnuµμ]\d$/.test(v)) return 'C'
   if (/^\d+(\.\d+)?\s*[nuµμm]?H$/.test(v)) return 'L'
   if (/^\d+(\.\d+)?\s*[mkKM]?\s*(Ω|ohms?)$/i.test(v) || /^\d+(\.\d+)?\s*[kKMR]$/.test(v) || /^\d+[kKMRr]\d+$/.test(v)) return 'R'
   return null
