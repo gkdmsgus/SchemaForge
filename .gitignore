@@ -42,6 +42,8 @@ server/.env.*
 
 # Python caches and skidl run artifacts
 __pycache__/
+# importing skidl writes these into the current folder
+skidl_REPL.*
 server/test_circuits/*.net
 server/test_circuits/*.erc
 server/test_circuits/*_sklib.py

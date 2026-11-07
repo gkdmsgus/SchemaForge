@@ -12,7 +12,6 @@ import type { Spots } from '../lib/schematicPlace'
 import CodeEditor, { type CodeRun, type CodeRunNote } from './CodeEditor'
 import KicadGuide from './KicadGuide'
 import { firstChangedLine, toLF, type CodeEdit } from '../lib/pythonCode'
-import TraceField from './TraceField.tsx'
 import {
   Button, Input,
   IconCheck, IconCopy, IconDownload, IconWand, IconLayers,
