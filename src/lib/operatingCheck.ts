@@ -2246,15 +2246,42 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
  * The LEDs no resistor limits, one list per string (anode end first), whatever their colour: checkLeds stops at a colour
  * it has no data for, and a green LED with no resistor burns as well. validateCircuit blocks the PCB on this (2026-11-06
  * sweep: 9 V - 220 Ω - three LEDs and R - switch - LED were refused for "no resistor"), so it only says what the walk is
- * sure of. The walk stops at a net of three pins or a relay's NC contact: on a net with no voltage of its own, a resistor
- * or a contact there can still be in the LED's path. A chain cut by an LED facing the other way is op_led's error.
+ * sure of. The string's own walk stops at a net of three pins, a diode or a relay's NC contact. From each end that has no
+ * voltage of its own the search goes on, over any other pins there and across diodes, LEDs, switches and relay contacts,
+ * until it meets a resistor or a relay coil, which can be in the LED's path (2026-11-07: R - protection diode - LED, and
+ * R - switch - LED with a capacitor on the switch's output, were still refused). It stops at a net with a voltage of its
+ * own: a supply or a ground, one a closed switch or a diode carries a supply to, a 555 output, one whose voltage cannot be
+ * trusted. So an LED put straight on a supply, with no resistor anywhere before it, stays refused. A chain cut by an LED
+ * facing the other way is op_led's error.
  */
 export function ledsWithoutResistor(c: OpCircuit): string[][] {
   let x: Ctx
   try { x = context(c) } catch { return [] }   // not judged: the operating checks say 판단 불가 for the same reason
-  const perhaps = (n: string | null) => {
-    const v = x.voltOf(n)
-    return (!v || !!v.pulled) && !x.blockedWhy(n) && !x.timerOut(n) && x.on(n).some(o => ['R', 'Relay'].includes(x.part(o.ref)?.part ?? ''))
+  /** a net with a voltage of its own; a button input that its resistor pulls up is not one */
+  const fixed = (n: string) => { const v = x.voltOf(n); return (!!v && !v.pulled) || !!x.blockedWhy(n) || !!x.timerOut(n) }
+  /** the pins current can leave a part by when it comes in at `o`: across a diode or an LED, a switch, a relay's contact */
+  const across = (o: Node): number[] => {
+    const p = x.part(o.ref)?.part
+    if (p === 'D' || p === 'LED') return o.pin === 1 ? [2] : o.pin === 2 ? [1] : []
+    if (p === 'SW') return [1, 2, 3].filter(q => q !== o.pin)
+    if (p === 'Relay') return o.pin === 3 ? [4, 5] : o.pin === 4 || o.pin === 5 ? [3] : []
+    return []
+  }
+  /** what can limit the current: a resistor, a relay's coil */
+  const limits = (o: Node) => { const p = x.part(o.ref)?.part; return p === 'R' || (p === 'Relay' && (o.pin === 1 || o.pin === 2)) }
+  const perhaps = (end: string | null) => {
+    if (!end) return false
+    const seen = new Set([end]), queue = [end]
+    while (queue.length) {
+      const n = queue.shift()!
+      if (fixed(n)) continue
+      if (x.on(n).some(limits)) return true
+      for (const o of x.on(n)) for (const q of across(o)) {
+        const m = x.net(o.ref, q)
+        if (m && !seen.has(m)) { seen.add(m); queue.push(m) }
+      }
+    }
+    return false
   }
   return ledStrings(x).filter(s => !s.rs.length && !s.opposed && !perhaps(s.top) && !perhaps(s.bot)).map(s => s.leds.map(l => l.ref))
 }

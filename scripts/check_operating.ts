@@ -14,6 +14,7 @@ import {
   fromBoard, fromGraph, operatingChecks, operatingHeadline, parseFarads, parseOhms, parseVolts, voltsFromName,
   type OpResult, type OpRule, type OpState,
 } from '../src/lib/operatingCheck.ts'
+import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { SPECS } from '../src/lib/partSpecs.ts'
 import type { BoardModel, NetGraph } from '../src/types.ts'
 
@@ -1504,6 +1505,80 @@ function verdictProblems(rs: OpResult[]): string[] {
   }
   check('O21d separate batteries each with a ground pass; a connector supply\'s AGND is cut too; no source on any ground: the names stand; the order of the listing changes nothing',
     Object.values(other).every(Boolean), `${JSON.stringify(other)} · ${show(vc, 'op_power')}`)
+}
+
+// O22. CIR101 (the PCB is refused for an LED with no resistor) against what is known by construction (2026-11-07: R -
+// protection diode - LED and R - switch - LED with a capacitor on the switch's output were refused). Random chains from the
+// supply to GND of resistors, diodes (with and without a value), switches, LEDs and relay contacts (COM to NO or NC, the
+// coil across the supply or behind a switch), with capacitors to GND hanging off. An LED in a chain with a resistor is
+// never refused; one in a chain with none is always refused. In some circuits a resistor to GND, or another LED with its
+// own resistor, hangs off a chain too: a resistor that is not in the chain, which the rule may take for one (allowed, so
+// it is counted, not failed: blocking a good circuit is worse than missing a bad one, the operating check still judges
+// it). Whatever CIR101 refuses, op_led does not pass
+{
+  let seed = 20261107
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  const choose = <T,>(xs: readonly T[]) => xs[Math.floor(rnd() * xs.length)]
+  const tally = { good: 0, bad: 0, loose: 0, refusedGood: 0, passedBad: 0, passedLoose: 0, refusedButPass: 0, circuits: 0 }
+  const examples: string[] = []
+  for (let i = 0; i < 1500; i++) {
+    const comps: Comp[] = [], pins = new Map<string, string[]>(), count: Record<string, number> = {}
+    const put = (net: string, pin: string) => pins.set(net, [...(pins.get(net) || []), pin])
+    const add = (prefix: string, name: string, value: string) => { const ref = `${prefix}${(count[prefix] = (count[prefix] || 0) + 1)}`; comps.push([ref, name, value]); return ref }
+    let nets = 0
+    const fresh = () => `N${++nets}`
+    const truth = new Map<string, 'good' | 'bad' | 'loose'>()
+    const bt = add('BT', 'Battery', choose(['5V', '9V', '12V']))
+    put('VCC', `${bt}.1`); put('GND', `${bt}.2`)
+    const decoys = rnd() < 0.3
+    for (let chain = 1 + Math.floor(rnd() * 2); chain > 0; chain--) {
+      const len = 1 + Math.floor(rnd() * 5)
+      const kinds = Array.from({ length: len }, () => choose(['R', 'D', 'D?', 'SW', 'LED', 'LED', 'K'] as const))
+      if (!kinds.includes('LED')) kinds[Math.floor(rnd() * len)] = 'LED'
+      const leds: string[] = []
+      let upper = 'VCC'
+      kinds.forEach((k, at) => {
+        const lower = at === len - 1 ? 'GND' : fresh()
+        const two = (ref: string, swap: boolean) => { put(upper, `${ref}.${swap ? 2 : 1}`); put(lower, `${ref}.${swap ? 1 : 2}`) }
+        if (k === 'R') two(add('R', 'R', choose(['330', '1k', '4k7'])), rnd() < 0.5)
+        if (k === 'D' || k === 'D?') two(add('D', 'D', k === 'D' ? '1N4148' : ''), false)
+        if (k === 'LED') { const d = add('D', 'LED', choose(['RED', 'GREEN', ''])); two(d, false); leds.push(d) }
+        if (k === 'SW') two(add('SW', 'SW', ''), rnd() < 0.5)
+        if (k === 'K') {
+          const kr = add('K', 'Relay', '5V')
+          if (rnd() < 0.5) { put('VCC', `${kr}.1`); put('GND', `${kr}.2`) }
+          else { const sw = add('SW', 'SW', ''), low = fresh(); put('VCC', `${kr}.1`); put(low, `${kr}.2`); put(low, `${sw}.1`); put('GND', `${sw}.2`) }
+          const [a, z] = choose([[3, 4], [4, 3], [3, 5], [5, 3]] as const)
+          put(upper, `${kr}.${a}`); put(lower, `${kr}.${z}`)
+        }
+        if (lower !== 'GND') {
+          if (rnd() < 0.35) { const c = add('C', 'C', '100nF'); put(lower, `${c}.1`); put('GND', `${c}.2`) }
+          if (decoys && rnd() < 0.3) {
+            if (rnd() < 0.5) { const r = add('R', 'R', '10k'); put(lower, `${r}.1`); put('GND', `${r}.2`) }
+            else { const d = add('D', 'LED', 'RED'), r = add('R', 'R', '1k'), m = fresh(); put(lower, `${d}.1`); put(m, `${d}.2`); put(m, `${r}.1`); put('GND', `${r}.2`); truth.set(d, 'good') }
+          }
+        }
+        upper = lower
+      })
+      for (const d of leds) truth.set(d, kinds.includes('R') ? 'good' : decoys ? 'loose' : 'bad')
+    }
+    const g = circuit(comps, [...pins].map(([name, list]) => [name, ...list] as [string, ...string[]]))
+    const refused = new Set(validateCircuit(g).filter(x => x.code === 'CIR101').flatMap(x => x.refs))
+    const op = operatingChecks(fromGraph(g))
+    tally.circuits++
+    for (const [ref, t] of truth) {
+      tally[t]++
+      const wrong = t === 'good' ? refused.has(ref) : t === 'bad' && !refused.has(ref)
+      if (t === 'good' && refused.has(ref)) tally.refusedGood++
+      if (t === 'bad' && !refused.has(ref)) tally.passedBad++
+      if (t === 'loose' && !refused.has(ref)) tally.passedLoose++
+      if (refused.has(ref) && pick(op, 'op_led', ref)?.state === 'pass') { tally.refusedButPass++; examples.push(`${ref} refused, op_led pass: ${JSON.stringify(g)}`) }
+      if (wrong && examples.length < 2) examples.push(`${ref} ${t}: ${JSON.stringify(g)}`)
+    }
+  }
+  check('O22 CIR101 on random chains: none with a resistor refused, every one with none refused, nothing refused passes op_led',
+    tally.refusedGood === 0 && tally.passedBad === 0 && tally.refusedButPass === 0 && tally.good > 1000 && tally.bad > 1000,
+    `${JSON.stringify(tally)}${examples.length ? ' · ' + examples.slice(0, 2).join(' || ') : ''}`)
 }
 
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
