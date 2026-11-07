@@ -64,7 +64,7 @@ flowchart LR
 | 회로 · 기판 | Python, skidl, 직접 구현한 배치(힘 기반) · 배선(A*) · 회로 점검 |
 | 검사 · 출력 | KiCad 10 `kicad-cli` (DRC, 거버, 3D 모델) |
 | 저장 · 인증 | Supabase |
-| 배포 · CI | Docker (공식 KiCad 이미지 기반), Render (무료 인스턴스), GitHub Actions (린트 · 타입 · 빌드) |
+| 배포 · CI | Docker (공식 KiCad 이미지 기반), Render (무료 인스턴스), GitHub Actions (린트 · 타입 · 빌드 · 모델·KiCad·python 없이 도는 검사 6개: 스타일시트, `npm test` 목록, 버전 고정, API 클라이언트, 배치하기, outputs 정리) |
 
 ### 일정과 계획
 시스템 구조 상세, 화면 설명, AI 활용방안, 주 단위 일정은 [docs/project-plan.md](docs/project-plan.md)에 있다.
