@@ -105,8 +105,11 @@ const net = (name: string, ...nodes: string[]) => ({ name, nodes: nodes.map(n =>
   const parts = [{ ref: 'D1', part: 'D' }, { ref: 'Q1', part: 'Q_NMOS' }, { ref: 'U9', part: 'REG' }]
   const { legs, rest } = splitWarnings(warnings, parts)
   const d1 = legs.find(m => m.ref === 'D1'), u9 = legs.find(m => m.ref === 'U9')
+  // past MAX_PLACEHOLDER_PINS on a part the table does not know, whose name is in the footprint's and can hold spaces
+  const standIn = splitWarnings(['U1 pin 300 has no pad in SchemaForge:UNMAPPED_My Part'])
   check('F5c one item per part, other warnings kept', legs.length === 2 && JSON.stringify(rest) === JSON.stringify([warnings[1]])
-    && JSON.stringify(d1?.raw) === JSON.stringify([warnings[0], warnings[2]]) && JSON.stringify(d1?.pins) === '[3,4]', JSON.stringify(legs.map(m => m.ref)))
+    && JSON.stringify(d1?.raw) === JSON.stringify([warnings[0], warnings[2]]) && JSON.stringify(d1?.pins) === '[3,4]'
+    && standIn.legs[0]?.ref === 'U1' && standIn.rest.length === 0, JSON.stringify(legs.map(m => m.ref)) + ` stand-in rest=${standIn.rest}`)
   check('F5d words: the part, how many legs, what it means', !!d1 && d1.text.startsWith('D1(다이오드)의 다리 2개가') && d1.text.includes('연결이 기판에서 빠졌습니다')
     && !!u9 && u9.text.startsWith('U9(레귤레이터)의 다리 1개가'), d1?.text)
   const words = legs.flatMap(m => [m.text, m.fix])

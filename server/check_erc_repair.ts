@@ -1,13 +1,14 @@
-// Checks E1-E24: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
+// Checks E1-E27: the netlist check (ERC) /generate runs before any PCB, how its one repair round is
 // judged (E1-E11, E14, E17), what the skidl runner passes to model- or user-written code and leaves
 // behind (E12-E13, E18, E22-E23), the /generate and /test_code wiring read as text (E15-E16), the pin names
-// erc.py shares with the front end (E19), where findings point on the board (E20), and the prompt's
-// ref= rule run in skidl (E21), and pad numbers by board style through /erc_graph (E24).
+// erc.py shares with the front end (E19), where findings point on the board (E20), the prompt's
+// ref= rule run in skidl (E21), pad numbers by board style through /erc_graph (E24), and a netlist written from a
+// graph, which has no pintype (E25-E27).
 // No model, no server, no KiCad; needs python + skidl (a missing python is a FAIL).
 // The broken circuit is test_circuits/ne555_blink.py with U1 RESET left open (the 2026-10 generation).
 // Usage (from server/): npx tsx check_erc_repair.ts   → exit 0 only if all pass
 import { execFileSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { childEnv, runSkidl, STDERR_KEPT } from './skidl_run'
@@ -229,6 +230,89 @@ const given = example && capPins ? refsOf([`${example[1]} = ${example[2]}ref='${
 const unnamed = example && capPins ? refsOf([`${example[2]}pins=${capPins})`, `c1 = ${example[2]}ref='C1', pins=${capPins})`]) : 'no example'
 check('E21 ref= in skidl', !!example && given === `${example[3]},C1` && unnamed === 'C1,C1_1',
   `example ${example?.[3]} then C1 -> ${given}; unnamed then C1 -> ${unnamed}`)
+
+// E25. a netlist in graphToNetlist's shape (server/index.ts: an AI edit, a session reopened from the history) has no
+//      pintype: a regulator's or bridge's output powers its net and two tied outputs conflict (2026-11-06: false
+//      "no source" on 5V, conflicts never found). Only the pins the templates mark count, and a pintype the node has wins.
+type GraphPin = [ref: string, pin: string, pintype?: string]
+const graphNet = async (name: string, comps: [ref: string, part: string][], nets: [name: string, nodes: GraphPin[]][]) => {
+  const path = join(work, `graph_${name}.net`)
+  const compLines = comps.map(([ref, part]) => `    (comp (ref "${ref}") (value "${ref}")\n      (description "${part}")\n      (footprint "")\n      (libsource (lib "NO_LIB") (part "${part}"))\n    )`)
+  const netLines = nets.map(([net, nodes], i) => `    (net (code ${i + 1}) (name "${net}")\n` +
+    nodes.map(([ref, pin, type]) => `      (node (ref "${ref}") (pin "${pin}")${type ? ` (pintype "${type}")` : ''})`).join('\n') + '\n    )')
+  writeFileSync(path, `(export (version "D")\n  (components\n${compLines.join('\n')}\n  )\n  (nets\n${netLines.join('\n')}\n  )\n)`)
+  return erc(path)
+}
+const rulesOn = (r: ErcRun, rule: string) => (r.ok ? r.findings.filter(f => f.rule === rule).map(f => f.net) : [`did not run: ${r.reason}`])
+const regParts: [string, string][] = [['BT1', 'Battery'], ['U1', 'REG'], ['R1', 'R'], ['D1', 'LED']]
+const regRest: [string, GraphPin[]][] = [['VIN', [['BT1', '1'], ['U1', '3']]], ['GND', [['BT1', '2'], ['U1', '1'], ['D1', '2']]], ['LED_A', [['R1', '2'], ['D1', '1']]]]
+const regOut = await graphNet('reg', regParts, [['5V', [['U1', '2'], ['R1', '1']]], ...regRest])
+const regIn = await graphNet('reg_in', regParts, [['5V', [['U1', '3'], ['R1', '1']]], ...regRest])
+const regTyped = await graphNet('reg_typed', regParts, [['5V', [['U1', '2', 'PASSIVE'], ['R1', '1']]], ...regRest])
+const bridge = await graphNet('bridge', [['D1', 'Bridge'], ['R1', 'R']], [['+12V', [['D1', '3'], ['R1', '1']]], ['GND', [['D1', '4'], ['R1', '2']]]])
+const timers: [string, string][] = [['U1', 'NE555'], ['U2', 'NE555'], ['U3', 'OpAmp'], ['R1', 'R']]
+const tied = await graphNet('tied', timers, [['OUT', [['U1', '3'], ['U2', '3'], ['U3', '3'], ['R1', '1']]], ['GND', [['U1', '1'], ['R1', '2']]]])
+const oneOut = await graphNet('one_out', timers, [['OUT', [['U1', '3'], ['U2', '2'], ['U3', '1'], ['R1', '1']]], ['GND', [['U1', '1'], ['R1', '2']]]])
+const conflict = tied.ok ? tied.findings.find(f => f.rule === 'output_conflict') : undefined
+check('E25 graph netlist: sources and outputs by template', rulesOn(regOut, 'unpowered_rail').length === 0 && rulesOn(bridge, 'unpowered_rail').length === 0
+  && rulesOn(regIn, 'unpowered_rail').join() === '5V' && rulesOn(regTyped, 'unpowered_rail').join() === '5V'
+  && conflict?.net === 'OUT' && conflict.refs.map(r => r.ref).join() === 'U1,U2,U3' && rulesOn(oneOut, 'output_conflict').length === 0,
+  `reg=[${rulesOn(regOut, 'unpowered_rail')}] bridge=[${rulesOn(bridge, 'unpowered_rail')}] reg IN=[${rulesOn(regIn, 'unpowered_rail')}] typed=[${rulesOn(regTyped, 'unpowered_rail')}]` +
+  ` tied=[${conflict?.refs.map(r => r.ref)}] one=[${rulesOn(oneOut, 'output_conflict')}]`)
+
+// E26. the same circuit finds the same with and without pintype: the demos, and the prompt's REG, Battery and NE555
+//      templates run in skidl with a 5V rail fed only by the regulator and two 555 outputs tied together
+const templateOf = (name: string) => new RegExp(`Part\\(tool=SKIDL, name='${name}', ref_prefix='\\w+', pins=\\[.*\\]\\)`).exec(section1)?.[0] ?? `missing_${name}`
+const fromPrompt = [
+  'from skidl import *',
+  "vin, rail, gnd, led_a, out = Net('VIN'), Net('5V'), Net('GND'), Net('LED_A'), Net('OUT')",
+  `bt1 = ${templateOf('Battery')}`, `u1 = ${templateOf('REG')}`, `u2 = ${templateOf('NE555')}`, `u3 = ${templateOf('NE555')}`,
+  `r1 = ${templateOf('R')}`, `d1 = ${templateOf('LED')}`,
+  "bt1['+'] += vin", "bt1['-'] += gnd", "u1['IN'] += vin", "u1['OUT'] += rail", "u1['GND'] += gnd",
+  "r1['p1'] += rail", "r1['p2'] += led_a", "d1['A'] += led_a", "d1['K'] += gnd",
+  "u2['OUT'] += out", "u3['OUT'] += out", "u2['GND'] += gnd", "u3['GND'] += gnd", "u2['VCC'] += rail", "u3['VCC'] += rail",
+  'generate_netlist()', '',
+].join('\n')
+const noPintype = (text: string) => text.replace(/\s*\(pintype "[^"]*"\)/g, '')
+const sameBoth: string[] = []
+let withConflict = 0
+for (const [name, code] of [...['led_basic', 'ne555_blink', 'npn_relay', 'nmos_motor', 'bridge_supply'].map(c => [c, readFileSync(join('test_circuits', `${c}.py`), 'utf8')]), ['from_prompt', fromPrompt]]) {
+  const net = await run(code)
+  const stripped = join(work, `nopintype_${name}.net`)
+  writeFileSync(stripped, noPintype(readFileSync(net, 'utf8')))
+  const [a, b] = [await erc(net), await erc(stripped)]
+  const same = a.ok && b.ok && !readFileSync(stripped, 'utf8').includes('pintype') && JSON.stringify(a.findings) === JSON.stringify(b.findings)
+  if (!same) sameBoth.push(`${name}: ${a.ok ? a.findings.map(f => f.rule) : a.reason} / ${b.ok ? b.findings.map(f => f.rule) : b.reason}`)
+  if (name === 'from_prompt' && a.ok) withConflict = a.findings.filter(f => f.rule === 'output_conflict').length
+}
+check('E26 same findings with and without pintype', !sameBoth.length && withConflict === 1, `differ=[${sameBoth.join(' | ')}] conflicts in the prompt circuit=${withConflict}`)
+
+// E27. erc.py PIN_TYPES against the templates (read as text, like E11): exactly the pins they mark PWROUT or OUTPUT, each
+//      with the pin name PIN_NAMES gives that number and a pad in the (part, pin) table of both styles, or a documented
+//      unmapped part. A renumbered template fails here instead of quietly making a pin a source.
+const templates = [...section1.matchAll(/Part\(tool=SKIDL, name='(\w+)', ref_prefix='\w+', pins=\[(.*)\]\)/g)]
+  .map(m => ({ part: m[1], pins: [...m[2].matchAll(/Pin\(num=(\d+),name='([^']+)',func=Pin\.types\.(\w+)\)/g)].map(p => ({ num: p[1], name: p[2], func: p[3] })) }))
+const wantTypes = Object.fromEntries(templates.flatMap(t => {
+  const marked = t.pins.filter(p => p.func === 'PWROUT' || p.func === 'OUTPUT')
+  return marked.length ? [[t.part, Object.fromEntries(marked.map(p => [p.num, p.func === 'PWROUT' ? 'POWER-OUT' : 'OUTPUT']))]] : []
+}))
+const py = JSON.parse(execFileSync('python', ['-c', [
+  'import json, sys', "sys.path.insert(0, 'pcb')", 'import erc, footprints_table as ft',
+  'print(json.dumps({"types": erc.PIN_TYPES, "names": erc.PIN_NAMES, "unmapped": list(ft.KNOWN_UNMAPPED),',
+  '  "pads": {f"{part}/{pin}/{style}": ft.TABLE.get((part, style), (0, 0, {}))[2].get(int(pin))',
+  '           for part, pins in erc.PIN_TYPES.items() for pin in pins for style in ("smd", "tht")}}))',
+].join('\n')], { env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] }).toString()) as
+  { types: Record<string, Record<string, string>>; names: Record<string, string[]>; unmapped: string[]; pads: Record<string, string | null> }
+const canon = (o: Record<string, Record<string, string>>) => JSON.stringify(Object.entries(o).map(([k, v]) => [k, Object.entries(v).sort()]).sort())
+const pinDrift = Object.entries(py.types).flatMap(([part, pins]) => Object.keys(pins).flatMap(num => {
+  const name = templates.find(t => t.part === part)?.pins.find(p => p.num === num)?.name
+  const named = py.names[part]?.[Number(num) - 1]
+  const nameBad = py.names[part] && named !== name ? [`${part}.${num} named ${named}, template ${name}`] : []
+  const padBad = !py.unmapped.includes(part) && (!py.pads[`${part}/${num}/smd`] || !py.pads[`${part}/${num}/tht`]) ? [`${part}.${num} has no pad`] : []
+  return [...nameBad, ...padBad]
+}))
+check('E27 PIN_TYPES match the part templates', templates.length >= 15 && canon(py.types) === canon(wantTypes) && !pinDrift.length,
+  `${templates.length} templates; erc.py=${canon(py.types)}; prompt=${canon(wantTypes)}; drift=[${pinDrift.join(' | ')}]`)
 
 // E12. secrets never reach the child: API keys, Supabase settings, *SECRET*, *TOKEN*; everything else does
 const planted = { OPENAI_API_KEY: 'sk-check', SUPABASE_URL: 'https://check.invalid', MOUSER_API_KEY: 'm',

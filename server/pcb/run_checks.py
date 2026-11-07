@@ -5,12 +5,13 @@ Usage: python run_checks.py [--keep DIR]
 Needs skidl (pip) and kicad-cli (env KICAD_CLI_PATH, PATH, or the default
 per-user KiCad 10 install). Exit code 0 only if every check passes.
 """
-import argparse, json, os, re, shutil, subprocess, sys, tempfile
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from board import generate, netlist_check, parse_netlist, BOARD_MARGIN  # noqa: E402
+from board import build_board, generate, hpwl, netlist_check, parse_netlist, BOARD_MARGIN, MAX_PLACEHOLDER_PINS  # noqa: E402
+import placer  # noqa: E402
 from kicad_pads import kicad_pad_positions  # noqa: E402
 from footprints_table import TABLE, KNOWN_UNMAPPED, MAX_HEADER_PINS  # noqa: E402
 from sexpr import parse, find, find_all  # noqa: E402
@@ -332,6 +333,164 @@ def check_four_legged_diode(work):
     return summary['warnings'] == want and not summary['unmapped'], f"warnings={summary['warnings']}"
 
 
+def _rss_mb(proc):
+    """What a running child holds in memory right now (psutil is not in requirements.txt); 0 if it cannot be read."""
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [('cb', wintypes.DWORD), ('faults', wintypes.DWORD), ('peak', ctypes.c_size_t),
+                        ('rss', ctypes.c_size_t), ('rest', ctypes.c_size_t * 6)]
+        c = Counters(cb=ctypes.sizeof(Counters))
+        got = ctypes.windll.kernel32.K32GetProcessMemoryInfo(wintypes.HANDLE(int(proc._handle)), ctypes.byref(c), c.cb)
+        return c.rss / 2**20 if got else 0
+    try:
+        with open(f'/proc/{proc.pid}/statm') as f:
+            return int(f.read().split()[1]) * os.sysconf('SC_PAGE_SIZE') / 2**20
+    except OSError:
+        return 0
+
+
+def _run_watched(cmd, out_path, limit_mb, limit_s):
+    """(exit code, or None when killed past a limit; peak MB; seconds). stdout goes to a file: a full pipe would stall it."""
+    with open(out_path, 'wb') as out:
+        proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.DEVNULL)
+        t0, peak = time.time(), 0
+        while proc.poll() is None:
+            peak = max(peak, _rss_mb(proc))
+            if peak > limit_mb or time.time() - t0 > limit_s:
+                proc.kill()
+                proc.wait()
+                return None, peak, time.time() - t0
+            time.sleep(0.02)
+    return proc.returncode, peak, time.time() - t0
+
+
+# What graphToNetlist (server/index.ts) writes for a 150-byte request to /erc_graph, which needs no login.
+PIN_BOMB_NET = '''(export (version "D")
+  (components
+    (comp (ref "U1") (value "x")
+      (description "X")
+      (footprint "")
+      (libsource (lib "NO_LIB") (part "X"))
+    )
+  )
+  (nets
+    (net (code 1) (name "A")
+      (node (ref "U1") (pin "999999999"))
+    )
+  )
+)'''
+PIN_BOMB_MB, PIN_BOMB_S = 300, 30    # measured 31 MB, 0.9 s (--erc-only); 46 MB, 1.5 s (whole board); 30 s is runErc's limit
+
+
+def check_pin_number_bomb(work):
+    """A huge pin number on a part the table does not know makes MAX_PLACEHOLDER_PINS pads and a no-pad warning, not that
+    many pads. Run the two ways the server runs the generator, watched: before the cap python went past 2 GB in 4 s
+    (2026-11-06), here it is killed at the limit. src/lib/fixes.ts missingLegs reads the warning's words."""
+    net = os.path.join(work, 'pin_bomb.net')
+    with open(net, 'w', encoding='utf-8') as f:
+        f.write(PIN_BOMB_NET)
+    gen = os.path.join(SERVER, 'pcb_generator.py')
+    pcb = os.path.join(work, 'pin_bomb.kicad_pcb')
+    runs = {'erc': [sys.executable, gen, net, '--erc-only'], 'board': [sys.executable, gen, net, pcb]}
+    done, info = {}, []
+    for name, cmd in runs.items():
+        out = os.path.join(work, name + '.out')
+        code, peak, secs = _run_watched(cmd, out, PIN_BOMB_MB, PIN_BOMB_S)
+        info.append(f'{name}: exit={code} {peak:.0f} MB {secs:.1f} s')
+        # peak 0 is a watch that saw nothing, not a pass
+        if code == 0 and 0 < peak <= PIN_BOMB_MB:
+            done[name] = json.loads(open(out, encoding='utf-8').read().strip().splitlines()[-1])
+    if len(done) < len(runs):
+        return False, '; '.join(info)
+    want = 'U1 pin 999999999 has no pad in SchemaForge:UNMAPPED_X'
+    model = json.load(open(pcb.replace('.kicad_pcb', '.board.json'), encoding='utf-8'))
+    pads = len(model['parts'][0]['pads'])
+    bomb_ok = done['board']['warnings'] == [want] and [u['ref'] for u in done['board']['unmapped']] == ['U1'] \
+        and pads == MAX_PLACEHOLDER_PINS and len(done['erc']['components']) == 1
+    # the cap's edge: the last pin that fits keeps its pad and its net, the next one is reported, and a low pin is untouched
+    edge = [str(n) for n in (5, MAX_PLACEHOLDER_PINS, MAX_PLACEHOLDER_PINS + 1)]
+    parts, unmapped, warnings = build_board([{'ref': 'U1', 'value': 'x', 'part': 'X'}],
+                                            [{'name': 'B', 'nodes': [{'ref': 'U1', 'pin': p} for p in edge]}])
+    edge_ok = warnings == [f'U1 pin {edge[2]} has no pad in SchemaForge:UNMAPPED_X'] and len(unmapped) == 1 \
+        and parts[0]['pad_net'] == {edge[0]: 'B', edge[1]: 'B'}
+    return bomb_ok and edge_ok, f"{'; '.join(info)}; pads={pads} warnings={done['board']['warnings']} edge={warnings}"
+
+
+def _round_against_plain_loop(parts):
+    """One local-search round beside the per-candidate loop it replaced: (parts that moved, parts that took another move)."""
+    costs_of = placer._part_costs
+    want = {}
+
+    def pose(p):
+        return p['x'], p['y'], p['rot']
+
+    def recording(p, cands, boxes):
+        costs = costs_of(p, cands, boxes)
+        if len(cands) > 1:  # the current pose is costed alone
+            base = costs_of(p, [pose(p)], boxes)[0]
+            others = [placer.part_bbox(q) for q in parts if q is not p]
+            want[p['ref']] = pose(p)
+            best = None
+            for k, cand in enumerate(cands):
+                if costs[k] < base - 1e-6 and (best is None or costs[k] < best) \
+                        and not any(placer._overlap(placer.part_bbox(p, *cand), o, placer.GAP / 2) for o in others):
+                    best = costs[k]
+                    want[p['ref']] = cand
+        return costs
+
+    before = {p['ref']: pose(p) for p in parts}
+    placer._part_costs = recording
+    try:
+        placer._local_search_round(parts, {})
+    finally:
+        placer._part_costs = costs_of
+    return sum(pose(p) != before[p['ref']] for p in parts), [p['ref'] for p in parts if pose(p) != want[p['ref']]]
+
+
+def check_local_search(work):
+    """The local search's candidate costs (one numpy step per rotation, its own rotation math) move exactly as hpwl() does
+    for every part at poses in all four rotations, a round takes the move the per-candidate loop took (the cheapest free one,
+    the first of equal costs), and it does not go back to a python call per candidate, which was most of the placement time
+    (2026-11-06): pad_positions runs once per other part, not once per candidate."""
+    net = build_netlist('ne555_blink', work)
+    components, nets = parse_netlist(open(net, encoding='utf-8').read())
+    # the shelf layout has moves to take; after force_place a round has none, and a check on those would pass on nothing
+    shelf, _, _ = build_board(components, nets, 'tht')
+    moved, wrong = _round_against_plain_loop(shelf)
+    parts, _, _ = build_board(components, nets, 'tht')
+    placer.force_place(parts, nets)
+    worst = 0.0
+    for p in parts:
+        home = p['x'], p['y'], p['rot']
+        cands = [(home[0] + 3.0 * i, home[1] - 2.0 * i, (home[2] + 90 * i) % 360) for i in range(8)]
+        costs = placer._part_costs(p, cands, placer._net_boxes([q for q in parts if q is not p]))
+        totals = []
+        for cand in cands:
+            p['x'], p['y'], p['rot'] = cand
+            totals.append(hpwl(parts))
+        p['x'], p['y'], p['rot'] = home
+        worst = max(worst, *(abs((t - totals[0]) - (c - costs[0])) for t, c in zip(totals, costs)))
+    calls = 0
+    counted = placer.pad_positions
+
+    def counting(*args):
+        nonlocal calls
+        calls += 1
+        return counted(*args)
+
+    placer.pad_positions = counting
+    try:
+        placer._local_search_round(parts, {})
+    finally:
+        placer.pad_positions = counted
+    limit = len(parts) * (len(parts) - 1)
+    return worst < 1e-6 and 0 < calls <= limit and moved > 0 and not wrong, \
+        f'cost off hpwl by {worst:.2e} mm; pad_positions {calls} calls, limit {limit}; {moved} parts moved, other move on {wrong}'
+
+
 def check_templates():
     """7. every part template in SYSTEM_PROMPT has a table entry (or is a documented exception)."""
     src = open(os.path.join(SERVER, 'index.ts'), encoding='utf-8').read()
@@ -378,6 +537,16 @@ def main():
     d_ok, d_info = check_four_legged_diode(d_dir)
     all_ok &= d_ok
     print(f'== four-legged diode reported {"PASS" if d_ok else "FAIL"}  {d_info}')
+    n_dir = os.path.join(work_root, 'pin_bomb')
+    os.makedirs(n_dir, exist_ok=True)
+    n_ok, n_info = check_pin_number_bomb(n_dir)
+    all_ok &= n_ok
+    print(f'== huge pin number capped {"PASS" if n_ok else "FAIL"}  {n_info}')
+    l_dir = os.path.join(work_root, 'local_search')
+    os.makedirs(l_dir, exist_ok=True)
+    l_ok, l_info = check_local_search(l_dir)
+    all_ok &= l_ok
+    print(f'== local search costs = hpwl, per rotation {"PASS" if l_ok else "FAIL"}  {l_info}')
     t_ok, t_info = check_templates()
     all_ok &= t_ok
     print(f'== templates {"PASS" if t_ok else "FAIL"}  {t_info}')

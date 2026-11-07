@@ -1,10 +1,11 @@
 """
 Electrical checks on the netlist (the schematic side of "is this circuit sane?").
 
-The netlist carries a pintype for every node (POWER-IN, POWER-OUT, INPUT,
+A skidl netlist carries a pintype for every node (POWER-IN, POWER-OUT, INPUT,
 OUTPUT, PASSIVE), which is enough for a handful of checks that catch the
-mistakes an LLM-generated circuit actually makes. Messages are Korean because
-they are shown in the app.
+mistakes an LLM-generated circuit actually makes. A netlist written from a graph
+has none, so PIN_TYPES fills in the pins those checks read. Messages are Korean
+because they are shown in the app.
 """
 import re
 
@@ -26,6 +27,16 @@ PIN_NAMES = {
     'Relay': ['COIL1', 'COIL2', 'COM', 'NO', 'NC'],
     'Buzzer': ['+', '-'],
     'Battery': ['+', '-'],
+}
+# The pins a template marks PWROUT or OUTPUT, by symbol pin. A netlist written from a graph (an AI edit, a session reopened
+# from the history) has no pintype, so a regulator's output net read as unpowered and tied outputs as no conflict
+# (2026-11-06). server/check_erc_repair.ts E27 compares this with the templates in server/index.ts.
+PIN_TYPES = {
+    'REG': {'2': 'POWER-OUT'},
+    'Bridge': {'3': 'POWER-OUT'},
+    'Battery': {'1': 'POWER-OUT', '2': 'POWER-OUT'},
+    'NE555': {'3': 'OUTPUT'},
+    'OpAmp': {'3': 'OUTPUT'},
 }
 
 
@@ -58,6 +69,11 @@ def check(components, nets, parts=None):
     """
     findings = []
     by_ref = {p['ref']: p for p in (parts or [])}
+    part_of = {c['ref']: c.get('part', '') for c in components}
+
+    def pintype(nd):
+        """the node's own pintype; with none, what the part's template says of that pin"""
+        return nd.get('pintype', '').upper() or PIN_TYPES.get(part_of.get(nd['ref']), {}).get(str(nd['pin']), '')
 
     def node_ref(nd):
         """a netlist node (symbol pin) as a ref on its board pad, with the symbol pin and its name"""
@@ -97,7 +113,7 @@ def check(components, nets, parts=None):
     for n in nets:
         if not POWER_NAME.match(n['name']):
             continue
-        powered = any(nd.get('pintype', '').upper() in SOURCE_TYPES or
+        powered = any(pintype(nd) in SOURCE_TYPES or
                       nd['ref'].rstrip('0123456789') in SOURCE_PREFIXES for nd in n['nodes'])
         if not powered:
             findings.append({
@@ -107,7 +123,7 @@ def check(components, nets, parts=None):
 
     # 5. two or more driving outputs on one net
     for n in nets:
-        outs = [nd for nd in n['nodes'] if nd.get('pintype', '').upper() == 'OUTPUT']
+        outs = [nd for nd in n['nodes'] if pintype(nd) == 'OUTPUT']
         if len(outs) > 1:
             findings.append({
                 'rule': 'output_conflict', 'severity': 'warning',

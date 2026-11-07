@@ -14,7 +14,9 @@ Deterministic: the only randomness is a seeded jitter.
 """
 import math, random
 
-from board import part_keepout as part_bbox, pad_positions, hpwl, connectivity_order
+import numpy as np
+
+from board import part_keepout as part_bbox, pad_positions, rotate, hpwl, connectivity_order
 
 ITERATIONS = 300
 FRAME_EVERY = 5
@@ -211,15 +213,44 @@ RELOCATE_RADIUS = 8.0   # mm around the current layout scanned for a better spot
 RELOCATE_BUDGET = 4000  # candidate positions per part per round
 
 
-def _part_cost(p, x, y, rot, other_boxes):
-    """HPWL of the nets touching p if p sat at (x, y, rot); other_boxes = per-net pad box of the other parts."""
+def _net_boxes(parts):
+    """Per-net pad box of these parts."""
     boxes = {}
-    for _, px, py, net in pad_positions(p, x, y, rot):
-        if not net:
-            continue
-        b = boxes.get(net) or other_boxes.get(net)
-        boxes[net] = (px, py, px, py) if b is None else (min(b[0], px), min(b[1], py), max(b[2], px), max(b[3], py))
-    return sum((b[2] - b[0]) + (b[3] - b[1]) for b in boxes.values())
+    for q in parts:
+        for _, px, py, net in pad_positions(q):
+            if net:
+                b = boxes.get(net)
+                boxes[net] = (px, py, px, py) if b is None else (min(b[0], px), min(b[1], py), max(b[2], px), max(b[3], py))
+    return boxes
+
+
+def _part_costs(p, cands, other_boxes):
+    """HPWL of the nets touching p at each candidate (x, y, rot); other_boxes = _net_boxes of the other parts.
+
+    One array per rotation, since a part has only four: a python call per candidate, up to 4000 per part per round, was
+    most of the placement time (2026-11-06)."""
+    pads = [pad for pad in p['pads'] if pad['net']]
+    cost = np.zeros(len(cands))
+    if not pads:
+        return cost
+    net_pads = {}
+    for i, pad in enumerate(pads):
+        net_pads.setdefault(pad['net'], []).append(i)
+    xs, ys, rots = (np.array(v) for v in zip(*cands))
+    for rot in np.unique(rots):
+        at = np.nonzero(rots == rot)[0]
+        offsets = np.array([rotate(pad['x'], pad['y'], float(rot)) for pad in pads])
+        px = xs[at, None] + offsets[:, 0]
+        py = ys[at, None] + offsets[:, 1]
+        for net, idx in net_pads.items():
+            x1, y1 = px[:, idx].min(axis=1), py[:, idx].min(axis=1)
+            x2, y2 = px[:, idx].max(axis=1), py[:, idx].max(axis=1)
+            b = other_boxes.get(net)
+            if b:
+                x1, y1 = np.minimum(x1, b[0]), np.minimum(y1, b[1])
+                x2, y2 = np.maximum(x2, b[2]), np.maximum(y2, b[3])
+            cost[at] += (x2 - x1) + (y2 - y1)
+    return cost
 
 
 def _local_search_round(parts, conn_sides):
@@ -229,12 +260,7 @@ def _local_search_round(parts, conn_sides):
     for p in parts:
         others = [q for q in parts if q is not p]
         other_bbs = [part_bbox(q) for q in others]
-        other_boxes = {}
-        for q in others:
-            for _, px, py, net in pad_positions(q):
-                if net:
-                    b = other_boxes.get(net)
-                    other_boxes[net] = (px, py, px, py) if b is None else (min(b[0], px), min(b[1], py), max(b[2], px), max(b[3], py))
+        other_boxes = _net_boxes(others)
 
         # a connector's outer edge is the board edge: nothing else may stick out past it
         limits = []
@@ -252,7 +278,7 @@ def _local_search_round(parts, conn_sides):
                     return False
             return not any(_overlap(b, o, GAP / 2) for o in other_bbs)
 
-        base = _part_cost(p, p['x'], p['y'], p['rot'], other_boxes)
+        base = _part_costs(p, [(p['x'], p['y'], p['rot'])], other_boxes)[0]
         side = conn_sides.get(p['ref'])
         cands = []
         if side is None:
@@ -267,14 +293,14 @@ def _local_search_round(parts, conn_sides):
             for step in LOCAL_STEPS:
                 for s in (step, -step):
                     cands.append((p['x'] + (s if axis == 'x' else 0), p['y'] + (s if axis == 'y' else 0), p['rot']))
-        best = None
-        for x, y, r in cands:
-            c = _part_cost(p, x, y, r, other_boxes)
-            if c < base - 1e-6 and (best is None or c < best[0]) and free(x, y, r):
-                best = (c, x, y, r)
-        if best:
-            _, p['x'], p['y'], p['rot'] = best
-            improved = True
+        costs = _part_costs(p, cands, other_boxes)
+        lower = np.nonzero(costs < base - 1e-6)[0]
+        # cheapest first, equal costs in candidate order; the first free one is the best move
+        for k in lower[np.argsort(costs[lower], kind='stable')].tolist():
+            if free(*cands[k]):
+                p['x'], p['y'], p['rot'] = cands[k]
+                improved = True
+                break
     return improved
 
 

@@ -271,7 +271,8 @@ export interface MissingLegs {
 export function missingLegs(warnings: string[] | undefined, parts: Pick<BoardModel['parts'][number], 'ref' | 'part'>[] = []): MissingLegs[] {
   const by = new Map<string, { pins: number[]; raw: string[] }>()
   for (const w of warnings || []) {
-    const m = /^(\S+) pin (\d+) has no pad in \S+$/.exec(w)
+    // the footprint can hold spaces: a stand-in is named after the part ("SchemaForge:UNMAPPED_My Part", board.py)
+    const m = /^(\S+) pin (\d+) has no pad in .+$/.exec(w)
     if (!m) continue
     const g = by.get(m[1]) ?? { pins: [], raw: [] }
     g.pins.push(Number(m[2]))
