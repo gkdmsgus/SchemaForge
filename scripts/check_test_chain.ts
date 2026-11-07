@@ -1,11 +1,14 @@
-// Checks T1-T2 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
+// Checks T1-T3 on npm test itself (package.json "test"), with no browser and no server. T1 every check file in scripts/,
 // server/ and server/pcb/ is a step of the chain or is named below as staying out, with the reason. check_operating,
 // check_board_checks and check_circuit_validation stood beside the chain, so their checks did not run when the code they
 // guard changed (sweep of 2026-11-07). T2 the checks that read the check boards in server/outputs run after
-// make_check_boards, which makes those boards on a fresh clone.
+// make_check_boards, which makes those boards on a fresh clone. T3 npm run test:browser (scripts/run_browser_checks.ts)
+// runs every check that stays out for a browser, check_3d's viewer items too, and not check_live: the browser checks were
+// run one by one by hand, each "with npm run dev on".
 // Usage: npx tsx scripts/check_test_chain.ts   → exit 0 only if all pass
 import fs from 'node:fs'
 import path from 'node:path'
+import { browserChecks } from './run_browser_checks'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 let failed = 0
@@ -15,11 +18,11 @@ const check = (name: string, ok: boolean, info = '') => {
 }
 
 /** npm test is every check that runs without a model; these need something more */
-const BROWSER = 'a browser on a running app (README: npm run dev, or a built app with BASE)'
+const BROWSER = 'a browser on a running app: npm run test:browser starts one and runs it (README)'
 const OUT: Record<string, string> = {
   'scripts/check_board_panel.mjs': BROWSER,
   'scripts/check_drawer.mjs': BROWSER,
-  'scripts/check_live.mjs': `${BROWSER}, usually the deployed one`,
+  'scripts/check_live.mjs': 'a browser on the deployed app (README), so npm run test:browser leaves it out',
   'scripts/check_pcb_sketch.mjs': BROWSER,
   'scripts/check_plan_flow.mjs': BROWSER,
   'scripts/check_saved_offer.mjs': BROWSER,
@@ -33,7 +36,8 @@ const BOARD_READERS = ['scripts/check_bom.ts', 'scripts/check_human_review.ts', 
   'scripts/check_operating.ts', 'scripts/check_board_checks.ts', 'scripts/check_3d.ts']
 
 // the chain's steps as paths from the root: "cd server && npx tsx check_x.ts" runs server/check_x.ts
-const chain = (JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts.test
+const scripts = (JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts
+const chain = scripts.test
 const steps: string[] = []
 let dir = ''
 for (const step of chain.split('&&').map(s => s.trim())) {
@@ -58,6 +62,19 @@ const made = steps.indexOf('scripts/make_check_boards.ts')
 const early = BOARD_READERS.filter(f => !(steps.indexOf(f) > made))
 check('T2 the checks that read the check boards run after make_check_boards', made >= 0 && !early.length,
   made < 0 ? 'make_check_boards is not in the chain' : early.length ? `before it or missing: ${early.join(', ')}` : `${BOARD_READERS.length} readers`)
+
+// T3
+const runs = browserChecks(ROOT).map(c => c.file)
+const forBrowser = Object.keys(OUT).filter(f => OUT[f] === BROWSER)
+const notRun = forBrowser.filter(f => !runs.includes(f))
+const notForBrowser = runs.filter(f => f !== 'scripts/check_3d.ts' && OUT[f] !== BROWSER)
+const npmRuns = /\bscripts\/run_browser_checks\.ts\b/.test(scripts['test:browser'] ?? '')
+check('T3 npm run test:browser runs every browser check, check_3d with BASE, not check_live',
+  npmRuns && !notRun.length && !notForBrowser.length && runs.includes('scripts/check_3d.ts'),
+  `${runs.length} checks` + (npmRuns ? '' : ` · test:browser is ${JSON.stringify(scripts['test:browser'] ?? null)}`)
+  + (notRun.length ? ` · out for a browser but not run: ${notRun.join(', ')}` : '')
+  + (notForBrowser.length ? ` · run but not out for a browser: ${notForBrowser.join(', ')}` : '')
+  + (runs.includes('scripts/check_3d.ts') ? '' : ' · check_3d is not run with BASE'))
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')
 process.exit(failed ? 1 : 0)
