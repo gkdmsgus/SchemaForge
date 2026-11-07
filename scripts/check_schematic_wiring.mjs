@@ -18,7 +18,8 @@
 // switch (they stayed in the schematic, under a "● 수정됨": review of 2026-11-06), and are not called AI edits, S15 a value
 // goes up on blur or Enter, once, not per keystroke, and Escape keeps the old one, S16 a deleted wire leaves its pin on the
 // part and its toast takes it back, S17 a hand-changed value moves the operating check, S18 opened again from this
-// browser's record it is the edited circuit, not called an AI edit.
+// browser's record it is the edited circuit, not called an AI edit, S19 a typed " or \ does not reach the netlist (the check
+// cleans them and passed; the PCB stopped with a Python traceback).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -582,7 +583,7 @@ try {
     `R2 "${reopened}", notice "${said18.split('\n')[0]}"`)
 
   // S17
-  const p17 =await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  const p17 = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
   await p17.route(/\/erc_graph$/, r => json(r, { erc: [] }))
   await p17.goto(`${BASE}/?demo=led`, { waitUntil: 'networkidle' })
   await p17.locator("g[data-comp='R1']").waitFor({ timeout: 60000 })
@@ -598,6 +599,20 @@ try {
   await p17.waitForTimeout(900)
   const op1 = await opChip()
   check('S17 a hand-changed value moves the operating check', op0 !== op1, `${op0.trim()} → ${op1.trim()}`)
+
+  // S19
+  let pcb19 = null
+  await p17.route(/\/generate_pcb_stream$/, r => { pcb19 = r.request().postDataJSON(); return r.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: error\ndata: {"error":"check"}\n\n' }) })
+  const r19 = await p17.locator("g[data-comp='R1']").boundingBox()
+  await p17.mouse.dblclick(r19.x + r19.width / 2, r19.y + r19.height / 2)
+  await field17.waitFor({ timeout: 3000 })
+  await field17.fill('2k2"\\')
+  await p17.keyboard.press('Enter')
+  await p17.waitForTimeout(500)
+  await p17.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()
+  for (let i = 0; i < 30 && !pcb19; i++) await p17.waitForTimeout(100)
+  const sent19 = pcb19?.graph?.components?.find(c => c.ref === 'R1')?.value
+  check('S19 a typed quote or backslash does not reach the netlist', sent19 === '2k2', `sent ${JSON.stringify(sent19)}`)
 } finally {
   await browser.close()
 }

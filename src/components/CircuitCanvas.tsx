@@ -675,9 +675,13 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     editingNow.current = null
     setEditingRef(null)
   }
-  /** a value goes up when it is one and it changed; an emptied field gives the old one back */
+  /**
+   * A value goes up when it is one and it changed; an emptied field gives the old one back. It is written as the netlist can
+   * carry it inside its quotes (server/index.ts netName): a typed " or \ passed the check, which cleans them, and stopped the
+   * PCB with a Python traceback (2026-11-07).
+   */
   function commitValue(ref: string, typed: string) {
-    const value = typed.trim(), part = comps.find(c => c.ref === ref)
+    const value = typed.replace(/["\\\r\n\t]/g, '').trim().slice(0, 64), part = comps.find(c => c.ref === ref)
     setEdits(({ [ref]: _done, ...rest }) => rest)
     if (!graph || !part || !value || value === (part.value ?? '')) return
     changeGraph({ ...graph, components: comps.map(c => (c.ref === ref ? { ...c, value } : c)) })
