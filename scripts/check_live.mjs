@@ -1,8 +1,11 @@
 // A deployed server (or the deploy image run locally), driven in a browser like a visitor:
 // P1 /health reports KiCad, P2 a demo board is built, P3 KiCad's 3D model loads, P4 the gerber zip downloads,
 // P5-P6 a visitor without an account is told why AI 다듬기 and the AI editor are refused (the board is still
-// built), P7 no page errors. Needs the playwright package (in package.json) and its Chromium.
+// built), P7 no page errors, P8 the home page fetches neither the 3D viewer nor the PDF code, and its entry file stays
+// small (they were all in one 1,837 kB file, for visitors who never make a board: review of 2026-11-06), P9 the PDF button
+// still gives a PDF. Needs the playwright package (in package.json) and its Chromium.
 // Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge.kro.kr; DEMO=motor, SHOT=board.png)
+import fs from 'node:fs'
 import { chromium } from 'playwright'
 
 const BASE = (process.argv[2] || process.env.BASE || 'https://schemaforge.kro.kr').replace(/\/$/, '')
@@ -21,6 +24,18 @@ try {
   // a free instance may be asleep: the first answer can take a minute or more
   const health = await (await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(180000) })).json()
   check('P1 health: KiCad on the server', !!health.kicad, JSON.stringify(health))
+
+  // P8: first, so the requests are the home page's alone
+  const home = await browser.newPage()
+  const scripts = []
+  home.on('response', r => { if (/\/assets\/.*\.js$/.test(r.url())) scripts.push(r) })
+  await home.goto(`${BASE}/`, { waitUntil: 'networkidle' })
+  const fetched = scripts.map(r => r.url().split('/').pop())
+  const entry = scripts.find(r => /^index-/.test(r.url().split('/').pop()))
+  const entryKb = entry ? Math.round((await entry.body()).length / 1024) : 0
+  await home.close()
+  check('P8 the home page fetches neither the 3D viewer nor the PDF code, its entry stays small',
+    !!entry && !fetched.some(n => /KiCad3DViewer|jspdf|html2canvas/i.test(n)) && entryKb < 800, `${fetched.join(', ')}; entry ${entryKb} KiB`)
 
   await page.goto(`${BASE}/?demo=${DEMO}`, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
@@ -44,6 +59,11 @@ try {
   const names = body.toString('latin1')
   check('P4 gerber zip downloads', !!file && file.status === 200 && body.subarray(0, 2).toString('latin1') === 'PK'
     && ['-F_Cu.gtl', '-Edge_Cuts.gm1', '-PTH.drl', '-NPTH.drl'].every(s => names.includes(s)), `${href} ${file?.status} ${body.length} bytes`)
+
+  // P9: before the AI refusals, whose login window covers the button
+  const [pdf] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.getByRole('button', { name: 'PDF', exact: true }).click()])
+  const pdfHead = fs.readFileSync(await pdf.path()).subarray(0, 4).toString('latin1')
+  check('P9 the PDF button gives a PDF', pdfHead === '%PDF', `${pdf.suggestedFilename()} starts ${JSON.stringify(pdfHead)}`)
 
   await page.getByRole('button', { name: /AI 다듬기 OFF/ }).click()
   await page.getByRole('button', { name: /PCB (다시 )?생성/ }).first().click()

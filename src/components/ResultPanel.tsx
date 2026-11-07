@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react'
-import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
 import {
   addFavorite, removeFavorite, getFavorites, saveMessage, updateSession, authFetch, authHeaders, errorText,
   type AuthUser, type SessionPatch,
@@ -638,19 +636,27 @@ export default function ResultPanel({
   async function exportPDF() {
     if (!resultRef.current) return
     const el = resultRef.current
-    const canvas = await html2canvas(el, { backgroundColor: '#f1ece0', scale: 2 })
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF('p', 'mm', 'a4')
-    const w = pdf.internal.pageSize.getWidth()
-    const h = (canvas.height * w) / canvas.width
-    let yOff = 0
-    const pageH = pdf.internal.pageSize.getHeight()
-    while (yOff < h) {
-      if (yOff > 0) pdf.addPage()
-      pdf.addImage(imgData, 'PNG', 0, -yOff, w, h)
-      yOff += pageH
+    try {
+      // fetched on the click: with what they bring along they are a third of the first download, for a button few press
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')])
+      const canvas = await html2canvas(el, { backgroundColor: '#f1ece0', scale: 2 })
+      const imgData = canvas.toDataURL('image/png')
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const w = pdf.internal.pageSize.getWidth()
+      const h = (canvas.height * w) / canvas.width
+      let yOff = 0
+      const pageH = pdf.internal.pageSize.getHeight()
+      while (yOff < h) {
+        if (yOff > 0) pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, -yOff, w, h)
+        yOff += pageH
+      }
+      pdf.save('SchemaForge_회로.pdf')
+    } catch (e) {
+      // a tab open across a deploy: the files of the old build are gone
+      console.error('PDF export failed:', e)
+      alert('PDF를 만들지 못했습니다. 새로고침한 뒤 다시 시도해 주세요.')
     }
-    pdf.save('SchemaForge_회로.pdf')
   }
 
   if (!result) return null

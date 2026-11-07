@@ -8,7 +8,9 @@
 // the hint is an ⓘ chip, not the line, and with the BOM drawer or none the line is back, B7 in 2D, zoomed in, the
 // folded header shares none with the board drawing, B9 the gerber step warns on a board with a net left unrouted, a part
 // with no footprint or a break KiCad found, in its colour, title and lines, and still downloads (it was green with
-// "그대로 올리면 됩니다" on such a board: review of 2026-11-06), and a clean board stays green.
+// "그대로 올리면 됩니다" on such a board: review of 2026-11-06), and a clean board stays green, B10 a 3D viewer file that
+// cannot be fetched (a tab open across a deploy, answered with the app's page) leaves the result screen up, says so in
+// the PCB tab and goes to the 2D drawing in 배치하기 (the error boundary took the whole screen: review of 2026-11-06).
 // Needs the vite dev server (npm run dev) and its API with KiCad (the board is built, a minute or two).
 // Usage: node scripts/check_board_panel.mjs [BASE]   (default http://localhost:3000; SHOTS=dir saves each view)
 import { chromium } from 'playwright'
@@ -201,6 +203,20 @@ try {
     check(`B9 ${what}: the gerber step warns, and still downloads`, said && s.color !== clean.color && !!s.href && !!s.panelHref,
       `colour ${clean.color} -> ${s.color}; title "${s.title}"`)
   }
+
+  // B10
+  const stale = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+  let gone = 0
+  await stale.route(/\/assets\/KiCad3DViewer-[^/]*\.js$/, r => { gone++; return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>app</title>' }) })
+  await stale.route(/\/generate_pcb_stream$/, r => r.fulfill({ status: 200, contentType: 'text/event-stream', body: builtBoard }))
+  await stale.goto(`${BASE}/?demo=ne555`, { waitUntil: 'networkidle' })
+  await stale.getByRole('button', { name: /PCB 생성/ }).first().click({ timeout: 60000 })
+  const said3d = await stale.locator('[data-testid="kicad-3d"][data-state="error"]').waitFor({ timeout: 30000 }).then(() => true, () => false)
+  await stale.getByTestId('view-tab-assembly').click()
+  const flat = await stale.getByText('평면 그림으로 보여 줍니다').waitFor({ timeout: 10000 }).then(() => true, () => false)
+  const screenError = await stale.getByTestId('screen-error').count(), stillResult = await stale.getByTestId('view-tab-schematic').isVisible()
+  check('B10 a 3D viewer file that cannot be fetched leaves the result screen up, says so, and 배치하기 goes to 2D',
+    gone > 0 && said3d && flat && screenError === 0 && stillResult, `chunk asked ${gone}x, says so ${said3d}, 2D note ${flat}, error screens ${screenError}`)
 } catch (e) {
   failed++
   console.log('FAIL stopped: ' + String(e?.message || e).split('\n')[0])
