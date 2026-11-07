@@ -268,19 +268,25 @@ def check_failed_round(work):
 
 
 def check_left(work):
-    """24f-24h. the visitor leaves in the middle of the AI rounds and retries at once: the model is not called again and
-    the file stays the retry's. The loop went on, and the file changed under a board already on screen (review of 2026-11-06)."""
+    """24f. the visitor leaves in the middle of the AI rounds and nothing else stops the run: the model is not called again.
+    24g-24h. the visitor leaves and retries at once: the file stays the retry's. The loop went on, and the file changed
+    under a board already on screen (review of 2026-11-06)."""
     body = new_net(work, 'ai_left_check')
     widths = [0.8, 0.9, 1.0]
     fake = FakeModel(lambda n: {'reason': '(테스트) GND 폭', 'net_widths': [{'net': 'GND', 'mm': widths[min(n, 3) - 1]}]}, delay=1)
     with fake, Server(**fake.env()) as server:
-        stream = Stream(server.base, {**body, 'ai': True})
-        for kind, _ in stream.events():
-            if kind == 'ai':
-                break
-        stream.close()
-        time.sleep(1)       # a call already on its way when the line dropped may still arrive
-        calls = fake.calls
+        def leave():
+            stream = Stream(server.base, {**body, 'ai': True})
+            for kind, _ in stream.events():
+                if kind == 'ai':
+                    break
+            stream.close()
+            time.sleep(1)   # a call already on its way when the line dropped may still arrive
+            return fake.calls
+        calls = leave()
+        time.sleep(20)      # longer than a model answer, a reroute and a DRC. No request here: a retry would stop the run too
+        alone = fake.calls
+        again = leave()
         retry = sse_post(f'{server.base}/generate_pcb_stream', body)
         done = [d for k, d in retry if k == 'done'][-1]
         differs = 0
@@ -290,7 +296,8 @@ def check_left(work):
         later = fake.calls
         left = server.backups()
     return {
-        '24f left: the model calls stop': (later == calls and calls >= 1, f'{calls} call(s) when the line dropped, {later} 20 s after'),
+        '24f left: the model calls stop': (alone == calls and later == again and calls >= 1,
+                                           f'{calls} call(s) when the line dropped, {alone} 20 s after; left again at {again}, {later} after the retry'),
         '24g left: the retry\'s board stays in the file': (differs == 0, f'differed from done.board in {differs} of 20 looks, 1 s apart'),
         '24h left: no backup left': (not left, f'sf_bak_ files: {len(left)}'),
     }
