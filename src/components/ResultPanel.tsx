@@ -374,7 +374,7 @@ export default function ResultPanel({
       setViewMode('schematic')
       return
     }
-    // AI-edited graph: the server writes a netlist from it; otherwise use the generated one
+    // an edited graph (AI or by hand): the server writes a netlist from it; otherwise use the generated one
     const body = localGraph
       ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai }
       : result?.filename ? { filename: result.filename, style, ai } : null

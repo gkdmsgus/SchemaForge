@@ -41,7 +41,7 @@ interface CodeEditorProps {
   onApplied: (run: CodeRun) => void
   lastRun: CodeRunNote | null
   onDismissRun: () => void
-  /** the AI chat changed the circuit, so the code no longer describes it */
+  /** the AI chat or a hand edit changed the circuit, so the code no longer describes it */
   aiEdited: boolean
   /** what to call that edit: 'AI 편집', or '편집' when a hand edit on the schematic is in it */
   editWord?: string
