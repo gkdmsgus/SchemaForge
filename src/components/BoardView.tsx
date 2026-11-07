@@ -11,6 +11,7 @@ import { KIND_LABEL, MARK_COLOR, boardMarks, confirmReviews, loadReviewed, revie
 import { assemblyRefs, clickAction, loadAssemblyView, loadPlaced, placedKey, saveAssemblyView, savePlaced } from '../lib/assembly'
 import { buildBom, type BomLine } from '../lib/bom'
 import { ercFixes, graphFromBoard, opFixes, withFixes } from '../lib/fixes'
+import { useNarrow } from '../lib/useNarrow'
 
 /**
  * The 3D viewer's own file could not be loaded. A tab open across a deploy asks for a chunk name that is gone, the server
@@ -273,8 +274,11 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const [reviewed, setReviewed] = useState<Record<string, number>>(() => loadReviewed())
   // null = not chosen by the user yet: the list opens by itself only when something needs a look
   const [panelOpen, setPanelOpen] = useState<boolean | null>(null)
+  // a phone's width: side by side each board was 159 px wide, so the plan alone, the 3D a tap away; the open checks
+  // list and 배치하기's list go over or under the drawing, since beside it their 300 px left it 9 px (2026-11-08)
+  const narrow = useNarrow()
   // like a PCB editor with its 3D viewer open: plan on the left, board on the right
-  const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>('both')
+  const [view3d, setView3d] = useState<'2d' | '3d' | 'both'>(() => (narrow ? '2d' : 'both'))
   const [cam, setCam] = useState({ yaw: -18, tilt: 52 })
   const [real3d, setReal3d] = useState(true)         // KiCad GLB once the finished board exists
   const [zoom3d, setZoom3d] = useState(1)
@@ -516,7 +520,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const drcNow = drcCounts(drc)
   // an all-pass list stays folded to its header so it does not cover the 3D view
   // (it opens by itself only for errors; reviews and warnings show in the header chip)
-  const listOpen = panelOpen ?? (!checkSum.pending && checkHead.tone === 'bad')
+  // (on a phone's width it opens only when asked: open, it covers the drawing)
+  const listOpen = panelOpen ?? (!narrow && !checkSum.pending && checkHead.tone === 'bad')
   const docked = placed && !assembly && listOpen
   const checksRef = useRef<HTMLDivElement>(null)
   // the view buttons, the AI rounds box and the folded checks header share a strip above the drawing, and the
@@ -525,21 +530,25 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
   const strip = !assembly && frames.length > 0
   const buttonsRef = useRef<HTMLDivElement>(null)
   const aiHeadRef = useRef<HTMLButtonElement>(null)
-  const [bar, setBar] = useState({ h: 0, w: 0 })    // the strip's height, the folded header's width
+  // the strip's height, the folded header's width, and how far down the buttons start: on a phone's width the header
+  // has the top row to itself, since beside it the buttons wrapped into a column of four rows
+  const [bar, setBar] = useState({ h: 0, w: 0, top: 0 })
   useLayoutEffect(() => {
-    if (!strip || typeof ResizeObserver === 'undefined') { setBar({ h: 0, w: 0 }); return }
+    if (!strip || typeof ResizeObserver === 'undefined') { setBar({ h: 0, w: 0, top: 0 }); return }
     const head = docked ? null : checksRef.current
     const measure = () => {
       // the AI box's header only: its open list hangs over the drawing like any opened panel
-      const h = Math.max(buttonsRef.current?.offsetHeight ?? 0, aiHeadRef.current ? aiHeadRef.current.offsetHeight + 2 : 0, head?.offsetHeight ?? 0)
+      const row = Math.max(buttonsRef.current?.offsetHeight ?? 0, aiHeadRef.current ? aiHeadRef.current.offsetHeight + 2 : 0)
+      const top = narrow && head ? head.offsetHeight + 6 : 0
+      const h = narrow ? top + row : Math.max(row, head?.offsetHeight ?? 0)
       const w = head?.offsetWidth ?? 0
-      setBar(b => (b.h === h && b.w === w ? b : { h, w }))
+      setBar(b => (b.h === h && b.w === w && b.top === top ? b : { h, w, top }))
     }
     measure()
     const ro = new ResizeObserver(measure)
     for (const el of [buttonsRef.current, aiHeadRef.current, head]) if (el) ro.observe(el)
     return () => ro.disconnect()
-  }, [strip, docked, showAi, placed])
+  }, [strip, docked, showAi, placed, narrow])
   // the 3D pane's height, for its hint (LOW_3D). One ref: the PCB tab's pane and 배치하기's are never both drawn. A pane
   // not measured yet (0), or no ResizeObserver, keeps the line
   const pane3d = useRef<HTMLDivElement>(null)
@@ -758,8 +767,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       display: 'flex', flexDirection: 'column' }}>
       {/* drawing area: 2D and 3D panes with the panels floating over them, and the open checks list beside them */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-      <div style={{ position: 'absolute', top: strip && bar.h ? 12 + bar.h + 6 : 0, left: 0, bottom: 0, right: docked ? CHECKS_W : 0, display: 'flex' }}>
-      <div style={{ flex: 1, minWidth: 0, display: (view3d === '3d' && !assembly) || (asm3d && placed) ? 'none' : 'block' }}>
+      <div style={{ position: 'absolute', top: strip && bar.h ? 12 + bar.h + 6 : 0, left: 0, bottom: 0, right: docked && !narrow ? CHECKS_W : 0, display: 'flex',
+        flexDirection: narrow && assembly ? 'column' : undefined }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: narrow ? 0 : undefined, display: (view3d === '3d' && !assembly) || (asm3d && placed) ? 'none' : 'block' }}>
       <svg ref={svgRef} data-testid="board-view" viewBox={viewBox} width="100%" height="100%"
         style={{ display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
         onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove}
@@ -905,7 +915,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
 
       {/* 배치하기 in 3D: KiCad's own model, a click on a part ticks it */}
       {asm3d && placed && pcbFilename && (
-        <div ref={pane3d} data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
+        <div ref={pane3d} data-testid="assembly-3d" style={{ flex: 1, minWidth: 0, minHeight: narrow ? 0 : undefined, position: 'relative', cursor: 'grab', touchAction: 'none' }}>
           <Suspense fallback={VIEWER_LOADING}>
             <KiCad3DViewer pcbFilename={pcbFilename} version={boardKey} selected={pickRef} checked={[...placedRefs]} focus={focusRefs ?? []}
               marks={marks3d} layout={layout3d} hoverLabel={hoverLabel} view={topView ? 'top' : 'iso'} resetKey={camReset} margin={1.08}
@@ -925,7 +935,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         <AssemblyPanel lines={asmLines} total={asmRefs.length} placedRefs={placedRefs} pick={pickRef}
           reviewList={reviewList} reviewedKeys={reviewedKeys} pending={pendingRefs}
           hasFurniture={(final?.parts ?? []).length > asmRefs.length} nudge={nudge}
-          view={asm3d ? '3d' : '2d'} glbFailed={glbFailed} marksShown={!asm3d || marksIn3d}
+          view={asm3d ? '3d' : '2d'} glbFailed={glbFailed} marksShown={!asm3d || marksIn3d} under={narrow}
           missing3d={asm3d && modelled3d ? asmRefs.filter(r => !modelled3d.includes(r)) : []}
           onToggle={togglePlaced} onConfirm={confirmPlaced} onPick={setPickRef} onClear={clearPlaced} onReview={toggleReviewed}
           onFocus={setFocusRefs} />
@@ -963,7 +973,8 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
         // the AI rounds box (left) and the view buttons (right) share the top edge, so with the AI edit panel open
         // beside a narrow board the buttons wrap beside the box instead of running under it (frame review 2026-11-01:
         // the folded box sat on 도형 보기)
-        <div style={{ position: 'absolute', left: 12, right: (assembly ? ASSEMBLY_W : docked ? CHECKS_W : bar.w ? bar.w + 6 : 0) + 12, top: 12,
+        <div style={{ position: 'absolute', left: 12, top: 12 + (narrow ? bar.top : 0),
+          right: (narrow ? 0 : assembly ? ASSEMBLY_W : docked ? CHECKS_W : bar.w ? bar.w + 6 : 0) + 12,
           display: 'flex', alignItems: 'flex-start', gap: 6, pointerEvents: 'none' }}>
       {showAi && (
         <div data-testid="board-ai" style={{ flexShrink: 0, width: aiOpen ? 320 : 'auto', maxWidth: '46%', pointerEvents: 'auto',
@@ -1088,7 +1099,9 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
       {placed && !assembly && (
         <div ref={checksRef} data-testid="board-checks" data-docked={docked ? '1' : '0'} style={{ position: 'absolute', display: 'flex',
           flexDirection: 'column', background: UI_BG, color: UI_FG, fontFamily: MONO, fontSize: 11, overflow: 'hidden',
-          ...(docked
+          ...(docked && narrow
+            ? { inset: 0 }   // a phone's width: over the whole drawing, folded again from its header
+            : docked
             ? { top: 0, right: 0, bottom: 0, width: CHECKS_W, boxSizing: 'border-box', borderLeft: `1px solid ${UI_LINE}` }
             : { right: 12, top: 12, borderRadius: 8, border: `1px solid ${UI_LINE}` }) }}>
           <button type="button" onClick={() => setPanelOpen(!listOpen)} aria-expanded={listOpen}
@@ -1313,7 +1326,7 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
  * and for the part last touched what it is and, if it has a direction, where its + / − / 1 goes.
  */
 function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKeys, pending, hasFurniture, nudge, view, glbFailed,
-  marksShown, missing3d, onToggle, onConfirm, onPick, onClear, onReview, onFocus }: {
+  marksShown, missing3d, under, onToggle, onConfirm, onPick, onClear, onReview, onFocus }: {
   lines: BomLine[]
   total: number
   placedRefs: Set<string>
@@ -1326,6 +1339,7 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
   view: '3d' | '2d'
   glbFailed: boolean
   marksShown: boolean                 // false: the 3D model did not match the board file, so it shows no marks
+  under: boolean                      // a phone's width: under the board, half of the height, instead of beside it
   missing3d: string[]                 // parts to place that have no 3D model (tick them in the list)
   onToggle: (ref: string) => void
   /** "맞췄어요": direction confirmed and part ticked */
@@ -1347,7 +1361,8 @@ function AssemblyPanel({ lines, total, placedRefs, pick, reviewList, reviewedKey
   return (
     <aside data-testid="assembly-panel" aria-label="배치하기"
       style={{ flex: `0 0 ${ASSEMBLY_W}px`, width: ASSEMBLY_W, minWidth: 0, display: 'flex', flexDirection: 'column',
-        borderLeft: `1px solid ${UI_LINE}`, background: '#fbfaf7', color: UI_FG, fontFamily: SANS, overflow: 'hidden' }}>
+        borderLeft: `1px solid ${UI_LINE}`, background: '#fbfaf7', color: UI_FG, fontFamily: SANS, overflow: 'hidden',
+        ...(under ? { flex: '0 0 50%', width: 'auto', minHeight: 0, borderLeft: 'none', borderTop: `1px solid ${UI_LINE}` } : {}) }}>
       <div style={{ padding: '10px 12px', borderBottom: `1px solid ${UI_LINE}`, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <strong style={{ fontSize: 13 }}>배치하기</strong>

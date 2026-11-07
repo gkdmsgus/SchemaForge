@@ -21,6 +21,7 @@ const OUT: Record<string, string> = {
   'scripts/check_drawer.mjs': BROWSER,
   'scripts/check_live.mjs': `${BROWSER}, usually the deployed one`,
   'scripts/check_pcb_sketch.mjs': BROWSER,
+  'scripts/check_phone_width.mjs': `${BROWSER}, with KiCad: it makes a board of each demo on a phone-sized screen`,
   'scripts/check_plan_flow.mjs': BROWSER,
   'scripts/check_saved_offer.mjs': BROWSER,
   'scripts/check_schematic_overlap.mjs': BROWSER,

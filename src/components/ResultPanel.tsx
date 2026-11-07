@@ -28,6 +28,7 @@ import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
 import { getSavedResults } from '../lib/storage'
 import { boardNetlist, guideNote, netlistNote } from '../lib/drawerNotes'
+import { useNarrow } from '../lib/useNarrow'
 
 const API = ''
 
@@ -131,8 +132,13 @@ export default function ResultPanel({
   useEffect(() => () => { pcbAbort.current?.abort(); chatAbort.current?.abort() }, [])
   const [activeTab, setActiveTab] = useState('Netlist')
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right')
-  const [editorOpen, setEditorOpen] = usePanelState('sf_panel_left')
+  // a phone's width: the side panels lie over the schematic, which has no room beside them (375 px left it 0 wide)
+  const narrow = useNarrow()
+  const [sidebarOpen, setSidebarOpen] = usePanelState('sf_panel_right', narrow)
+  const [editorOpen, setEditorOpen] = usePanelState('sf_panel_left', narrow)
+  // there, one at a time: each covers the other
+  const showEditor = (open: boolean) => { setEditorOpen(open); if (open && narrow) setSidebarOpen(false) }
+  const showSidebar = (open: boolean) => { setSidebarOpen(open); if (open && narrow) setEditorOpen(false) }
   const [viewMode, setViewMode] = useState('schematic')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => initialChatSession?.messages || [])
   const [chatInput, setChatInput] = useState('')
@@ -455,7 +461,7 @@ export default function ResultPanel({
   /** A circuit check's 해결: its instruction in the AI editor's box, ready to send. */
   function chatFix(text: string) {
     setChatInput(text)
-    setEditorOpen(true)
+    showEditor(true)
     // the panel may have been closed: focus once it is in the page
     setTimeout(() => {
       const box = chatBoxRef.current
@@ -709,24 +715,27 @@ export default function ResultPanel({
       {/* ── Top bar ─────────────────────────────────────────── */}
       <div style={{
         height: TOPBAR_H, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '0 16px',
+        display: 'flex', alignItems: 'center', gap: narrow ? 6 : 10,
+        padding: narrow ? '0 8px' : '0 16px',
         background: 'var(--sf-bg-1)',
         borderBottom: '1px solid var(--sf-line-strong)',
       }}>
+        {/* on a phone's width the title takes what the buttons leave, and the file name is in the SPEC panel */}
         <span style={{
           fontFamily: 'var(--sf-font-mono)', fontSize: 12,
           color: 'var(--sf-fg)', fontWeight: 600,
-          maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          maxWidth: narrow ? undefined : 320, flex: narrow ? '1 1 0' : undefined, minWidth: narrow ? 0 : undefined,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{title}</span>
-        <span style={{
+        {!narrow && <span style={{
           fontFamily: 'var(--sf-font-mono)', fontSize: 10,
           color: 'var(--sf-fg-dim)', letterSpacing: '0.04em',
-        }}>{result.filename}</span>
+        }}>{result.filename}</span>}
 
         {/* version strip (compact) */}
         {versions.length > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: narrow ? 0 : 8,
+            ...(narrow ? { minWidth: 0, overflowX: 'auto', scrollbarWidth: 'thin' } : {}) }}>
             {versions.map((v, i) => {
               const active = v.id === currentVersionId
               return (
@@ -751,8 +760,12 @@ export default function ResultPanel({
           </div>
         )}
 
-        <div style={{ flex: 1 }} />
+        {!narrow && <div style={{ flex: 1 }} />}
 
+        {/* on a phone's width these scroll sideways if they ever do not fit (a save error, a login's ★), and the panel
+            toggles after them stay on the screen; on a wider one the box is not drawn and they sit in the bar as before */}
+        <div style={narrow ? { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflowX: 'auto', scrollbarWidth: 'thin' }
+          : { display: 'contents' }}>
         {syncError && <StatusChip tone="warn" title={syncError} testId="sync-error">기록 저장 실패</StatusChip>}
 
         {/* actions */}
@@ -784,23 +797,25 @@ export default function ResultPanel({
             fontFamily: 'var(--sf-font-mono)', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
           }}
         ><IconDownload size={13} /> .net</button>
-        <div style={{ width: 1, height: 20, background: 'var(--sf-line)', margin: '0 4px' }} />
-        <button onClick={() => setEditorOpen(o => !o)} data-testid="toggle-left-panel" aria-pressed={editorOpen}
+        </div>
+        <div style={{ width: 1, height: 20, flexShrink: 0, background: 'var(--sf-line)', margin: '0 4px' }} />
+        <button onClick={() => showEditor(!editorOpen)} data-testid="toggle-left-panel" aria-pressed={editorOpen}
           title={editorOpen ? 'AI 편집 패널 접기' : 'AI 편집 패널 펼치기'} style={{...iconBtn, opacity: editorOpen ? 1 : 0.5}}>
           <PanelIcon side="left" />
         </button>
-        <button onClick={() => setSidebarOpen(o => !o)} data-testid="toggle-right-panel" aria-pressed={sidebarOpen}
+        <button onClick={() => showSidebar(!sidebarOpen)} data-testid="toggle-right-panel" aria-pressed={sidebarOpen}
           title={sidebarOpen ? '사양·BOM 패널 접기' : '사양·BOM 패널 펼치기'} style={{...iconBtn, opacity: sidebarOpen ? 1 : 0.5}}>
           <PanelIcon side="right" />
         </button>
       </div>
 
       {/* ── Canvas area + sidebars ───────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0, position: narrow ? 'relative' : undefined }}>
 
         {/* LEFT — Chat AI editor (collapses to a rail; state kept so the chat is not lost) */}
-        {!editorOpen && <PanelRail side="left" label="AI 편집" onOpen={() => setEditorOpen(true)} />}
-        <div data-testid="left-panel" style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: editorOpen ? 'flex' : 'none', flexDirection: 'column' }}>
+        {!editorOpen && <PanelRail side="left" label="AI 편집" onOpen={() => showEditor(true)} />}
+        <div data-testid="left-panel" style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: editorOpen ? 'flex' : 'none', flexDirection: 'column',
+          ...(narrow ? panelOver : {}) }}>
           {/* Header */}
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sf-violet)' }} />
@@ -808,7 +823,7 @@ export default function ResultPanel({
               AI EDITOR
             </span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
-              <button onClick={() => setEditorOpen(false)} title="접기" aria-label="AI 편집 패널 접기" style={collapseBtn}>‹</button>
+              <button onClick={() => setEditorOpen(false)} title="접기" aria-label="AI 편집 패널 접기" style={narrow ? collapseBtnTouch : collapseBtn}>‹</button>
               {graphHistory.length > 0 && (
                 <button onClick={undoGraph} title={handEdited ? '마지막 수정 취소' : '마지막 AI 수정 취소'} style={{
                   fontSize: 9, fontFamily: 'var(--sf-font-mono)', color: 'var(--sf-violet)',
@@ -920,7 +935,8 @@ export default function ResultPanel({
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* view tabs */}
-          <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--sf-bg-1)', borderBottom: '2px solid var(--sf-line-strong)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--sf-bg-1)', borderBottom: '2px solid var(--sf-line-strong)', flexShrink: 0,
+            flexWrap: narrow ? 'wrap' : undefined }}>
             {[
               { key: 'schematic', label: 'SCHEMATIC', color: 'var(--sf-cyan)', sub: `${components.length} parts`, off: '' },
               { key: 'pcb',       label: 'PCB',        color: 'var(--sf-amber-deep)', sub: `${nets.length} nets`, off: '' },
@@ -939,6 +955,8 @@ export default function ResultPanel({
                   borderBottom: active ? `2px solid ${color}` : '2px solid transparent',
                   borderRight: '1px solid var(--sf-line)',
                   marginBottom: -1, transition: 'background 0.1s',
+                  // a phone's width: the three share the row, and the buttons below get one of their own
+                  ...(narrow ? { flex: '1 1 0', justifyContent: 'center', padding: '8px 6px' } : {}),
                 }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, opacity: active ? 1 : 0.3 }} />
                   <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, letterSpacing: '0.12em', fontWeight: active ? 700 : 500, color: active ? color : 'var(--sf-fg-faint)' }}>{label}</span>
@@ -947,9 +965,12 @@ export default function ResultPanel({
               )
             })}
             {/* PCB gen buttons in tab bar */}
-            {/* the tabs keep their width; on a narrow window these buttons scroll sideways instead */}
+            {/* the tabs keep their width; on a narrow window these buttons scroll sideways instead. On a phone's width
+                that hid 'PCB 생성' past the edge of the row: there they take a row of their own under the tabs and wrap */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', marginLeft: 'auto',
-              minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin' }}>
+              minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin',
+              ...(narrow ? { flexBasis: '100%', flexWrap: 'wrap', marginLeft: 0, padding: '5px 8px', overflowX: 'visible',
+                borderTop: '1px solid var(--sf-line)' } : {}) }}>
               {pcbStatus !== 'loading' && (['smd', 'tht'] as const).map(s => (
                 <button key={s}
                   title={s === 'smd' ? '표면실장 부품 (커넥터·릴레이는 구멍 끼움)' : '전부 구멍 끼움 부품 (손납땜 쉬움)'}
@@ -1151,7 +1172,7 @@ export default function ResultPanel({
             {circuitIssues.length > 0 && viewMode === 'schematic' && (
               // under the schematic's tool row (37 px): a hand edit that breaks the circuit brings this box, and that row has its undo
               <div role="alert" data-testid="circuit-diagnostics" style={{
-                position: 'absolute', left: 14, top: 48, zIndex: 20, width: 440, maxHeight: 230, overflowY: 'auto',
+                position: 'absolute', left: 14, top: 48, zIndex: 20, width: 440, maxWidth: 'calc(100% - 28px)', maxHeight: 230, overflowY: 'auto',
                 background: 'rgba(25,20,18,0.96)', border: '1px solid rgba(255,92,92,0.55)', borderRadius: 8,
                 boxShadow: '0 10px 30px rgba(0,0,0,0.28)', color: '#f6eee5', fontFamily: 'var(--sf-font-mono)',
               }}>
@@ -1184,12 +1205,13 @@ export default function ResultPanel({
         </div>
 
         {/* RIGHT — SPEC + BOM */}
-        {!sidebarOpen && <PanelRail side="right" label="사양 · BOM" onOpen={() => setSidebarOpen(true)} />}
+        {!sidebarOpen && <PanelRail side="right" label="사양 · BOM" onOpen={() => showSidebar(true)} />}
         {sidebarOpen && (
-          <div data-testid="right-panel" style={{ width: 240, flexShrink: 0, borderLeft: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div data-testid="right-panel" style={{ width: 240, flexShrink: 0, borderLeft: '1px solid var(--sf-line-strong)', background: 'var(--sf-bg-1)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            ...(narrow ? panelOver : {}) }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ fontFamily: 'var(--sf-font-mono)', fontSize: 10, color: 'var(--sf-fg-faint)', letterSpacing: '0.12em', fontWeight: 700 }}>SPEC</span>
-              <button onClick={() => setSidebarOpen(false)} title="접기" aria-label="사양·BOM 패널 접기" style={{ ...collapseBtn, marginLeft: 'auto' }}>›</button>
+              <button onClick={() => setSidebarOpen(false)} title="접기" aria-label="사양·BOM 패널 접기" style={{ ...(narrow ? collapseBtnTouch : collapseBtn), marginLeft: 'auto' }}>›</button>
             </div>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--sf-line)' }}>
               {[
@@ -1414,14 +1436,24 @@ function GerberFilePanel({ info, issues }: { info: GerberInfo; issues: string[] 
 }
 
 
-/** Open/closed state of a side panel, remembered per browser. */
-function usePanelState(key: string): [boolean, (v: boolean | ((o: boolean) => boolean)) => void] {
-  const [open, setOpen] = useState<boolean>(() => {
-    try { return localStorage.getItem(key) !== '0' } catch { return true }
-  })
+/**
+ * Open/closed state of a side panel, remembered per browser. On a phone's width (narrow) a panel lies over the schematic,
+ * so it starts closed whatever was remembered (a saved result opened again came back with both open, over the schematic:
+ * review of 2026-11-07), and what is done with it there is not remembered for a wider window. Turned to a wider window,
+ * it is as remembered again.
+ */
+function usePanelState(key: string, narrow: boolean): [boolean, (v: boolean | ((o: boolean) => boolean)) => void] {
+  const remembered = () => { try { return localStorage.getItem(key) !== '0' } catch { return true } }
+  const [open, setOpen] = useState<boolean>(() => !narrow && remembered())
+  const [narrowWas, setNarrowWas] = useState(narrow)
+  if (narrowWas !== narrow) {
+    setNarrowWas(narrow)
+    setOpen(!narrow && remembered())
+  }
   useEffect(() => {
+    if (narrow) return
     try { localStorage.setItem(key, open ? '1' : '0') } catch { /* storage blocked: keep in memory */ }
-  }, [key, open])
+  }, [key, open, narrow])
   return [open, setOpen]
 }
 
@@ -1430,6 +1462,11 @@ const collapseBtn: React.CSSProperties = {
   background: 'transparent', color: 'var(--sf-fg-dim)', cursor: 'pointer',
   fontSize: 13, lineHeight: '17px', fontFamily: 'var(--sf-font-mono)',
 }
+/** a finger's size, on a phone's width */
+const collapseBtnTouch: React.CSSProperties = { ...collapseBtn, width: 32, height: 32, fontSize: 16, lineHeight: '29px' }
+
+/** a side panel on a phone's width: over the schematic and the rails, the whole width of the area */
+const panelOver: React.CSSProperties = { position: 'absolute', inset: 0, width: 'auto', zIndex: 30, borderLeft: 'none', borderRight: 'none' }
 
 /** Thin strip shown in place of a collapsed panel; the whole strip reopens it. */
 function PanelRail({ side, label, onOpen }: { side: 'left' | 'right'; label: string; onOpen: () => void }) {
