@@ -457,7 +457,16 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
     dragRef.current = { ref, offsetX:pt.x-p.x, offsetY:pt.y-p.y, startX:pt.x, startY:pt.y, moved:false, pointerId:e.pointerId }
   }
 
+  /**
+   * A value being typed goes up. For the presses cancelled below, as those are the browser's blur gone too: a click on the
+   * empty schematic then closed the part's panel with no blur at all, and the value stayed on the part and nowhere else (2026-11-07).
+   */
+  function endTyping() {
+    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
+  }
+
   function onSvgPointerDown(e: React.PointerEvent) {
+    endTyping()
     if (reconnectState) return
     if (wireState && e.button === 0) {
       // 빈 공간 클릭 시 wireState 취소
@@ -544,6 +553,7 @@ export default function CircuitCanvas({ graph, graphDiff = null, invalidRefs = n
   function onPinPointerDown(e: React.PointerEvent, ref: string, pinNum: string | number) {
     e.stopPropagation()  // 컴포넌트 드래그 차단
     e.preventDefault()
+    endTyping()
     if (!wireState) {
       const pa = pinAbsPos(ref, String(pinNum), positions, layouts)
       if (pa) { setWireState({ fromRef: ref, fromPin: String(pinNum) }); setCursor(pa) }

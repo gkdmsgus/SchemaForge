@@ -23,7 +23,9 @@
 // schematic's own undo in reach (the circuit check's box lay over it, now that an edit reaches that check), S21 a hand edit made
 // while the AI editor answers stays, with the answer's change on top (the answer went on the circuit it was asked about: the
 // value went back, on screen and in the saved session), S22 a part's pins are kept for that part: a 3-pin regulator that took
-// the ref of a 555 has 3 (it had the 8 of the 555, 5 of them on nothing), and an undo brings the 555 back with its 8.
+// the ref of a 555 has 3 (it had the 8 of the 555, 5 of them on nothing), and an undo brings the 555 back with its 8, S23 a value
+// being typed goes up on a press on the empty schematic or on a pin (those presses are cancelled, so the browser moved no focus:
+// the panel closed with the value on the part and nowhere else, no "● 수정됨", the BOM and the PCB without it).
 // Needs the vite dev server (npm run dev) and the demo route of its API.
 // Usage: node scripts/check_schematic_wiring.mjs [BASE]   (default http://localhost:3000)
 import { chromium } from 'playwright'
@@ -733,6 +735,37 @@ try {
   await p22.waitForTimeout(400)
   const back22 = await u1Pins()
   check('S22 a part that takes another\'s ref has its own pins; an undo brings the first part back with its own', pins22 === 8 && regulator === 3 && back22 === 8, `555 ${pins22} pins, regulator ${regulator}, after undo ${back22}`)
+
+  // S23
+  const p23 = await (await browser.newContext({ viewport: { width: 1400, height: 800 } })).newPage()
+  await p23.route(/\/erc_graph$/, r => json(r, { erc: [] }))
+  await p23.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await p23.locator('g[data-comp]').first().waitFor({ timeout: 60000 })
+  await p23.waitForTimeout(500)
+  const at23 = async ref => { const b = await p23.locator(`g[data-comp='${ref}']`).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 } }
+  const empty23 = async () => { const b = await p23.locator('svg:has(g[data-comp])').first().boundingBox(); await p23.mouse.click(b.x + 6, b.y + b.height - 6); await p23.waitForTimeout(800) }
+  const listed = v => p23.locator('[data-testid="right-panel"]').getByText(v, { exact: true }).first().isVisible().catch(() => false)
+  let spot = await at23('R2')
+  await p23.mouse.click(spot.x, spot.y)
+  await p23.getByTestId('part-value').fill('11k')
+  await empty23()
+  const panel23 = await listed('11k') && await p23.getByText('● 수정됨').isVisible()
+  spot = await at23('R3')
+  await p23.mouse.dblclick(spot.x, spot.y)
+  await p23.locator('svg foreignObject input').first().fill('22k')
+  await empty23()
+  const inline23 = await listed('22k') && await p23.locator('svg foreignObject input').count() === 0
+  spot = await at23('R2')
+  await p23.mouse.click(spot.x, spot.y)
+  await p23.getByTestId('part-value').fill('33k')
+  const pin23 = await p23.evaluate(() => {
+    const hit = document.querySelector("g[data-comp='R3'] g[style*='crosshair'] circle[r='8']"), c = hit.getScreenCTM()
+    return { x: +hit.getAttribute('cx') * c.a + +hit.getAttribute('cy') * c.c + c.e, y: +hit.getAttribute('cx') * c.b + +hit.getAttribute('cy') * c.d + c.f }
+  })
+  await p23.mouse.click(pin23.x, pin23.y)
+  await p23.waitForTimeout(800)
+  const onPin23 = await listed('33k')
+  check('S23 a value being typed goes up on a press on the empty schematic or on a pin', panel23 && inline23 && onPin23, `panel ${panel23}, in the part ${inline23}, press on a pin ${onPin23}`)
 } finally {
   await browser.close()
 }
