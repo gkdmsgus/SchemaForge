@@ -487,6 +487,9 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     net('VCC', 'BT1.1', 'R1.1'), net('A', 'R1.2', 'D2.1'), net('B', 'D2.2', 'D1.1'), net('GND', 'D1.2', 'BT1.2'))
   const rSwCap = g([['BT1', 'Battery', '5V'], ['R1', 'R', '330'], ['SW1', 'SW', ''], ['C1', 'C', '100nF'], ['D1', 'LED', 'RED']],
     net('VCC', 'BT1.1', 'R1.1'), net('N1', 'R1.2', 'SW1.1'), net('N2', 'SW1.2', 'D1.1', 'C1.1'), net('GND', 'D1.2', 'C1.2', 'BT1.2'))
+  // pins an older edit saved by name are read through the pin-name table; a name it does not know is not judged (2026-11-07)
+  const byName = g([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED', 'RED']], net('VCC', 'BT1.+', 'R1.1'), net('A', 'R1.2', 'D1.A'), net('GND', 'D1.K', 'BT1.-'))
+  const byNameBare = g([['BT1', 'Battery', '9V'], ['D1', 'LED', 'RED']], net('VCC', 'BT1.+', 'D1.A'), net('GND', 'D1.X', 'BT1.-'))
   // a resistor saved under a name of its own by an edit is one by its reference, as it was here
   const named = { ...shared, components: shared.components.map(c => (c.ref === 'R1' ? { ...c, name: 'R1' } : c)) }
   const refused = cir101(noneInSeries)
@@ -505,6 +508,7 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     button: !cir101(button).length,
     named: !cir101(named).length,
     acrossDiodeSwitch: !cir101(rDiode).length && !cir101(rSwCap).length,
+    pinNames: !cir101(byName).length && !cir101(byNameBare).length,
   }
   check('F11 CIR101 follows the LED string: series, R-SW-LED and a shared resistor pass; no resistor stays an error in any colour, on one line for a string',
     Object.values(ok).every(Boolean), JSON.stringify(ok))

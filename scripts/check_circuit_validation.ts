@@ -51,6 +51,12 @@ const diodeCap = g([bat('9V'), ['D2', 'D', '1N4148'], ['C1', 'C', '100nF'], ['D1
   ['VCC', 'BT1.1', 'D2.1'], ['A', 'D2.2', 'D1.1', 'C1.1'], ['K', 'D1.2', 'D3.1'], ['GND', 'D3.2', 'C1.2', 'BT1.2'])
 const contact = g([bat('5V'), ['K1', 'Relay', '5V'], ['C1', 'C', '100nF'], ['D1', 'LED', 'RED']],
   ['VCC', 'BT1.1', 'K1.1', 'K1.3'], ['NO', 'K1.4', 'D1.1', 'C1.1'], ['GND', 'K1.2', 'D1.2', 'C1.2', 'BT1.2'])
+// pins an older edit saved by name are read through the pin-name table the AI editor uses (2026-11-07: this graph had its
+// resistor and was refused); a name the table does not know is not guessed, so the LED on it is not judged by CIR101
+const byName = g([bat('9V'), ['R1', 'R', '680'], ['D1', 'LED', 'RED']], ['VCC', 'BT1.+', 'R1.p1'], ['A', 'R1.p2', 'D1.A'], ['GND', 'D1.K', 'BT1.-'])
+const byNameBare = g([bat('9V'), ['D1', 'LED', 'RED']], ['VCC', 'BT1.+', 'D1.A'], ['GND', 'D1.K', 'BT1.−'])
+const unknownLedPin = g([bat('9V'), ['D1', 'LED', 'RED']], ['VCC', 'BT1.1', 'D1.ANODE'], ['GND', 'D1.2', 'BT1.2'])
+const unknownRPin = g([bat('9V'), ['R1', 'R', '680'], ['D1', 'LED', 'RED']], ['VCC', 'BT1.1', 'R1.a'], ['A', 'R1.b', 'D1.1'], ['GND', 'D1.2', 'BT1.2'])
 const checks: [string, boolean][] = [
   ['normal motor passes', validateCircuit(motor).length === 0],
   ['normal LED passes', validateCircuit(led).length === 0],
@@ -67,6 +73,10 @@ const checks: [string, boolean][] = [
   ['supply straight into an LED is an error', cir101(straight).join() === 'D1'],
   ['no resistor past a switch, a diode or a relay contact is an error',
     cir101(switchCap).join() === 'D1' && cir101(diodeCap).join() === 'D1' && cir101(contact).join() === 'D1'],
+  ['pins saved by name (A, K, +, −, p1) are read: with the resistor passes, without it is an error',
+    !cir101(byName).length && cir101(byNameBare).join() === 'D1'],
+  ['a pin name the table does not know is not guessed: no CIR101 for that LED, nor past that net',
+    !cir101(unknownLedPin).length && !cir101(unknownRPin).length],
 ]
 
 for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`)

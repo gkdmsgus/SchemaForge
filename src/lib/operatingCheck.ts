@@ -2251,10 +2251,11 @@ export function operatingChecks(c: OpCircuit): OpResult[] {
  * until it meets a resistor or a relay coil, which can be in the LED's path (2026-11-07: R - protection diode - LED, and
  * R - switch - LED with a capacitor on the switch's output, were still refused). It stops at a net with a voltage of its
  * own: a supply or a ground, one a closed switch or a diode carries a supply to, a 555 output, one whose voltage cannot be
- * trusted. So an LED put straight on a supply, with no resistor anywhere before it, stays refused. A chain cut by an LED
- * facing the other way is op_led's error.
+ * trusted. So an LED put straight on a supply, with no resistor anywhere before it, stays refused. `unsure`: nets with a
+ * pin on them that could not be read (a pin name the table does not know); what is there is not known, so a string that
+ * reaches one is not refused. A chain cut by an LED facing the other way is op_led's error.
  */
-export function ledsWithoutResistor(c: OpCircuit): string[][] {
+export function ledsWithoutResistor(c: OpCircuit, unsure: ReadonlySet<string> = new Set()): string[][] {
   let x: Ctx
   try { x = context(c) } catch { return [] }   // not judged: the operating checks say 판단 불가 for the same reason
   /** a net with a voltage of its own; a button input that its resistor pulls up is not one */
@@ -2275,7 +2276,7 @@ export function ledsWithoutResistor(c: OpCircuit): string[][] {
     while (queue.length) {
       const n = queue.shift()!
       if (fixed(n)) continue
-      if (x.on(n).some(limits)) return true
+      if (unsure.has(n) || x.on(n).some(limits)) return true
       for (const o of x.on(n)) for (const q of across(o)) {
         const m = x.net(o.ref, q)
         if (m && !seen.has(m)) { seen.add(m); queue.push(m) }

@@ -1,4 +1,5 @@
 import type { NetGraph } from '../types'
+import { pinNumber } from './graphEdit'
 import { fromGraph, ledsWithoutResistor } from './operatingCheck'
 
 export interface CircuitIssue {
@@ -50,8 +51,19 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
 
   // a part counts as a resistor by its type or its reference, as it did here: an edit may have saved R3 under a name of its own
   const resistors = new Set(components.filter(c => c.name === 'R' || /^R\d+$/i.test(c.ref)).map(c => c.ref))
-  const walked = fromGraph({ ...graph, components: components.map(c => (resistors.has(c.ref) ? { ...c, name: 'R' } : c)), nets })
-  for (const string of ledsWithoutResistor(walked)) {
+  const kinds = new Map(components.map(c => [c.ref, resistors.has(c.ref) ? 'R' : c.name]))
+  // a pin an older edit saved by its name (D1 'A', BT1 '+') is read through the template's pin-name table, as the AI editor
+  // reads it now (2026-11-07: such a graph had its resistor and was refused, the walk saw no pins on the LED). A name the
+  // table does not know is not guessed: the LED it is on is not judged here, and a net it is on may hold the resistor
+  const unread = new Set<string>(), unjudged = new Set<string>()
+  const read = nets.map(n => ({ ...n, nodes: n.nodes.map(node => {
+    const kind = kinds.get(node.ref), pin = pinNumber(kind, String(node.pin))
+    if (kind && !/^\d+$/.test(pin)) { unread.add(n.name); if (kind === 'LED') unjudged.add(node.ref) }
+    return { ...node, pin }
+  }) }))
+  const walked = fromGraph({ ...graph, components: components.map(c => (resistors.has(c.ref) ? { ...c, name: 'R' } : c)), nets: read })
+  for (const string of ledsWithoutResistor(walked, unread)) {
+    if (string.some(ref => unjudged.has(ref))) continue
     const names = string.join('·')
     add({ code: 'CIR101', severity: 'error', title: 'LED 전류 제한 저항이 없습니다', message: `${names}에 직렬로 이어진 전류 제한 저항을 찾지 못했습니다. LED가 손상될 수 있습니다.`, suggestion: '전원과 LED 사이에 계산된 직렬 저항을 추가하세요.', chat: `${names} LED에 전류 제한 저항이 없어. 전원과 ${string[0]}의 A 핀 사이에 저항을 하나 넣어줘. 값은 LED 전류가 10~20 mA가 되게 정해줘.`, refs: string, nets: nets.filter(n => n.nodes.some(node => string.includes(node.ref))).map(n => n.name) })
   }
