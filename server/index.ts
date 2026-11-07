@@ -1824,9 +1824,10 @@ let kicadVersion: string | null = null
 }
 
 app.get('/health', (_req: Request, res: Response) => {
-  // model: the circuit model's name for the screen (never the key), provider: who runs it
-  res.json({ status: 'ok', version: '2.0.0', db: !!process.env.SUPABASE_URL, kicad: kicadVersion,
-    model: modelLabel(MODEL), provider: modelProvider() })
+  // model: the circuit model's name for the screen (never the key), provider: who runs it. commit: the one the image was
+  // built from (scripts/jetson_run.sh passes it to Dockerfile.jetson), null where nothing set SF_COMMIT
+  res.json({ status: 'ok', version: '2.0.0', commit: process.env.SF_COMMIT || null, db: !!process.env.SUPABASE_URL,
+    kicad: kicadVersion, model: modelLabel(MODEL), provider: modelProvider() })
 })
 
 // ── SPA fallback ───────────────────────────────────────────────────

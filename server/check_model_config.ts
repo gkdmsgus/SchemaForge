@@ -3,7 +3,8 @@
 // records every request; the real server runs in development set up like xAI's Grok (OPENAI_BASE_URL, SF_MODEL,
 // SF_MODEL_MINI, SF_REASONING_EFFORT). Each model call must reach the base URL with the key, its model and the
 // reasoning effort: circuit code (/generate, which called api.openai.com by name before), questions, plan, AI
-// editor. /health names the model for the screen. Without the settings it stays GPT-4o at OpenAI.
+// editor. /health names the model for the screen, and the commit an image was built from (SF_COMMIT). Without the
+// settings it stays GPT-4o at OpenAI.
 // Needs python with skidl (the mock's circuit is run). No real model, no KiCad.
 // Usage (from server/): npx tsx check_model_config.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -129,7 +130,7 @@ async function stopServer(proc: ChildProcess) {
   await gone
 }
 
-type Health = { model?: string; provider?: string }
+type Health = { model?: string; provider?: string; commit?: string | null }
 
 const post2 = (base: string, path: string, body: unknown, signal?: AbortSignal) =>
   fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
@@ -214,12 +215,14 @@ async function main() {
     SF_MODEL: 'grok-4.3', SF_MODEL_MINI: 'grok-mini-test', SF_REASONING_EFFORT: 'none',
     // L9c: the fix call's limit, 45 s otherwise
     SF_CODE_FIX_MS: '3000',
+    // L1: the commit jetson_run.sh builds the image with
+    SF_COMMIT: 'abc1234',
   })
   try {
     if (!grok.up) return check('L0 server with the Grok settings', false, `did not start (limit ${START_MS / 1000} s): ${grok.log().trim().slice(-400)}`)
     const health = await fetch(grok.base + '/health').then(r => r.json() as Promise<Health>)
-    check('L1 /health names the model and who runs it', health.model === 'Grok 4.3' && health.provider === '127.0.0.1',
-      `${health.model} · ${health.provider}`)
+    check('L1 /health names the model, who runs it and the commit (SF_COMMIT)', health.model === 'Grok 4.3'
+      && health.provider === '127.0.0.1' && health.commit === 'abc1234', `${health.model} · ${health.provider} · ${health.commit}`)
 
     const at = (n: number) => seen.slice(n)
     const asked = (calls: Seen[], model: string, more: (s: Seen) => boolean) => calls.length > 0 && calls.every(s =>
