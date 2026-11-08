@@ -44,10 +44,10 @@
 1. [supabase.com](https://supabase.com)에서 프로젝트를 만든다. 리전은 Render와 같은 **Southeast Asia (Singapore)** (로그인 확인은 서버가 Supabase에 묻는다). 만들 때 Security의 "Automatically expose new tables"는 끄고 "Enable automatic RLS"는 켠다.
 2. **SQL Editor**에 `server/schema.sql` 전체를 붙여 넣고 실행한다. 여러 번 실행해도 된다. 2026-05 이후 새 프로젝트는 표 권한을 자동으로 주지 않아서, 이 파일의 GRANT가 없으면 기록·즐겨찾기가 "permission denied"로 실패한다. 예전 schema.sql을 실행한 프로젝트도 다시 실행한다 (`sessions.name` 열과 권한).
 3. **Authentication → Sign In / Providers**에서 **Confirm email이 켜져 있는지** 확인한다 (호스팅 프로젝트 기본값). 끄면 가입하자마자 확인된 계정이 되어, 남의 주소로 가입해도 `ALLOWED_EMAILS`를 통과한다.
-4. **Authentication → URL Configuration**의 Site URL을 `https://schemaforge.kro.kr`로 바꾼다. 기본값 `http://localhost:3000`이면 확인 메일 링크가 열리지 않는다.
+4. **Authentication → URL Configuration**의 Site URL을 공개 주소 `https://schemaforge-app.duckdns.org`(젯슨, 7절)로 바꾸고, Redirect URLs에 `https://schemaforge-app.duckdns.org/**`를 넣는다. 기본값 `http://localhost:3000`이면 확인 메일 링크가 열리지 않는다. Render와 젯슨이 Supabase 프로젝트 하나를 함께 쓰고 서버가 돌아갈 주소를 따로 주지 않으므로, 어느 주소에서 가입해도 확인 메일의 링크는 이 주소로 간다 (2026-11-08까지는 `https://schemaforge.kro.kr`).
 5. Supabase 기본 메일은 **조직 멤버 주소로만, 시간당 2통** 보낸다. 그래서 `ALLOWED_EMAILS`에는 Supabase 계정 메일을 넣고 그 주소로 가입한다. 다른 사람도 가입하게 하려면 Authentication → SMTP에 메일 서버를 붙인다.
 6. Render 서비스의 **Environment** 페이지에 아래 값을 넣고 저장해 다시 배포한다. 키 값은 `render.yaml`에 절대 쓰지 않는다. 로그에 `[guard] deployed: code runs and model calls for 1 listed account(s)`가 나오고 `none until Supabase is set`이 붙지 않으면 맞다.
-7. `https://schemaforge.kro.kr`에서 가입 → "확인 메일을 보냈습니다" 안내 → 메일의 링크 → "가입 확인이 끝났습니다" → 로그인 → 회로 생성 순서로 확인한다.
+7. `https://schemaforge-app.duckdns.org`에서 가입 → "확인 메일을 보냈습니다" 안내 → 메일의 링크 → "가입 확인이 끝났습니다" → 로그인 → 회로 생성 순서로 확인한다.
 8. OpenAI 대시보드에서 월 사용 한도를 걸어 둔다.
 
 무료 인스턴스(CPU 0.1)에서는 회로 생성과 AI 다듬기도 느리다는 점을 감안한다. Supabase 무료 프로젝트는 7일 동안 활동이 적으면 멈춘다. 멈추면 로그인이 "로그인 서버(Supabase)에 연결하지 못했습니다"로 실패하니, 대시보드에서 Resume project로 다시 켠다.
