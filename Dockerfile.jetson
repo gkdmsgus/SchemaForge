@@ -54,17 +54,18 @@ RUN mkdir -p outputs
 # the demo circuits run once here, so opening a demo copies a stored netlist (demo_cache.ts)
 RUN ./node_modules/.bin/tsx build_demo_cache.ts
 # not root: the server runs skidl code the model and the Code tab write, and on a home server an exploit would land
-# beside the SSH keys and the LAN. It writes only outputs/ and the temp folder (HOME=/tmp for kicad-cli's config)
+# beside the SSH keys and the LAN. It writes only outputs/, kicad-cli's config folder and the temp folder (HOME=/tmp)
 RUN useradd --system --uid 10001 --home-dir /tmp --shell /usr/sbin/nologin sf && chown -R sf /app/server/outputs
 # kicad-cli's footprint library table, pointing at the vendored libraries the boards are made from: with none, DRC
 # reported every footprint as lib_footprint_issues (its library not found), and run_checks failed item 5 on all ten
-# boards in this image (2026-11-03)
-RUN mkdir -p /tmp/.config/kicad/10.0 \
+# boards in this image (2026-11-03). In a folder of the image that KICAD_CONFIG_HOME below names, as in Dockerfile: under
+# /tmp it was gone on Render, which gives the container another /tmp or HOME (2026-11-08)
+RUN mkdir -p /app/kicad-config/10.0 \
  && { echo '(fp_lib_table'; echo '  (version 7)'; \
       for d in /app/server/pcb/footprints/*.pretty; do \
         echo "  (lib (name \"$(basename "$d" .pretty)\")(type \"KiCad\")(uri \"$d\")(options \"\")(descr \"\"))"; done; \
-      echo ')'; } > /tmp/.config/kicad/10.0/fp-lib-table \
- && chown -R sf /tmp/.config
+      echo ')'; } > /app/kicad-config/10.0/fp-lib-table \
+ && chown -R sf /app/kicad-config
 USER sf
 # no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
@@ -72,6 +73,7 @@ ENV NODE_ENV=production \
     SF_OUTPUTS_SWEEP=1 \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
     KICAD10_3DMODEL_DIR=/app/server/pcb/3dmodels \
+    KICAD_CONFIG_HOME=/app/kicad-config \
     HOME=/tmp
 # the commit this image was built from, which /health names (deploy_guard.ts runningCommit); scripts/jetson_run.sh
 # passes it (docker exec schemaforge printenv SF_COMMIT). After every RUN, so a new commit does not rebuild the layers above

@@ -45,12 +45,14 @@ RUN mkdir -p outputs
 RUN ./node_modules/.bin/tsx build_demo_cache.ts
 # kicad-cli's footprint library table, pointing at the vendored libraries the boards are made from: with none, DRC
 # warned on every board that each footprint's library "is not in the current configuration" (15 warnings in the
-# board checks of the 555 demo, 2026-11-03). HOME is /tmp below, so this is where kicad-cli looks
-RUN mkdir -p /tmp/.config/kicad/10.0 \
+# board checks of the 555 demo, 2026-11-03). In a folder of the image that KICAD_CONFIG_HOME below names (kicad-cli adds
+# 10.0/): written to $HOME/.config under /tmp, it was not there on Render, which gives the container another /tmp or
+# HOME, and every demo board warned 9-15 times again (2026-11-08; an empty /tmp or another HOME does the same here)
+RUN mkdir -p /app/kicad-config/10.0 \
  && { echo '(fp_lib_table'; echo '  (version 7)'; \
       for d in /app/server/pcb/footprints/*.pretty; do \
         echo "  (lib (name \"$(basename "$d" .pretty)\")(type \"KiCad\")(uri \"$d\")(options \"\")(descr \"\"))"; done; \
-      echo ')'; } > /tmp/.config/kicad/10.0/fp-lib-table
+      echo ')'; } > /app/kicad-config/10.0/fp-lib-table
 # the KiCad image has no 3D model library: the 3D view and assembly need the part bodies,
 # so kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
@@ -58,6 +60,7 @@ ENV NODE_ENV=production \
     SF_OUTPUTS_SWEEP=1 \
     KICAD_CLI_PATH=/usr/bin/kicad-cli \
     KICAD10_3DMODEL_DIR=/app/server/pcb/3dmodels \
+    KICAD_CONFIG_HOME=/app/kicad-config \
     HOME=/tmp
 EXPOSE 8002
 
