@@ -140,11 +140,13 @@ diff <(sudo grep -A2 basic_auth /etc/caddy/Caddyfile) <(grep -A2 basic_auth ~/Ca
 ```bash
 sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%Y%m%d-%H%M)
 sudo cp ~/Caddyfile.sf /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-`validate`가 실패하면 reload하지 않고 백업을 되돌린다(`sudo cp /etc/caddy/Caddyfile.bak-<시각> /etc/caddy/Caddyfile`). reload 뒤에는 `systemctl status caddy`와 `curl -sI https://schemaforge-app.duckdns.org/ | grep -i strict-transport-security`로 새 설정이 쓰이는지 본다.
+검사는 Caddy가 도는 `caddy` 사용자로 한다. `validate`는 설정의 로그 파일까지 열어 보므로, root로 돌리면 `/var/log/caddy/schemaforge.log`가 root 것(권한 600)으로 생겨서 reload가 "permission denied"로 거절된다(2026-11-08). 그때는 Caddy가 예전 설정으로 계속 돌지만 `/etc/caddy/Caddyfile`은 이미 새 파일이라, 재부팅하면 뜨지 못한다. `sudo chown caddy:caddy /var/log/caddy/schemaforge.log` 뒤에 다시 reload한다.
+
+`validate`가 실패하면 reload하지 않고 백업을 되돌린다(`sudo cp /etc/caddy/Caddyfile.bak-<시각> /etc/caddy/Caddyfile`). reload가 실패하면 `systemctl status caddy`의 Status 줄에 이유가 있다. 고치지 못하면 같은 방법으로 백업을 되돌리고 reload한다. reload 뒤에는 `systemctl status caddy`와 `curl -sI https://schemaforge-app.duckdns.org/ | grep -i strict-transport-security`로 새 설정이 쓰이는지 본다.
 
 ### 지금 도는 커밋
 
