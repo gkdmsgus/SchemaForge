@@ -25,6 +25,17 @@ export interface MosSpec {
   vgs_max: Num
   /** drain-source voltage it stands while off */
   vds_max: Num
+  /**
+   * RDS(on) rows at gate voltages above vgs_rated, each guaranteed for a gate at or above its `vgs` (rds_on is the row at
+   * vgs_rated). Only where the heat it makes is judged (free_air)
+   */
+  rds_rows?: { vgs: number; rds: Num }[]
+  /**
+   * A power MOSFET whose id_max holds only with its case held at 25 °C (TO-220): what it stands with no heatsink.
+   * Junction-to-ambient resistance, highest junction temperature, the largest dissipation with the case at 25 °C, and
+   * how many times RDS(on) at 25 °C it is at that temperature (read off the datasheet's curve, the upper end of two readings)
+   */
+  free_air?: { rth_ja: Num; tj_max: Num; pd_case: Num; rds_hot: Num }
 }
 export interface TimerSpec {
   vcc_min: Num; vcc_max: Num; voh_drop: Num; formula_src: string
@@ -42,6 +53,11 @@ const ON_NDS = 'onsemi NDS7002A/D Rev.11'
 // Songle's SRD sheet (SRD-05VDC-SL-C naming) lists a 120% maximum, but only a third-party copy
 // could be opened; Sanyou's official sheet is the one the KiCad footprint links to.
 const SANYOU = 'Sanyou SRD-Series V3.2 데이터시트(KiCad 풋프린트가 가리키는 문서), Coil Data'
+// The IRFZ44N sheet prints "Rev. 2.1, 2026-08-11" on every page while its PDF metadata says Rev. 1.0; the printed one is
+// named. Both sheets were opened from infineon.com and read by two readers who agree on every number used here but the
+// RDS(on) rise at 175 °C, a curve read by eye: the two readings differ a little and the upper end is used.
+const INF_IRFZ = 'Infineon IRFZ44NPbF 데이터시트 Rev. 2.1 (2026-08-11)'
+const IR_IRLZ = 'International Rectifier IRLZ44NPbF 데이터시트 PD-94831 (2003-11-11, Infineon 배포)'
 const TI_555 = 'TI NE555 데이터시트 SLFS022K'
 const AMS_1117 = 'Advanced Monolithic AMS1117 데이터시트(ds1117)'
 const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
@@ -138,6 +154,39 @@ export const SPECS = {
       id_max: { v: 0.2, src: `${ON_NDS}, 2N7000: 드레인 연속 전류 200 mA` },
       vgs_max: { v: 20, src: `${ON_NDS}, 절대 최대 정격: 게이트-소스 전압 연속 ±20 V` },
       vds_max: { v: 60, src: `${ON_NDS}, 절대 최대 정격: 드레인-소스 전압 VDSS 60 V (2N7000·2N7002·NDS7002A 공통)` },
+    },
+    // TO-220 power MOSFETs (1 = G, 2 = D, 3 = S, tab = D): no Q_NMOS footprint in server/pcb/footprints_table.py fits them
+    IRFZ44N: {
+      vgs_th_max: { v: 4, src: `${INF_IRFZ}, Static @ TJ 25 °C 표: VGS(th) 최대 4.0 V @ VDS = VGS, ID 250 µA` },
+      vgs_rated: { v: 10, src: `${INF_IRFZ}, Static 표: RDS(on) 행은 VGS 10 V 하나뿐 (4 V·4.5 V·5 V 조건 없음) → 보장 최저 게이트 전압 10 V` },
+      rds_on: { v: 0.0175, src: `${INF_IRFZ}, Static 표: RDS(on) 최대 17.5 mΩ @ VGS 10 V, ID 25 A` },
+      id_max: { v: 49, src: `${INF_IRFZ}, 절대 최대 정격: ID 연속 49 A @ TC 25 °C, VGS 10 V (케이스를 25 °C로 유지할 때. TC 100 °C에서는 35 A)` },
+      vgs_max: { v: 20, src: `${INF_IRFZ}, 절대 최대 정격: 게이트-소스 전압 VGS ±20 V` },
+      vds_max: { v: 55, src: `${INF_IRFZ}, Static 표: V(BR)DSS 최소 55 V @ VGS 0 V, ID 250 µA (절대 최대 정격 표에 VDSS 행이 없어 이 값과 1쪽 요약의 55 V로 정함)` },
+      free_air: {
+        rth_ja: { v: 62, src: `${INF_IRFZ}, Thermal Resistance 표: RθJA(접합-공기) 최대 62 °C/W (두 번 읽어 같은 값)` },
+        tj_max: { v: 175, src: `${INF_IRFZ}, 절대 최대 정격: TJ(동작 접합 온도) −55 ~ +175 °C (두 번 읽어 같은 값)` },
+        pd_case: { v: 94, src: `${INF_IRFZ}, 절대 최대 정격: PD @ TC 25 °C 94 W (케이스를 25 °C로 유지할 때, 두 번 읽어 같은 값)` },
+        rds_hot: { v: 2.45, src: `${INF_IRFZ}, Fig. 4 Normalized On-Resistance vs. Temperature (ID 49 A, VGS 10 V, 일반값·최대값 표시 없는 그래프): TJ 175 °C에서 두 번 읽어 대략 2.3배와 2.39배, 두 번째 읽기의 오차 범위 2.35~2.45배 중 위쪽 끝 2.45배를 씀` },
+      },
+    },
+    IRLZ44N: {
+      vgs_th_max: { v: 2, src: `${IR_IRLZ}, Electrical Characteristics @ TJ 25 °C: VGS(th) 최대 2.0 V @ VDS = VGS, ID 250 µA` },
+      vgs_rated: { v: 4, src: `${IR_IRLZ}, Electrical Characteristics: RDS(on) 행은 VGS 10 V·5 V·4 V (3.3 V 이하 조건 없음) → 보장 최저 게이트 전압 4 V` },
+      rds_on: { v: 0.035, src: `${IR_IRLZ}, Electrical Characteristics: RDS(on) 최대 0.035 Ω @ VGS 4.0 V, ID 21 A (5 V에서 0.025 Ω, 10 V에서 0.022 Ω @ ID 25 A)` },
+      rds_rows: [
+        { vgs: 5, rds: { v: 0.025, src: `${IR_IRLZ}, Electrical Characteristics: RDS(on) 최대 0.025 Ω @ VGS 5.0 V, ID 25 A` } },
+        { vgs: 10, rds: { v: 0.022, src: `${IR_IRLZ}, Electrical Characteristics: RDS(on) 최대 0.022 Ω @ VGS 10 V, ID 25 A` } },
+      ],
+      id_max: { v: 47, src: `${IR_IRLZ}, 절대 최대 정격: ID 연속 47 A @ TC 25 °C, VGS 10 V (케이스를 25 °C로 유지할 때. TC 100 °C에서는 33 A)` },
+      vgs_max: { v: 16, src: `${IR_IRLZ}, 절대 최대 정격: 게이트-소스 전압 VGS ±16 V` },
+      vds_max: { v: 55, src: `${IR_IRLZ}: 1쪽 요약 VDSS 55 V, Electrical Characteristics: V(BR)DSS 최소 55 V @ VGS 0 V, ID 250 µA` },
+      free_air: {
+        rth_ja: { v: 62, src: `${IR_IRLZ}, Thermal Resistance 표: RθJA(접합-공기) 최대 62 °C/W (두 번 읽어 같은 값)` },
+        tj_max: { v: 175, src: `${IR_IRLZ}, 절대 최대 정격: TJ(동작 접합 온도) −55 ~ +175 °C (두 번 읽어 같은 값)` },
+        pd_case: { v: 110, src: `${IR_IRLZ}, 절대 최대 정격: PD @ TC 25 °C 110 W (케이스를 25 °C로 유지할 때, 두 번 읽어 같은 값)` },
+        rds_hot: { v: 2.25, src: `${IR_IRLZ}, Fig 4 Normalized On-Resistance vs. Temperature (ID 41 A, VGS 10 V, 일반값·최대값 표시 없는 그래프): TJ 175 °C에서 두 번 읽어 대략 2.2배와 2.23배, 두 번째 읽기의 오차 범위 2.20~2.25배 중 위쪽 끝 2.25배를 씀` },
+      },
     },
   } as Record<string, MosSpec>,
 

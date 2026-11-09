@@ -1602,6 +1602,559 @@ function verdictProblems(rs: OpResult[]): string[] {
     `${JSON.stringify(tally)}${examples.length ? ' · ' + examples.slice(0, 2).join(' || ') : ''}`)
 }
 
+// O23. an MCU pin on a MOSFET gate (2026-11-08). MCUs reach the board through a header, so the header's value is what
+// says the pin's level: a board or chip name ("ESP32", "Arduino Uno") or a written level ("3V3") gives that one voltage,
+// a value naming none keeps 3.3 V and 5 V, a power header (PWR) is no signal. IRFZ44N (RDS(on) only at VGS 10 V) and
+// IRLZ44N (down to 4 V) come from their datasheets and are matched by name without mixing the two up
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  type Wire = [string, ...string[]]
+  // a 12 V 0.5 A motor (1N4007 across it) under Q1; the gate on J1 pin 1, through RG 100 Ω or straight, RP 10 kΩ to GND
+  const gate = (header: string, mos: string, rg = true) => run(circuit(
+    [['J1', 'Conn_01x02', header], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR 12V 0.5A'], ['D1', 'D', '1N4007'],
+      ['Q1', 'Q_NMOS', mos], ['RP', 'R', '10k'], ...(rg ? [['RG', 'R', '100'] as Comp] : [])],
+    [...(rg ? [['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1']] as Wire[] : [['G', 'J1.1', 'Q1.1', 'RP.1']] as Wire[]),
+      ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2']]))
+  // the same motor with the gate from the +5V rail through RG (no pull-down needed: VGS is the whole 5 V, as in O5c)
+  const rail = (mos: string) => run(circuit(
+    [['J2', 'Conn_01x03', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR 12V 0.5A'], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', mos], ['RG', 'R', '100']],
+    [['+12V', 'J2.1', 'M1.1', 'D1.2'], ['+5V', 'J2.2', 'RG.1'], ['G', 'RG.2', 'Q1.1'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J2.3', 'Q1.3']]))
+  const drive = (rs: OpResult[], ref = 'Q1') => pick(rs, 'op_drive', ref)
+  const has = (rs: OpResult[], re: RegExp) => !!drive(rs)?.detail.some(d => re.test(d))
+  const fix = (rs: OpResult[]) => drive(rs)?.fix ?? ''
+  const both = (rs: OpResult[]) => has(rs, /^3\.3 V: VGS/) && has(rs, /^5 V: VGS/)
+  const said = (rs: OpResult[], ref = 'Q1') => {
+    const r = drive(rs, ref)
+    return r ? `${r.state}: ${r.summary} [${r.detail.filter(d => /^(구동 전압|3\.3 V|5 V)|자료가 없어/.test(d)).join(' / ')}]${r.fix ? ` fix: ${r.fix}` : ''}` : '(no op_drive)'
+  }
+
+  const espIrf = gate('ESP32', 'IRFZ44N')
+  add('ESP32 header through RG on an IRFZ44N: 3.3 V only, under VGS(th) max 4 V, may not turn on; the fix says no part in the table is rated at 3.3 V',
+    is(espIrf, 'op_drive', 'error', 'Q1', /3\.27 V < 문턱 최대 4 V: 켜지지 않을 수 있습니다/) && has(espIrf, /^구동 전압: J1 값 ESP32 → 3\.3 V 신호로 계산$/) && !has(espIrf, /^5 V: VGS/)
+    && /3\.3 V 신호로는 앱 부품표의 어느 MOSFET도/.test(fix(espIrf)) && /논리 레벨/.test(fix(espIrf)) && /게이트 드라이버/.test(fix(espIrf)) && /NPN 트랜지스터로 12 V 전원을/.test(fix(espIrf)),
+    said(espIrf))
+  const unoIrl = gate('Arduino Uno', 'IRLZ44N', false)
+  add('Arduino Uno header straight on an IRLZ44N with a 10 kΩ pull-down: 5 V ≥ its 4 V guarantee, passes, the switch too',
+    is(unoIrl, 'op_drive', 'pass', 'Q1', /완전히 켜짐 \(VGS 5 V ≥ 4 V\)/) && has(unoIrl, /^구동 전압: J1 값 Arduino Uno → 5 V 신호로 계산$/) && !has(unoIrl, /^3\.3 V: VGS/)
+    && is(unoIrl, 'op_switch', 'pass', 'Q1'),
+    `${said(unoIrl)} | ${show(unoIrl, 'op_switch')}`)
+  const espIrl = gate('ESP32', 'IRLZ44N', false)
+  add('ESP32 header straight on an IRLZ44N: 3.3 V is over its 2 V threshold but under its 4 V guarantee, a warning; IRLZ44N is not offered to itself',
+    is(espIrl, 'op_drive', 'warn', 'Q1', /게이트 3\.3 V: 문턱은 넘지만 켜짐 저항 보장 전압 4 V 미만/) && has(espIrl, /^구동 전압: J1 값 ESP32 → 3\.3 V 신호로 계산$/)
+    && /3\.3 V 신호로는 앱 부품표의 어느 MOSFET도/.test(fix(espIrl)) && !/IRLZ44N으로 바꾸/.test(fix(espIrl)),
+    said(espIrl))
+  const sigIrf = gate('SIG', 'IRFZ44N')
+  add('IRFZ44N from a header naming nothing: 3.3 V and 5 V lines both, not passed; 3.3 V may not turn on, 5 V is not "완전히 켜짐"; 5 V is offered IRLZ44N',
+    both(sigIrf) && !!drive(sigIrf) && drive(sigIrf)!.state !== 'pass' && has(sigIrf, /^3\.3 V: VGS 3\.27 V .*켜지지 않을 수 있음$/) && has(sigIrf, /^5 V: VGS 4\.95 V .*켜짐 저항 보장 전압 미만$/)
+    && !/완전히 켜짐/.test(`${drive(sigIrf)!.summary} ${drive(sigIrf)!.detail.join(' ')}`) && /3\.3 V 신호는 .*켜지지 않을 수 있고/.test(drive(sigIrf)!.summary)
+    && /5 V 신호라면 .*IRLZ44N으로 바꾸면/.test(fix(sigIrf)) && /3\.3 V 신호로는/.test(fix(sigIrf)),
+    said(sigIrf))
+  const irf5 = rail('IRFZ44N'), irl5 = rail('IRLZ44N')
+  add('a 5 V rail on an IRFZ44N gate no longer reads "완전히 켜짐" (RDS(on) only at 10 V) and IRLZ44N is offered; the same rail on an IRLZ44N passes',
+    is(irf5, 'op_drive', 'warn', 'Q1', /켜짐 저항 보장 전압 10 V 미만/) && !/완전히 켜짐/.test(drive(irf5)?.summary ?? '') && /IRLZ44N으로 바꾸면/.test(fix(irf5))
+    && is(irl5, 'op_drive', 'pass', 'Q1', /완전히 켜짐/),
+    `${said(irf5)} | ${said(irl5)}`)
+  const detail = (v: string) => drive(gate('SIG', v))?.detail ?? []
+  const irlPbf = detail('IRLZ44NPBF'), irfPbf = detail('IRFZ44NPBF'), irlNoN = detail('IRLZ44')
+  const t = SPECS.mos
+  add('IRLZ44NPBF reads as IRLZ44N, IRFZ44NPBF as IRFZ44N, neither as the other; IRLZ44 (no N) is neither; the table holds the datasheet numbers',
+    irlPbf.some(d => /^게이트 문턱 최대 2 V: .*IRLZ44NPbF/.test(d)) && !irlPbf.some(d => /자료가 없어|IRFZ44N/.test(d))
+    && irfPbf.some(d => /^게이트 문턱 최대 4 V: .*IRFZ44NPbF/.test(d)) && !irfPbf.some(d => /자료가 없어|IRLZ44N/.test(d))
+    && irlNoN.some(d => /값 IRLZ44의 자료가 없어 2N7002 기준/.test(d))
+    && t.IRFZ44N?.vgs_th_max.v === 4 && t.IRFZ44N?.vgs_rated.v === 10 && t.IRFZ44N?.rds_on.v === 0.0175 && t.IRFZ44N?.id_max.v === 49 && t.IRFZ44N?.vgs_max.v === 20 && t.IRFZ44N?.vds_max.v === 55
+    && t.IRLZ44N?.vgs_th_max.v === 2 && t.IRLZ44N?.vgs_rated.v === 4 && t.IRLZ44N?.rds_on.v === 0.035 && t.IRLZ44N?.id_max.v === 47 && t.IRLZ44N?.vgs_max.v === 16 && t.IRLZ44N?.vds_max.v === 55,
+    `${irlPbf[0]} | ${irfPbf[0]} | ${irlNoN[0]}`)
+  // which header values name a level; a board's own chip wins over its family name (Nano ESP32, Nano 33, Jetson Nano are 3.3 V)
+  const levels: [string, 3.3 | 5 | null][] = [['ESP32', 3.3], ['ESP32-S3 DevKit', 3.3], ['ESP8266 NodeMCU', 3.3], ['STM32 Blue Pill', 3.3], ['RP2040', 3.3],
+    ['Raspberry Pi Pico', 3.3], ['3V3 GPIO', 3.3], ['3.3V', 3.3], ['Arduino Uno', 5], ['Arduino Nano', 5], ['Arduino Mega 2560', 5], ['5V', 5], ['ATmega328P', null],
+    ['Arduino Nano ESP32', 3.3], ['Arduino Nano 33 IoT', 3.3], ['Jetson Nano', 3.3], ['ESP32 5V', 3.3],
+    ['SIG', null], ['PWR', null], ['PWR 5V', null], ['PWR_IN', null], ['Arduino', null], ['3.3V/5V', null], ['15V', null]]
+  const misread = levels.filter(([v, lv]) => {
+    const rs = gate(v, 'IRLZ44N')
+    if (lv == null) return !both(rs) || has(rs, /신호로 계산/)
+    return !drive(rs)?.detail.includes(`구동 전압: J1 값 ${v} → ${lv} V 신호로 계산`) || has(rs, lv === 5 ? /^3\.3 V: VGS/ : /^5 V: VGS/)
+  })
+  add('header values: MCU boards, chips and written levels give one level, power headers and values naming none or both keep 3.3 V and 5 V',
+    misread.length === 0, misread.map(([v, lv]) => `${v} (${lv ?? 'none'}): ${said(gate(v, 'IRLZ44N'))}`).join(' || '))
+  // an NPN base from the same header: the relay of O4 with 1.5 kΩ, where only a 5 V signal is enough
+  const relayAt = (header: string) => run(variant(variant(relay, setValue('R1', '1.5k')), setValue('J1', header)))
+  const npnEsp = relayAt('ESP32'), npnUno = relayAt('Arduino Uno'), npnNone = relayAt('PWR_IN')
+  add('an NPN base from a named header takes the same one level: 1.5 kΩ from an Arduino Uno passes, from an ESP32 does not; PWR_IN still says only 5 V',
+    is(npnUno, 'op_drive', 'pass', 'Q1') && !!drive(npnEsp) && drive(npnEsp)!.state !== 'pass' && has(npnEsp, /^구동 전압: J1 값 ESP32 → 3\.3 V 신호로 계산$/)
+    && !drive(npnEsp)!.detail.some(d => /^5 V: IB/.test(d)) && is(npnNone, 'op_drive', 'warn', 'Q1', /5 V 신호에서만/),
+    `${said(npnUno)} | ${said(npnEsp)} | ${said(npnNone)}`)
+
+  const problems = verdictProblems(ALL)
+  add('every verdict up to here: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+  for (const [name, ok, info] of F) check(`O23 ${name}`, ok, info)
+}
+
+// O24. review of O23 (2026-11-08): what the 47 A parts and the header values got wrong. A sense resistor under an unknown
+// load reckoned at 47 A, a power pin's voltage read as the signal's, 3.3 V boards whose names hold UNO/NANO, fixes that
+// skip the divider or the sense resistor or say nothing, IRLZ44N offered where the board's own part would do, 47 A taken
+// for what a TO-220 stands with no heatsink, "3.27~4.95 V < 4 V", and an NPN stage lifting the gate to 94 % of its rating
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  type Wire = [string, ...string[]]
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const drive = (rs: OpResult[]) => pick(rs, 'op_drive', 'Q1')
+  const fix = (rs: OpResult[]) => drive(rs)?.fix ?? ''
+  const said = (rs: OpResult[]) => { const r = drive(rs); return r ? `${r.state}: ${r.summary}${r.fix ? ` fix: ${r.fix}` : ''}` : '(no op_drive)' }
+  const named = (rs: OpResult[]) => !!drive(rs)?.detail.some(d => /신호로 계산/.test(d))
+  // the motor demo (O5) with another MOSFET, header value or motor value
+  const demo = (q: string, j1 = 'PWR_IN', j2 = 'MOTOR') => run(variant(variant(variant(motor, setValue('Q1', q)), setValue('J1', j1)), setValue('J2', j2)))
+  // a two-pin signal header J1 (signal, GND) on the gate through RG with RP to GND, a 12 V motor, optionally RS under the source
+  const gate = (j1: string, q: string, mot = 'MOTOR 12V 0.5A', rg = '100', rp = '10k', rs: string | null = null, style: 'smd' | 'tht' | null = null) => run(circuit(
+    [['J1', 'Conn_01x02', j1], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', q], ['RP', 'R', rp], ['RG', 'R', rg],
+      ...(rs ? [['RS', 'R', rs] as Comp] : [])],
+    [['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'],
+      ...(rs ? [['SRC', 'Q1.3', 'RS.1'], ['GND', 'J1.2', 'J2.2', 'RS.2', 'RP.2']] as Wire[] : [['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2']] as Wire[])]), style)
+
+  // 1. the sense drop under an unknown motor current lies between none and ID max: a verdict that differs between them is
+  //    판단 불가 (one, with the switch's), not "켜지지 않을 수 있습니다" and 221 W at an assumed 47 A
+  const irlDemo = demo('IRLZ44N'), irlUno = demo('IRLZ44N', 'Arduino Uno'), irfUno = demo('IRFZ44N', 'Arduino Uno'), irl2A = demo('IRLZ44N', 'PWR_IN', 'MOTOR 12V 2A')
+  const negative = (rs: OpResult[]) => /(?<![\d.])[-−]\d/.test(`${drive(rs)?.summary} ${fix(rs)}`)
+  add('unknown motor current over a sense resistor with IRLZ44N/IRFZ44N: drive and sense heat 판단 불가 (one in the headline), no negative volts, the fix asks for the current and says up to 9.5 A works; with 2 A written it is judged',
+    [irlDemo, irlUno, irfUno].every(rs => is(rs, 'op_drive', 'unknown', 'Q1', /부하 전류를 몰라/) && is(rs, 'op_rpower', 'unknown', 'R2') && head(rs) === '판단 불가 1'
+      && !negative(rs) && /MOTOR 0\.1A/.test(fix(rs)))
+    && /9500 mA 이하면 5 V 신호에서 완전히 켜집니다/.test(fix(irlUno)) && is(irl2A, 'op_drive', 'warn', 'Q1') && is(irl2A, 'op_rpower', 'error', 'R2', /400 mW/),
+    [irlDemo, irlUno, irfUno, irl2A].map(rs => `${head(rs)} · ${said(rs)} · ${show(rs, 'op_rpower', 'R2')}`).join(' || '))
+
+  // 2. a written level on a header that also carries a supply is that supply's voltage, not the signal's: the relay of O4f
+  //    (J1: +5V, IN, GND) and a 5 V motor keep both levels; a header carrying only the signal still reads its level
+  const relayJ = (v: string) => run(variant(variant(relay, setValue('R1', '1.5k')), setValue('J1', v)))
+  const motor5 = (v: string) => run(circuit(
+    [['J1', 'Conn_01x03', v], ['J2', 'Conn_01x02', 'MOTOR 5V 0.5A'], ['R1', 'R', '100'], ['R3', 'R', '10k'], ['Q1', 'Q_NMOS', 'IRLZ44N'], ['D1', 'D', '1N4007']],
+    [['+5V', 'J1.1', 'J2.1', 'D1.2'], ['PWM', 'J1.2', 'R1.1'], ['GND', 'J1.3', 'R3.2', 'Q1.3'], ['GATE', 'R1.2', 'R3.1', 'Q1.1'], ['MOT_LOW', 'J2.2', 'Q1.2', 'D1.1']]))
+  const powered = ['5V_IN', '5V', '+5V', 'USB 5V', 'VIN 5V'].filter(v => !is(relayJ(v), 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) || named(relayJ(v)))
+  const sigOnly = gate('5V_IN', 'IRLZ44N'), usbOnly = gate('USB 5V', 'IRLZ44N')
+  add('a header that carries a supply (or says VIN/USB) names no signal level: 5V_IN, 5V, +5V, USB 5V, VIN 5V on the relay and 5V_IN on a 5 V motor stay "5 V 신호에서만"; 5V_IN on a signal-only header is 5 V',
+    powered.length === 0 && is(motor5('5V_IN'), 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) && !named(motor5('5V_IN'))
+    && !!drive(sigOnly)?.detail.includes('구동 전압: J1 값 5V_IN → 5 V 신호로 계산') && !named(usbOnly),
+    `${powered.map(v => `${v}: ${said(relayJ(v))}`).join(' / ')} | ${said(motor5('5V_IN'))} | ${said(sigOnly)} | ${said(usbOnly)}`)
+
+  // 3. UNO/NANO/MEGA give 5 V only as the board itself (a revision or a pin name after it); UNO Q, Nano Matter, Orin Nano
+  //    may be 3.3 V boards and keep both levels
+  const not5 = ['Arduino UNO Q', 'Arduino Nano Matter', 'Orin Nano'].filter(v => !is(relayJ(v), 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) || named(relayJ(v)))
+  const still5 = ['Arduino Uno R3', 'Arduino Mega 2560', 'Arduino Uno D9', 'Arduino Nano', 'Uno'].filter(v => !drive(relayJ(v))?.detail.includes(`구동 전압: J1 값 ${v} → 5 V 신호로 계산`))
+  const orin = gate('Orin Nano', 'IRLZ44N')
+  add('UNO Q, Nano Matter and Orin Nano are not read as 5 V (an IRLZ44N from Orin Nano is not passed); Uno R3, Mega 2560, Uno D9, Nano still are',
+    not5.length === 0 && still5.length === 0 && !!drive(orin) && drive(orin)!.state !== 'pass',
+    `${not5.map(v => `${v}: ${said(relayJ(v))}`).join(' / ')} | still5 misses: ${still5.join(', ')} | ${said(orin)}`)
+
+  // 4. a signal under every guarantee, cut further by a divider or a sense resistor: the fix names those and asks for a part
+  //    rated at what the gate gets once they are fixed (3.27 V), not at the cut voltage (1.65 V, 2.77 V)
+  const espDiv = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 0.5A', '10k', '10k'), sigDiv = gate('SIG', '2N7002', 'MOTOR 12V 0.05A', '10k', '10k')
+  const espRs = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 0.5A', '100', '10k', '1')
+  add('ESP32 through 10k/10k: the fix names the RG/RP divider and asks for VGS 2.5~3.27 V, not 1.65 V; the same with SIG on 2N7002; a 1 Ω sense resistor is named, 2.77 V is not asked for',
+    /RG\/RP 분압/.test(fix(espDiv)) && /1\/100/.test(fix(espDiv)) && /VGS 2\.5~3\.27 V/.test(fix(espDiv)) && !/1\.65 V 이하/.test(fix(espDiv))
+    && /1\/100/.test(fix(sigDiv)) && !/1\.65 V 이하/.test(fix(sigDiv)) && /VGS 2\.5~3\.27 V/.test(fix(sigDiv)) && /감지 저항 RS/.test(fix(espRs)) && /VGS 2\.5~3\.27 V/.test(fix(espRs)) && !/2\.77 V의/.test(fix(espRs)),
+    [said(espDiv), said(sigDiv), said(espRs)].join(' || '))
+
+  // 5. a divider already at 100 Ω : 10 kΩ is not the thing to change; the sense resistor is, by how much, and IRFZ44N
+  //    still needs a part rated at 5 V after it
+  const c1 = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 15A', '100', '10k', '0.1'), c11 = gate('Arduino Uno', 'IRFZ44N', 'MOTOR 12V 3A', '100', '10k', '0.5')
+  add('Uno, 100 Ω/10 kΩ, sense RS: the fix does not ask for 100 Ω and 10 kΩ again; IRLZ44N at 15 A wants RS ≤ 0.0633 Ω, IRFZ44N at 3 A wants IRLZ44N and RS ≤ 0.316 Ω',
+    !/1\/100|100 Ω과 10 kΩ|분압/.test(fix(c1)) && /감지 저항 RS를 0\.0633 Ω 이하로/.test(fix(c1))
+    && !/1\/100|100 Ω과 10 kΩ|분압/.test(fix(c11)) && /감지 저항 RS를 0\.316 Ω 이하로 줄이고, 켜짐 저항이 4 V에서 보장되는 IRLZ44N으로 바꾸면/.test(fix(c11)),
+    [said(c1), said(c11)].join(' || '))
+
+  // 6. a gate short of the guarantee with the load's current unknown still says what to change
+  const a2 = gate('Arduino Uno', '2N7002', 'MOTOR', '100', '10k', '0.1'), demoUno = demo('2N7002', 'Arduino Uno'), demoAny = run(motor)
+  add('2N7002 at 4.94 V with an unknown motor current: the fix lists 2N7000 and IRLZ44N and asks for the current (A2, the motor demo from Uno and from PWR_IN)',
+    [a2, demoUno, demoAny].every(rs => is(rs, 'op_drive', 'warn', 'Q1') && /2N7000/.test(fix(rs)) && /IRLZ44N/.test(fix(rs)) && /MOTOR 0\.1A/.test(fix(rs))),
+    [said(a2), said(demoUno), said(demoAny)].join(' || '))
+
+  // 7. a part of the table that the board's own seat takes comes before a TO-220
+  const coil = (q: string, style: 'smd' | 'tht') => run(circuit(
+    [['J1', 'Conn_01x03', 'Arduino Uno'], ['RG', 'R', '100'], ['RP', 'R', '10k'], ['Q1', 'Q_NMOS', q], ['D1', 'D', '1N4148'], ['K1', 'Relay', 'SRD-05VDC-SL-C']],
+    [['+5V', 'J1.1', 'K1.1', 'D1.2'], ['IN', 'J1.2', 'RG.1'], ['GND', 'J1.3', 'Q1.3', 'RP.2'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['COIL_LOW', 'Q1.2', 'K1.2', 'D1.1']]), style)
+  const tht = coil('2N7002', 'tht'), smd = coil('2N7002', 'smd')
+  add('2N7002 at 4.95 V under a relay coil: on a THT board the fix offers 2N7000 (its TO-92 seat), not IRLZ44N, and 2N7000 passes there; on SMD it says 2N7000 does not fit SOT-23',
+    /2N7000으로 바꾸면/.test(fix(tht)) && !/IRLZ44N/.test(fix(tht)) && is(coil('2N7000', 'tht'), 'op_drive', 'pass', 'Q1') && /2N7000은 TO-92 부품이라 기판의 SOT-23/.test(fix(smd)),
+    [said(tht), said(smd)].join(' || '))
+
+  // 8. 47 A and 49 A hold with the case at 25 °C: in free air (RθJA 62 °C/W, TJ 175 °C) the conduction heat with RDS(on) as hot
+  //    as 175 °C makes it (175 − 25) ÷ 62 = 2.42 W. IRLZ44N at 4 V: 0.035 Ω × 2.25 = 78.8 mΩ, so 5 A (1.97 W) passes, 7 A
+  //    (3.86 W) needs a heatsink, 40 A (126 W) is over PD 110 W even with the case at 25 °C. Not offered where it would not
+  //    stand. The rise at 175 °C is the upper end of two readings of the datasheet's curve (2.25, IRFZ44N 2.45)
+  const amp = (q: string, a: string) => gate('Arduino Uno', q, `MOTOR 12V ${a}A`)
+  const free = SPECS.mos.IRLZ44N.free_air, freeF = SPECS.mos.IRFZ44N.free_air
+  add('IRLZ44N with no heatsink: 0.5 A and 5 A pass, 7 A warns (방열판), 40 A fails; 2N7002 at 40 A is not offered IRLZ44N; an unknown load says what it stands without a heatsink; the table holds RθJA, TJ, PD and the hot RDS(on)',
+    is(amp('IRLZ44N', '0.5'), 'op_switch', 'pass', 'Q1') && is(amp('IRLZ44N', '5'), 'op_switch', 'pass', 'Q1') && is(amp('IRLZ44N', '7'), 'op_switch', 'warn', 'Q1', /방열판/)
+    && is(amp('IRLZ44N', '40'), 'op_switch', 'error', 'Q1') && !/IRLZ44N으로 바꾸면/.test(fix(amp('2N7002', '40')))
+    && /방열판 없이 대략/.test(pick(gate('Arduino Uno', 'IRLZ44N', 'MOTOR'), 'op_switch', 'Q1')?.fix ?? '')
+    && free?.rth_ja.v === 62 && free?.tj_max.v === 175 && free?.pd_case.v === 110 && free?.rds_hot.v === 2.25
+    && freeF?.rth_ja.v === 62 && freeF?.tj_max.v === 175 && freeF?.pd_case.v === 94 && freeF?.rds_hot.v === 2.45,
+    ['0.5', '5', '7', '40'].map(a => show(amp('IRLZ44N', a), 'op_switch')).join(' / ') + ` | ${said(amp('2N7002', '40'))}`)
+
+  // 9. a gate range across the threshold is not written as one "<": the lowest end is what falls short
+  const t555 = run(circuit(
+    [['J1', 'Conn_01x02', 'PWR'], ['U1', 'NE555', 'NE555'], ['R1', 'R', '10k'], ['R2', 'R', '68k'], ['C1', 'CP', '10uF'], ['C2', 'C', '10nF'],
+      ['RG', 'R', '100'], ['RP', 'R', '10k'], ['Q1', 'Q_NMOS', 'IRFZ44N'], ['M1', 'Conn_01x02', 'MOTOR 5V 0.5A'], ['D1', 'D', '1N4007']],
+    [['+5V', 'J1.1', 'U1.8', 'U1.4', 'R1.1', 'M1.1', 'D1.2'], ['GND', 'J1.2', 'U1.1', 'C1.2', 'C2.2', 'RP.2', 'Q1.3'], ['DISCH', 'R1.2', 'U1.7', 'R2.1'],
+      ['THRES', 'R2.2', 'U1.6', 'U1.2', 'C1.1'], ['CTRL', 'U1.5', 'C2.1'], ['OUT', 'U1.3', 'RG.1'], ['G', 'RG.2', 'RP.1', 'Q1.1'], ['MOT', 'M1.2', 'Q1.2', 'D1.1']]))
+  add('NE555 at 5 V on an IRFZ44N: "최저 3.27 V < 문턱 최대 4 V", never "3.27~4.95 V < 4 V"',
+    is(t555, 'op_drive', 'error', 'Q1', /게이트 최저 3\.27 V < 문턱 최대 4 V/) && !/~[\d.]+ V < 문턱/.test(drive(t555)?.summary ?? ''), said(t555))
+
+  // 10. the NPN stage puts the load's supply on the gate only under 90 % of the gate's maximum (README: 90 % warns)
+  const lifted = (q: string, sup: string, mot: string) => run(circuit(
+    [['J1', 'Conn_01x02', 'ESP32'], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', q], ['RP', 'R', '10k'], ['RG', 'R', '100']],
+    [['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], [sup, 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2']]))
+  const l15 = lifted('IRLZ44N', '+15V', 'MOTOR 15V 0.5A'), l19 = lifted('2N7002', '+19V', 'MOTOR 19V 0.05A'), l12 = lifted('IRLZ44N', '+12V', 'MOTOR 12V 0.5A')
+  add('NPN stage: 15 V on IRLZ44N (±16 V) and 19 V on 2N7002 (±20 V) are not put on the gate (4~14.4 V, 5~18 V instead); 12 V on IRLZ44N is',
+    !/15 V 전원을/.test(fix(l15)) && /4 V 이상 14\.4 V 미만의 전원/.test(fix(l15)) && !/19 V 전원을/.test(fix(l19)) && /5 V 이상 18 V 미만의 전원/.test(fix(l19)) && /12 V 전원을 게이트에/.test(fix(l12)),
+    [said(l15), said(l19), said(l12)].join(' || '))
+
+  const problems = verdictProblems(ALL)
+  add('every verdict up to here: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+  for (const [name, ok, info] of F) check(`O24 ${name}`, ok, info)
+}
+
+// O25. second review of O23/O24 (2026-11-08): a motor supply on the header read by its name only, heat reckoned with an
+// RDS(on) row the gate does not reach, fixes that size the sense resistor up or ask for a change that is not needed, an
+// unknown load whose verdict grew surer as the sense resistor shrank, "Q1는", a part list with no word on the board's seat,
+// and a negative gate voltage in the basis
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  type Wire = [string, ...string[]]
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const drive = (rs: OpResult[], ref = 'Q1') => pick(rs, 'op_drive', ref)
+  const fix = (rs: OpResult[]) => drive(rs)?.fix ?? ''
+  const said = (rs: OpResult[]) => { const r = drive(rs); return r ? `${r.state}: ${r.summary}${r.fix ? ` fix: ${r.fix}` : ''}` : '(no op_drive)' }
+  const named = (rs: OpResult[], ref = 'Q1') => !!drive(rs, ref)?.detail.some(d => /신호로 계산/.test(d))
+  // the signal header J1 (signal, GND) on the gate through RG with RP to GND, a 12 V motor, optionally RS under the source
+  const gate = (j1: string, q: string, mot = 'MOTOR 12V 0.5A', rs: string | null = null, style: 'smd' | 'tht' | null = null) => run(circuit(
+    [['J1', 'Conn_01x02', j1], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', q], ['RP', 'R', '10k'], ['RG', 'R', '100'],
+      ...(rs ? [['RS', 'R', rs] as Comp] : [])],
+    [['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'],
+      ...(rs ? [['SRC', 'Q1.3', 'RS.1'], ['GND', 'J1.2', 'J2.2', 'RS.2', 'RP.2']] as Wire[] : [['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2']] as Wire[])]), style)
+
+  // 1. a header's written level is its supply's when another pin feeds a load or another supply pin, whatever that net is
+  //    called (VM, V+, VMOT...); a header whose other pins only reach gates still names the signal's level
+  const motorPin = (net: string, q: string, mot: string) => run(circuit(
+    [['J1', 'Conn_01x03', '5V'], ['Q1', 'Q_NMOS', q], ['RG', 'R', '100'], ['RP', 'R', '10k'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4148']],
+    [[net, 'J1.1', 'M1.1', 'D1.2'], ['PWM', 'J1.2', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.3', 'Q1.3', 'RP.2']]))
+  const supplyNames = ['VM', 'V+', '+V', 'VMOT', 'MOTOR_PWR', 'P5V']
+  const misread = supplyNames.flatMap(n => ([['2N7000', 'MOTOR 5V 0.1A'], ['IRLZ44N', 'MOTOR 5V 0.5A']] as const).map(([q, m]) => [n, q, motorPin(n, q, m)] as const))
+    .filter(([, , rs]) => !is(rs, 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) || named(rs))
+  const twoGates = run(circuit(
+    [['J1', 'Conn_01x03', '5V'], ['RG1', 'R', '100'], ['RG2', 'R', '100'], ['RP1', 'R', '10k'], ['RP2', 'R', '10k'], ['Q1', 'Q_NMOS', '2N7000'], ['Q2', 'Q_NMOS', '2N7000'],
+      ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR 12V 0.1A'], ['M2', 'Conn_01x02', 'MOTOR 12V 0.1A'], ['D1', 'D', '1N4148'], ['D2', 'D', '1N4148']],
+    [['A', 'J1.1', 'RG1.1'], ['B', 'J1.2', 'RG2.1'], ['G1', 'RG1.2', 'Q1.1', 'RP1.1'], ['G2', 'RG2.2', 'Q2.1', 'RP2.1'], ['+12V', 'J2.1', 'M1.1', 'M2.1', 'D1.2', 'D2.2'],
+      ['M1L', 'M1.2', 'D1.1', 'Q1.2'], ['M2L', 'M2.2', 'D2.1', 'Q2.2'], ['GND', 'J1.3', 'J2.2', 'Q1.3', 'Q2.3', 'RP1.2', 'RP2.2']]))
+  add('a "5V" header whose other pin feeds the motor (VM, V+, +V, VMOT, MOTOR_PWR, P5V) keeps 3.3 V and 5 V on 2N7000 and IRLZ44N; one whose pins only reach two gates is 5 V for both',
+    misread.length === 0 && named(twoGates, 'Q1') && named(twoGates, 'Q2') && is(twoGates, 'op_drive', 'pass', 'Q1') && is(twoGates, 'op_drive', 'pass', 'Q2'),
+    `${misread.map(([n, q, rs]) => `${n}/${q}: ${said(rs)}`).slice(0, 3).join(' || ')} | two gates: ${show(twoGates, 'op_drive', 'Q1')} / ${show(twoGates, 'op_drive', 'Q2')}`)
+
+  // 2. a gate under every RDS(on) row of a TO-220 part: the heat is not known (판단 불가, following the gate's verdict and
+  //    counted there), never a pass with the 10 V or 4 V row; a gate on a row still passes
+  const sw = (rs: OpResult[]) => pick(rs, 'op_switch', 'Q1')
+  const follows = (rs: OpResult[]) => sw(rs)?.state === 'unknown' && sw(rs)?.cause === 'Q1' && sw(rs)?.causeRule === 'op_drive' && /켜짐 저항을 몰라 발열을 판단할 수 없습니다/.test(sw(rs)!.summary)
+  const unoIrf = gate('Arduino Uno', 'IRFZ44N', 'MOTOR 12V 7A'), espIrl = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 5A'), espIrf = gate('ESP32', 'IRFZ44N', 'MOTOR 12V 5A')
+  const espIrlSmall = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 0.5A'), unoIrl = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 5A')
+  add('Uno → IRFZ44N 7 A, ESP32 → IRLZ44N 5 A and ESP32 → IRFZ44N: heat 판단 불가 following op_drive (no "방열판 없이 대략" pass); ESP32 → IRLZ44N 0.5 A heads "동작 경고 1"; Uno → IRLZ44N 5 A (4.95 V on the 4 V row) passes',
+    [unoIrf, espIrl, espIrf, espIrlSmall].every(follows) && head(espIrlSmall) === '동작 경고 1' && is(unoIrl, 'op_switch', 'pass', 'Q1')
+    && /게이트에 10 V 이상이 걸리게 하면/.test(sw(unoIrf)?.fix ?? ''),
+    [unoIrf, espIrl, espIrf, espIrlSmall, unoIrl].map(rs => `${head(rs)} · ${show(rs, 'op_switch', 'Q1')}`).join(' || '))
+
+  // 3. every fix that names a sense resistor value or another part, from an Arduino Uno through 100 Ω/10 kΩ: the value is
+  //    below the sense resistor's, the circuit with the change passes, and a sense resistor change it asks for is needed
+  //    (the part alone does not pass)
+  const asked: string[] = []
+  let sized = 0
+  for (const q of ['IRFZ44N', '2N7002', 'IRLZ44N', '2N7000']) for (const r of ['0.02', '0.05', '0.1', '0.3', '0.5', '1']) for (const a of ['0.05', '0.1', '1', '3', '15']) {
+    const rs = gate('Arduino Uno', q, `MOTOR 12V ${a}A`, r), f = fix(rs)
+    const part = /켜짐 저항이 [\d.]+ V에서 보장되는 ([A-Z0-9]+?)(?:으로|로) 바꾸면/.exec(f)?.[1]
+    const m = /감지 저항 RS를 ([\d.]+) (mΩ|Ω) 이하로/.exec(f)
+    const to = m ? Number(m[1]) * (m[2] === 'mΩ' ? 1e-3 : 1) : null
+    if (!part && to == null) continue
+    sized++
+    const at = (qq: string, rr: number) => drive(gate('Arduino Uno', qq, `MOTOR 12V ${a}A`, String(rr)))?.state
+    const bad = [to != null && !(to < Number(r)) ? `RS ${to} ≥ ${r}` : '', at(part ?? q, to ?? Number(r)) !== 'pass' ? 'the change does not pass' : '',
+      part && to != null && at(part, Number(r)) === 'pass' ? `${part} passes with RS ${r} as it is` : ''].filter(Boolean)
+    if (bad.length) asked.push(`${q} RS ${r} Ω ${a} A: ${bad.join(', ')} (${f})`)
+  }
+  const rs05 = gate('Arduino Uno', 'IRFZ44N', 'MOTOR 12V 3A', '0.05')
+  add('fixes from an Uno with a sense resistor: no value at or above the resistor\'s, no change that is not needed, and each one passes (IRFZ44N, RS 0.05 Ω, 3 A: IRLZ44N with RS as it is)',
+    sized >= 10 && asked.length === 0 && /IRLZ44N으로 바꾸면/.test(fix(rs05)) && !/감지 저항/.test(fix(rs05)),
+    `${sized} fixes · ${asked.slice(0, 2).join(' || ')} | ${said(rs05)}`)
+
+  // 4. an unknown motor current over a shrinking sense resistor: judged only once every signal's verdict is the same at
+  //    both ends, then as with no sense resistor at all; never sure at a larger resistor and unsure at a smaller one
+  const demoR = (q: string, j1: string, r: string | null) => run(variant(variant(variant(motor, setValue('Q1', q)), setValue('J1', j1)), c => {
+    if (r != null) { c.components.find(x => x.ref === 'R2')!.value = r; return }
+    c.components = c.components.filter(x => x.ref !== 'R2')
+    c.nets = c.nets.filter(n => n.name !== 'SENSE')
+    c.nets.find(n => n.name === 'GND')!.nodes = [...c.nets.find(n => n.name === 'GND')!.nodes.filter(nd => nd.ref !== 'R2'), { ref: 'Q1', pin: '3' }]
+  }))
+  const words = (rs: OpResult[]) => (drive(rs)?.detail ?? []).filter(d => /^(3\.3 V|5 V): /.test(d)).map(d => `${d.split(':')[0]} ${d.split(' → ')[1]}`).join(' / ')
+  const ladder: string[] = []
+  for (const [q, j1] of [['IRLZ44N', 'PWR_IN'], ['IRLZ44N', 'Arduino Uno'], ['IRFZ44N', 'PWR_IN'], ['2N7002', 'PWR_IN']] as const) {
+    const none = demoR(q, j1, null)
+    let sure = false
+    for (const r of ['0.2', '0.1', '0.05', '0.02', '0.01', '0.005', '0.001']) {
+      const rs = demoR(q, j1, r), d = drive(rs)
+      if (d?.state === 'unknown') { if (sure) ladder.push(`${q}/${j1} R2 ${r}: unsure after a sure larger one`); continue }
+      sure = true
+      if (d?.state !== drive(none)?.state || words(rs) !== words(none)) ladder.push(`${q}/${j1} R2 ${r}: ${d?.state} [${words(rs)}] vs no sense ${drive(none)?.state} [${words(none)}]`)
+    }
+  }
+  const r05 = demoR('IRLZ44N', 'PWR_IN', '0.05')
+  add('the motor demo with IRLZ44N/IRFZ44N/2N7002 and R2 from 0.2 Ω down to 1 mΩ: 판단 불가 until every signal agrees at both ends, then the verdict with no sense resistor; R2 0.05 Ω says up to 19 A for 5 V',
+    ladder.length === 0 && is(r05, 'op_drive', 'unknown', 'Q1') && head(r05) === '판단 불가 1' && /19000 mA 이하면 5 V 신호에서 완전히 켜집니다/.test(fix(r05)) && /MOTOR 0\.1A/.test(fix(r05)),
+    `${ladder.slice(0, 3).join(' || ')} | ${head(r05)} · ${said(r05)}`)
+
+  // 5. IRLZ44N's heat with the RDS(on) row its gate reaches: 22 mΩ from 10 V, 25 mΩ from 5 V, 35 mΩ from 4 V (× 2.25 hot).
+  //    6 A: 12 V gate 1.78 W and 5 V gate 2.03 W pass, 4.95 V from an Uno 2.84 W needs a heatsink; 40 A on 12 V is 79.2 W, under
+  //    PD 110 W: a heatsink, not "견디지 못합니다"
+  const railGate = (sup: string, mot: string) => run(circuit(
+    [['J2', 'Conn_01x03', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', 'IRLZ44N'], ['RG', 'R', '100']],
+    [['+12V', 'J2.1', 'M1.1', 'D1.2', ...(sup === '+12V' ? ['RG.1'] : [])], ...(sup === '+5V' ? [['+5V', 'J2.2', 'RG.1'] as Wire] : []), ['G', 'RG.2', 'Q1.1'],
+      ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J2.3', 'Q1.3']]))
+  const g12 = railGate('+12V', 'MOTOR 12V 6A'), g5 = railGate('+5V', 'MOTOR 12V 6A'), g12big = railGate('+12V', 'MOTOR 12V 40A'), g495 = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 6A')
+  const rowOf = (rs: OpResult[]) => sw(rs)?.detail.find(d => /^뜨거울 때의 켜짐 저항/.test(d)) ?? ''
+  const rows = SPECS.mos.IRLZ44N.rds_rows ?? []
+  add('IRLZ44N heat by its gate: 12 V and 5 V gates at 6 A pass on the 10 V and 5 V rows, 4.95 V at 6 A warns on the 4 V row, 40 A at 12 V warns (heatsink) instead of failing; the table holds the 5 V and 10 V rows',
+    is(g12, 'op_switch', 'pass', 'Q1') && /VGS 10 V의 RDS\(on\) 0\.022 Ω/.test(rowOf(g12)) && is(g5, 'op_switch', 'pass', 'Q1') && /VGS 5 V의 RDS\(on\) 0\.025 Ω/.test(rowOf(g5))
+    && is(g495, 'op_switch', 'warn', 'Q1', /방열판이 필요합니다/) && /VGS 4 V의 RDS\(on\) 0\.035 Ω/.test(rowOf(g495)) && is(g12big, 'op_switch', 'warn', 'Q1', /79\.2 W/)
+    && rows.some(r => r.vgs === 5 && r.rds.v === 0.025 && /0\.025 Ω @ VGS 5\.0 V/.test(r.rds.src)) && rows.some(r => r.vgs === 10 && r.rds.v === 0.022 && /0\.022 Ω @ VGS 10 V/.test(r.rds.src))
+    && [SPECS.mos.IRLZ44N.free_air, SPECS.mos.IRFZ44N.free_air].every(a => !!a && /두 번 읽어/.test(a.rds_hot.src) && /위쪽 끝/.test(a.rds_hot.src) && !/큰 쪽/.test(a.rds_hot.src)
+      && [a.rth_ja, a.tj_max, a.pd_case].every(n => /두 번 읽어 같은 값/.test(n.src))),
+    [g12, g5, g495, g12big].map(rs => show(rs, 'op_switch', 'Q1')).join(' / '))
+
+  // 6. a particle after a part's reference agrees with how it is read ("Q1은", "Q2는"), in every result so far
+  const FINAL = '0136789'     // 영 일 삼 육 칠 팔 end in a consonant
+  const particles = (t: string) => [...t.matchAll(/(?<![A-Za-z0-9])([A-Z]{1,3}\d{1,3})(은|는|이|가|을|를)(?=[\s,.)])/g)]
+    .filter(m => FINAL.includes(m[1].slice(-1)) !== ['은', '이', '을'].includes(m[2])).map(m => m[0])
+  const unknownMotor = gate('Arduino Uno', 'IRLZ44N', 'MOTOR')
+  const wrong = [...new Set(ALL.flatMap(r => particles([r.summary, r.fix ?? '', ...r.detail].join(' '))))]
+  add('no "Q1는" in any result: an unknown motor on IRLZ44N and on the demo\'s 2N7002 say "Q1은"',
+    wrong.length === 0 && /Q1은 방열판 없이/.test(sw(unknownMotor)?.fix ?? '') && /Q1은 115 mA까지/.test(pick(run(motor), 'op_switch', 'Q1')?.fix ?? ''),
+    `${wrong.slice(0, 5).join(', ')} | ${sw(unknownMotor)?.fix}`)
+
+  // 7. the parts listed for an unknown load say which do not fit the board's transistor seat
+  const smd = run(motor, 'smd'), tht = run(motor, 'tht')
+  add('the motor demo\'s list for an unknown load: on SMD it says 2N7000 (TO-92) and IRLZ44N (TO-220) do not fit SOT-23; on THT only IRLZ44N',
+    /2N7000은 TO-92, IRLZ44N은 큰 TO-220 부품이라 기판의 SOT-23 트랜지스터 자리에는 그대로 맞지 않습니다/.test(fix(smd))
+    && /IRLZ44N은 큰 TO-220 부품이라 기판의 TO-92 트랜지스터 자리에는/.test(fix(tht)) && !/2N7000은 TO-92/.test(fix(tht)),
+    `${said(smd)} || ${said(tht)}`)
+
+  // 8. no negative gate voltage anywhere in a gate's verdict, its basis included: a sense drop larger than the drive is
+  //    "0 V 이하" (at ID max with the load unknown, and at a known load)
+  const neg = (rs: OpResult[]) => { const r = drive(rs); return !!r && /(?<![\w.])[-−]\d+(?:\.\d+)?\s*V(?![A-Za-z])/.test([r.summary, r.fix ?? '', ...r.detail].join(' ')) }
+  const espRs = gate('ESP32', 'IRLZ44N', 'MOTOR', '0.1'), unoRs = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 6A', '1')
+  const negs = [espRs, unoRs, demoR('IRLZ44N', 'PWR_IN', '0.1'), demoR('IRFZ44N', 'Arduino Uno', '0.1')].filter(neg)
+  add('a sense drop over the drive is written "0 V 이하", never a negative VGS, in the summary, fix and basis (ESP32 → IRLZ44N with RS 0.1 Ω and no current; Uno with RS 1 Ω at 6 A)',
+    negs.length === 0 && !!drive(espRs)?.detail.some(d => /^ID 최대면 3\.3 V: VGS 0 V 이하/.test(d)) && is(unoRs, 'op_drive', 'error', 'Q1', /게이트 0 V 이하 < 문턱 최대 2 V/),
+    `${negs.map(said).slice(0, 2).join(' || ')} | ${drive(espRs)?.detail.filter(d => /^ID 최대면/.test(d)).join(' / ')} | ${said(unoRs)}`)
+
+  const problems = verdictProblems(ALL)
+  add('every verdict up to here: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+  for (const [name, ok, info] of F) check(`O25 ${name}`, ok, info)
+}
+
+// O26. third review of O23–O25 (2026-11-09): advice no resistor value can carry out, a signal net's own name and a bare
+// chip's supply read under the board's name, "부하가 0 mA 이하면", an NPN's base current alone over the rating, 47 A drops on
+// a 12 V supply, the heat taking the 4 V row under a 9.65 V gate, a missing pull-down hidden by an unknown load, and "이하면"
+// at a limit that warns
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  type Wire = [string, ...string[]]
+  const head = (rs: OpResult[]) => operatingHeadline(rs).text
+  const drive = (rs: OpResult[]) => pick(rs, 'op_drive', 'Q1')
+  const fix = (rs: OpResult[]) => drive(rs)?.fix ?? ''
+  const said = (rs: OpResult[]) => { const r = drive(rs); return r ? `${r.state}: ${r.summary}${r.fix ? ` fix: ${r.fix}` : ''}` : '(no op_drive)' }
+  const text = (r: OpResult | undefined) => (r ? [r.summary, r.fix ?? '', ...r.detail].join(' ') : '')
+  // the signal header J1 (signal, GND) on the gate, through RG or (rg null) straight, RP to GND unless null, a 12 V motor,
+  // optionally RS under the source
+  const gate = (j1: string, q: string, mot: string, rg: string | null, rp: string | null, rs: string | null, style: 'smd' | 'tht' | null = null) => run(circuit(
+    [['J1', 'Conn_01x02', j1], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', q],
+      ...(rp ? [['RP', 'R', rp] as Comp] : []), ...(rg ? [['RG', 'R', rg] as Comp] : []), ...(rs ? [['RS', 'R', rs] as Comp] : [])],
+    [...(rg ? [['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', ...(rp ? ['RP.1'] : [])]] as Wire[] : [['G', 'J1.1', 'Q1.1', ...(rp ? ['RP.1'] : [])]] as Wire[]),
+      ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'],
+      ...(rs ? [['SRC', 'Q1.3', 'RS.1'], ['GND', 'J1.2', 'J2.2', 'RS.2', ...(rp ? ['RP.2'] : [])]] as Wire[] : [['GND', 'J1.2', 'J2.2', 'Q1.3', ...(rp ? ['RP.2'] : [])]] as Wire[])]), style)
+
+  // 1. a gate equal to a part's guarantee with no sense drop is not brought to it by any resistor value: an Uno straight on
+  //    2N7002 (5 V rated) over RS 1 Ω is told 2N7000, which passes with RS as it is, never "RS를 더 작은 값으로" or NDS7002A;
+  //    every sized fix from a straight Uno passes and changes only what it has to
+  const direct = (q: string, r: string, a: string) => gate('Arduino Uno', q, `MOTOR 12V ${a}A`, null, '10k', r, 'smd')
+  const n7002 = direct('2N7002', '1', '0.1'), irf = direct('IRFZ44N', '1', '0.1')
+  const wrong: string[] = []
+  for (const q of ['2N7002', 'NDS7002A', '2N7000', 'IRLZ44N', 'IRFZ44N']) for (const r of ['1', '0.5', '0.1', '0.01']) for (const a of ['0.05', '0.1', '1', '3']) {
+    const f = fix(direct(q, r, a))
+    if (/더 작은 값으로 줄이면 됩니다/.test(f)) { wrong.push(`${q} RS ${r} ${a} A: ${f}`); continue }
+    const part = /켜짐 저항이 [\d.]+ V에서 보장되는 ([A-Z0-9]+?)(?:으로|로) 바꾸면/.exec(f)?.[1]
+    const m = /감지 저항 RS를 ([\d.]+) (mΩ|Ω) 이하로/.exec(f)
+    const to = m ? Number(m[1]) * (m[2] === 'mΩ' ? 1e-3 : 1) : null
+    if (!part && to == null) continue
+    if (drive(direct(part ?? q, String(to ?? r), a))?.state !== 'pass') wrong.push(`${q} RS ${r} ${a} A: the change does not pass (${f})`)
+    if (part && to != null && drive(direct(part, r, a))?.state === 'pass') wrong.push(`${q} RS ${r} ${a} A: ${part} passes with RS as it is (${f})`)
+  }
+  add('an Uno straight on 2N7002 or IRFZ44N over RS 1 Ω at 0.1 A: the fix offers 2N7000 with RS as it is, not "더 작은 값으로" or NDS7002A; every sized fix from a straight Uno passes and is needed',
+    /2N7000으로 바꾸면/.test(fix(n7002)) && !/감지 저항|NDS7002A/.test(fix(n7002)) && /2N7000으로 바꾸면/.test(fix(irf)) && !/감지 저항 RS를|NDS7002A/.test(fix(irf))
+    && is(direct('2N7000', '1', '0.1'), 'op_drive', 'pass', 'Q1') && wrong.length === 0,
+    `${wrong.slice(0, 2).join(' || ')} | ${said(n7002)} || ${said(irf)}`)
+
+  // 2. the signal net's own name, when it writes one level, comes before the board's name: a pin on VCC_3V3, 3V3_OUT or
+  //    IOREF_3V3 of an "Arduino Uno" header is 3.3 V, so IRLZ44N (4 V) is not passed
+  const unoPin = (net: string) => run(circuit(
+    [['J1', 'Conn_01x03', 'Arduino Uno'], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR 12V 0.5A'], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', 'IRLZ44N'], ['RP', 'R', '10k'], ['RG', 'R', '100']],
+    [[net, 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.3', 'J2.2', 'Q1.3', 'RP.2']]))
+  const pins = ['VCC_3V3', '3V3_OUT', 'IOREF_3V3'].map(n => [n, unoPin(n)] as const)
+  const d9 = unoPin('D9')
+  add('a pin on VCC_3V3, 3V3_OUT or IOREF_3V3 of an "Arduino Uno" header: 3.3 V from the net name (IRLZ44N warns at 3.27 V); a pin on D9 is still the Uno\'s 5 V',
+    pins.every(([n, rs]) => is(rs, 'op_drive', 'warn', 'Q1', /3\.27 V/) && !!drive(rs)?.detail.some(d => d.includes(`J1 핀의 넷 이름 ${n} → 3.3 V 신호로 계산`)))
+    && is(d9, 'op_drive', 'pass', 'Q1') && !!drive(d9)?.detail.includes('구동 전압: J1 값 Arduino Uno → 5 V 신호로 계산'),
+    `${pins.map(([n, rs]) => `${n}: ${said(rs)}`).join(' || ')} | D9: ${said(d9)}`)
+
+  // 3. an unknown motor current over a sense resistor with the gate right at the guarantee or the threshold: no limit of
+  //    0 mA or "-0 µA", and the verdict is the one any current gives (at the drop the end that decides it, never "3 V < 3 V")
+  const noR1 = run(variant(motor, c => {
+    c.components = c.components.filter(x => x.ref !== 'R1')
+    c.nets = c.nets.filter(n => n.name !== 'PWM')
+    c.nets.find(n => n.name === 'GATE')!.nodes.push({ ref: 'J1', pin: '2' })
+  }))
+  const esp1k = gate('ESP32', '2N7000', 'MOTOR', '1k', '10k', '0.1'), sig10k = gate('SIG', '2N7002', 'MOTOR', '10k', '10k', '0.1')
+  const edge = [noR1, esp1k, sig10k]
+  const nonPositive = (rs: OpResult[]) => rs.some(r => [...text(r).matchAll(/부하가 ([-\d.]+) (?:mA|µA) (?:이하|미만)면/g)].some(m => !(Number(m[1]) > 0)))
+  add('the motor demo with no R1 (5 V right at 2N7002\'s 5 V), ESP32 through 1k/10k on 2N7000 (3 V at its 3 V threshold), SIG through 10k/10k: no "0 mA 이하면", no "-0 µA"; warn, error 2.98 V, error 2.49 V',
+    edge.every(rs => !nonPositive(rs)) && is(noR1, 'op_drive', 'warn', 'Q1') && is(esp1k, 'op_drive', 'error', 'Q1', /게이트 2\.98 V < 문턱 최대 3 V/)
+    && is(sig10k, 'op_drive', 'error', 'Q1', /2\.49 V < 문턱 최대 2\.5 V/) && /5 V 신호라면 부품표에서 완전히 켜지는 것은 2N7000/.test(fix(noR1)),
+    edge.map(said).join(' || '))
+
+  // 4. a bare ATmega328P puts out its supply's level: beside a +3V3 pin that lights an LED it is 3.3 V, beside +5V it is 5 V,
+  //    beside both it is either; an Arduino Nano ATmega328 is still the 5 V board
+  const chip = (v: string, sup: string[]) => run(circuit(
+    [['J1', `Conn_01x0${sup.length + 2}`, v], ...sup.flatMap((_, k) => [[`RL${k + 1}`, 'R', '1k'], [`L${k + 1}`, 'LED', 'RED']] as Comp[]), ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR 12V 0.5A'], ['D1', 'D', '1N4007'],
+      ['Q1', 'Q_NMOS', 'IRLZ44N'], ['RP', 'R', '10k'], ['RG', 'R', '100']],
+    [...sup.flatMap((n, k) => [[n, `J1.${k + 3}`, `RL${k + 1}.1`], [`LA${k + 1}`, `RL${k + 1}.2`, `L${k + 1}.2`]] as Wire[]), ['IO', 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'],
+      ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2', ...sup.map((_, k) => `L${k + 1}.1`)]]))
+  const c33 = chip('ATmega328P', ['+3V3']), c5 = chip('ATmega328P', ['+5V']), cBoth = chip('ATmega328P', ['+5V', '+3V3']), nano = chip('Arduino Nano ATmega328', ['+3V3'])
+  add('ATmega328P beside +3V3 is 3.3 V (IRLZ44N warns at 3.27 V), beside +5V is 5 V (passes), beside both keeps 3.3 V and 5 V; Arduino Nano ATmega328 beside +3V3 is 5 V',
+    is(c33, 'op_drive', 'warn', 'Q1', /3\.27 V/) && !!drive(c33)?.detail.some(d => /J1 값 ATmega328P, 같은 커넥터의 3\.3 V 전원으로 도는 칩 → 3\.3 V 신호로 계산/.test(d))
+    && is(c5, 'op_drive', 'pass', 'Q1') && is(cBoth, 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) && is(nano, 'op_drive', 'pass', 'Q1'),
+    [c33, c5, cBoth, nano].map(said).join(' || '))
+
+  // 5. an NPN's emitter resistor that the base current alone heats past the rating fails whatever the load draws:
+  //    0.5² × 1 Ω = 250 mW, 0.5² × 0.5 Ω = 125 mW, 1.06² × 1 Ω = 1.13 W against 125 mW
+  const npn = (rb: string, re: string) => run(circuit(
+    [['J1', 'Conn_01x02', '5V'], ['RB', 'R', rb], ['RE', 'R', re], ['Q1', 'Q_NPN', '2N3904'], ['M1', 'Conn_01x02', 'MOTOR'], ['J2', 'Conn_01x02', 'PWR'], ['D1', 'D', '1N4007']],
+    [['IO', 'J1.1', 'RB.1'], ['B', 'RB.2', 'Q1.1'], ['E', 'Q1.3', 'RE.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['C', 'M1.2', 'Q1.2', 'D1.1'], ['GND', 'J1.2', 'J2.2', 'RE.2']]), 'smd')
+  const npns = [['10', '1', '250 mW'], ['10', '0.5', '125 mW'], ['4.7', '1', '1.13 W']].map(([rb, re, p]) => [npn(rb, re), p] as const)
+  add('NPN with RB 10 Ω/RE 1 Ω, RB 10 Ω/RE 0.5 Ω, RB 4.7 Ω/RE 1 Ω and an unknown motor: RE fails from the base current alone (250 mW, 125 mW, 1.13 W), never "0 mA 이하면"',
+    npns.every(([rs, p]) => is(rs, 'op_rpower', 'error', 'RE', new RegExp(`${p.replace('.', '\\.')} ≥ 정격 125 mW`)) && !nonPositive(rs) && !pick(rs, 'op_rpower', 'RE')?.cause),
+    npns.map(([rs]) => show(rs, 'op_rpower', 'RE')).join(' || '))
+
+  // 6. with the current unknown, the most a sense resistor carries is also the load's supply over it: 12 V ÷ 1 Ω = 12 A, a
+  //    12 V drop and 144 W, not 47 A, 47 V and 2209 W
+  const big = gate('Arduino Uno', 'IRLZ44N', 'MOTOR', '100', '10k', '1', 'smd')
+  const rsHeat = pick(big, 'op_rpower', 'RS')
+  add('Uno → IRLZ44N over RS 1 Ω on 12 V with no motor current: the drop is 0~12 V at 12000 mA, the RS heat 144 W, never 47 V or 2209 W; still 판단 불가 1',
+    is(big, 'op_drive', 'unknown', 'Q1') && !!drive(big)?.detail.some(d => /0~12000 mA\(부하 전원 12 V ÷ RS 1 Ω\) = 0~12 V/.test(d)) && !/47 V|2209 W/.test(`${text(drive(big))} ${text(rsHeat)}`)
+    && is(big, 'op_rpower', 'unknown', 'RS', /144 W/) && head(big) === '판단 불가 1',
+    `${drive(big)?.detail.find(d => /^소스 감지 저항/.test(d))} | ${show(big, 'op_rpower', 'RS')}`)
+
+  // 7. a gate the drive passes even at the most current (12 V rail, RS 0.05 Ω: 9.65 V) heats with the row it reaches: 5 V's
+  //    25 mΩ × 2.25, 6550 mA with no heatsink, not "게이트에 4 V 이상이 걸리면" and 5540 mA
+  const rail = run(circuit(
+    [['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', 'MOTOR'], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', 'IRLZ44N'], ['RG', 'R', '100'], ['RS', 'R', '0.05']],
+    [['+12V', 'J2.1', 'M1.1', 'D1.2', 'RG.1'], ['G', 'RG.2', 'Q1.1'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['SRC', 'Q1.3', 'RS.1'], ['GND', 'J2.2', 'RS.2']]))
+  const railSw = pick(rail, 'op_switch', 'Q1')
+  add('+12V → RG → IRLZ44N over RS 0.05 Ω, unknown motor: drive passes at 9.65 V and the switch says 6550 mA on the 5 V row, without "게이트에 4 V 이상"',
+    is(rail, 'op_drive', 'pass', 'Q1', /9\.65 V/) && is(rail, 'op_switch', 'unknown', 'Q1', /방열판 없이 대략 6550 mA/) && !/게이트에 4 V 이상/.test(text(railSw))
+    && !!railSw?.detail.some(d => /VGS 5 V의 RDS\(on\) 0\.025 Ω/.test(d)),
+    `${show(rail, 'op_drive', 'Q1')} | ${show(rail, 'op_switch', 'Q1')}`)
+
+  // 8. a gate with no pull-down is said whatever the load: with the motor current unknown over a sense resistor it warns
+  //    on its own and tells to fit 10 kΩ; the unknown current is still counted once, with the switch
+  const loose = gate('Arduino Uno', 'IRLZ44N', 'MOTOR', '100', null, '0.05'), held = gate('Arduino Uno', 'IRLZ44N', 'MOTOR', '100', '10k', '0.05')
+  add('Uno → RG → IRLZ44N with no pull-down over RS 0.05 Ω and no motor current: "풀다운 저항 없음" warns with the 10 kΩ fix (동작 경고 1 · 판단 불가 1); with RP 판단 불가 1 only',
+    is(loose, 'op_drive', 'warn', 'Q1', /풀다운 저항 없음/) && /게이트와 GND 사이에 10 kΩ/.test(fix(loose)) && head(loose) === '동작 경고 1 · 판단 불가 1'
+    && is(held, 'op_drive', 'unknown', 'Q1') && head(held) === '판단 불가 1',
+    `${head(loose)} · ${said(loose)} || ${head(held)}`)
+
+  // 9. the sense resistor's limit for an unknown load is a bound the warning starts at (90 % of the rating): "미만이면".
+  //    ESP32 → IRLZ44N over RS 0.05 Ω: 1500 mA, where the heat is 112.5 mW = 90 % and warns; just under it passes
+  const esp = (m: string) => gate('ESP32', 'IRLZ44N', m, '100', '10k', '0.05', 'smd')
+  const limitLine = pick(esp('MOTOR'), 'op_rpower', 'RS')?.detail.find(d => /^부하가 /.test(d)) ?? ''
+  add('ESP32 → IRLZ44N over RS 0.05 Ω: the unknown load\'s RS limit reads "1500 mA 미만이면"; 1.5 A warns and 1.495 A passes',
+    /^부하가 1500 mA 미만이면 정격 125 mW의 90% 미만입니다$/.test(limitLine) && is(esp('MOTOR 12V 1.5A'), 'op_rpower', 'warn', 'RS') && is(esp('MOTOR 12V 1.495A'), 'op_rpower', 'pass', 'RS'),
+    `${limitLine} | ${show(esp('MOTOR 12V 1.5A'), 'op_rpower', 'RS')} | ${show(esp('MOTOR 12V 1.495A'), 'op_rpower', 'RS')}`)
+
+  const problems = verdictProblems(ALL)
+  add('every verdict up to here: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+  for (const [name, ok, info] of F) check(`O26 ${name}`, ok, info)
+}
+
+// O27. fourth review (2026-11-09): a 5 V in the signal net's name lifting a 3.3 V board, a fix for the part's own gate that
+// leaves the load too hot, a heatsink taken for "견디지 못합니다", a bare ATmega328P with no supply pin read as 5 V, and a
+// load too hot at any gate left as only "판단합니다"; the peer's three MCU → MOSFET cases kept
+{
+  const F: [string, boolean, string][] = []
+  const add = (name: string, ok: boolean, info: string) => F.push([name, ok, info])
+  const drive = (rs: OpResult[]) => pick(rs, 'op_drive', 'Q1')
+  const fix = (rs: OpResult[]) => drive(rs)?.fix ?? ''
+  const said = (rs: OpResult[]) => { const r = drive(rs); return r ? `${r.state}: ${r.summary}${r.fix ? ` fix: ${r.fix}` : ''}` : '(no op_drive)' }
+  // J1 (signal, GND) → RG → gate, RP 10k to GND, a motor on +12V; `net` names the signal's net
+  const gate = (j1: string, q: string, mot: string, rg = '100', net = 'IO') => run(circuit(
+    [['J1', 'Conn_01x02', j1], ['J2', 'Conn_01x02', 'PWR'], ['M1', 'Conn_01x02', mot], ['D1', 'D', '1N4007'], ['Q1', 'Q_NMOS', q], ['RP', 'R', '10k'], ['RG', 'R', rg]],
+    [[net, 'J1.1', 'RG.1'], ['G', 'RG.2', 'Q1.1', 'RP.1'], ['+12V', 'J2.1', 'M1.1', 'D1.2'], ['MOT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'J1.2', 'J2.2', 'Q1.3', 'RP.2']]))
+
+  // 1. the peer's cases: ESP32 → IRFZ44N cannot be relied on to turn on, Arduino Uno → IRLZ44N passes, ESP32 → IRLZ44N warns
+  const espIrf = gate('ESP32', 'IRFZ44N', 'MOTOR 12V 1A'), unoIrl = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 1A'), espIrl = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 1A')
+  add('ESP32 → IRFZ44N errs under the 4 V threshold, Arduino Uno → IRLZ44N passes, ESP32 → IRLZ44N warns under the 4 V guarantee',
+    is(espIrf, 'op_drive', 'error', 'Q1', /3\.27 V < 문턱 최대 4 V/) && is(unoIrl, 'op_drive', 'pass', 'Q1') && is(unoIrl, 'op_switch', 'pass', 'Q1')
+    && is(espIrl, 'op_drive', 'warn', 'Q1', /3\.27 V.*보장 전압 4 V 미만/),
+    [espIrf, unoIrl, espIrl].map(said).join(' || '))
+
+  // 2. a 5 V in the signal net's name is as often the load's: it never lifts an ESP32's pin to 5 V (PWM_5V, FAN_5V_CTRL,
+  //    MOTOR_5V_PWM), while a 3V3 in it still lowers an Uno's pin
+  const named = ['PWM_5V', 'FAN_5V_CTRL', 'MOTOR_5V_PWM'].map(n => [n, gate('ESP32', 'IRLZ44N', 'MOTOR 12V 1A', '100', n)] as const)
+  const uno33 = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 1A', '100', 'VCC_3V3')
+  add('an ESP32 pin on PWM_5V, FAN_5V_CTRL or MOTOR_5V_PWM is still 3.3 V (IRLZ44N warns); an Uno pin on VCC_3V3 is 3.3 V',
+    named.every(([, rs]) => is(rs, 'op_drive', 'warn', 'Q1', /3\.27 V/) && !!drive(rs)?.detail.includes('구동 전압: J1 값 ESP32 → 3.3 V 신호로 계산'))
+    && is(uno33, 'op_drive', 'warn', 'Q1', /3\.27 V/),
+    `${named.map(([n, rs]) => `${n}: ${said(rs)}`).join(' || ')} | ${said(uno33)}`)
+
+  // 3. a fix that keeps the part says what the load then does to it: IRLZ44N with RG 10k at 6 A is told the divider and that
+  //    2.84 W needs a heatsink; at 45 A (159 W, over PD 110 W) the divider alone is not offered
+  const six = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 6A', '10k'), big = gate('Arduino Uno', 'IRLZ44N', 'MOTOR 12V 45A', '10k')
+  add('Uno → 10k/10k → IRLZ44N: at 6 A the divider fix adds "2.84 W라 방열판이 필요합니다"; at 45 A the divider alone is not the fix',
+    /RG를 풀다운 RP의 1\/100 이하로.*줄이면 됩니다\. 부하 6000 mA에서는 발열이 대략 2\.84 W라 방열판이 필요합니다/.test(fix(six))
+    && !/줄이면 됩니다/.test(fix(big)) && /견디지 못합니다/.test(fix(big)),
+    `${said(six)} || ${said(big)}`)
+
+  // 4. another part that only needs a heatsink is offered with that said, not struck as "견디지 못합니다": IRFZ44N at 10 A from an Uno
+  const irf10 = gate('Arduino Uno', 'IRFZ44N', 'MOTOR 12V 10A')
+  add('Uno → IRFZ44N at 10 A: the fix offers IRLZ44N and says 7.88 W needs a heatsink, never "견디지 못합니다"',
+    /IRLZ44N으로 바꾸면 됩니다.*7\.88 W라 방열판이 필요합니다/.test(fix(irf10)) && !/견디지 못합니다/.test(fix(irf10)),
+    said(irf10))
+
+  // 5. a bare ATmega328P with no supply pin beside it says nothing of its level: 3.3 V and 5 V both
+  const bare = gate('ATmega328P', 'IRLZ44N', 'MOTOR 12V 0.5A')
+  add('a bare ATmega328P header with no supply pin: both 3.3 V and 5 V (warns "5 V 신호에서만")',
+    is(bare, 'op_drive', 'warn', 'Q1', /5 V 신호에서만/) && !drive(bare)?.detail.some(d => /신호로 계산/.test(d)),
+    said(bare))
+
+  // 6. a gate under every RDS(on) row leaves the heat unknown, but a load that the smallest row still heats past free air
+  //    needs a heatsink whatever the gate: ESP32 → IRLZ44N at 45 A says so; at 1 A it does not
+  const hot = gate('ESP32', 'IRLZ44N', 'MOTOR 12V 45A')
+  const swFix = (rs: OpResult[]) => pick(rs, 'op_switch', 'Q1')?.fix ?? ''
+  add('ESP32 → IRLZ44N at 45 A: the heat is unknown and its fix says a heatsink is needed at any gate (100 W > 2.42 W); at 1 A it does not',
+    is(hot, 'op_switch', 'unknown', 'Q1') && /어느 게이트 전압에서도 발열이 대략 100 W 이상이라 방열판 없이 견디는 2\.42 W를 넘으므로, 방열판은 필요합니다/.test(swFix(hot))
+    && !/방열판은 필요합니다/.test(swFix(espIrl)),
+    `${show(hot, 'op_switch', 'Q1')} fix: ${swFix(hot)}`)
+
+  const problems = verdictProblems(ALL)
+  add('every verdict up to here: basis, no NaN, distinct numbers', problems.length === 0, `${ALL.length} results${problems.length ? ' · ' + [...new Set(problems)].slice(0, 4).join(' | ') : ''}`)
+  for (const [name, ok, info] of F) check(`O27 ${name}`, ok, info)
+}
+
 // O9. schematic and finished board give the same answers (real boards in server/outputs) ──
 // the netlists are read with the server's own reader (server/netlist.ts), as /generate and /demo_result read them
 {
