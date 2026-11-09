@@ -6,7 +6,7 @@
 
 위 이미지는 편집하지 않은 실제 출력이다. 저장소에 들어 있는 모터 드라이버 데모 회로(`server/test_circuits/nmos_motor.py`)를 돌린 결과로, 기판 36.7 × 36.4 mm, 배선 14/14 완료, 비아 3개, 트랙 길이 72 mm, KiCad DRC 오류 0이다. OpenAI 키 없이 `/?demo=motor`에서 같은 결과를 만들 수 있다.
 
-배포 데모: https://schemaforge.kro.kr/?demo=motor (Render 기본 주소 https://schemaforge-zuco.onrender.com 도 같은 서버). Render 무료 인스턴스라 15분 동안 아무도 쓰지 않으면 잠들어서 첫 접속에 약 1분 걸린다. 데모 하나를 넷리스트 → 기판 → 3D → 거버까지 만드는 데 2026-10-23 측정으로 35~41초.
+배포 데모: https://schemaforge-app.duckdns.org/?demo=motor (집의 젯슨 서버, DEPLOY.md 7절). 예전 주소 https://schemaforge.kro.kr (Render 무료 인스턴스, 기본 주소 https://schemaforge-zuco.onrender.com 과 같은 서버)도 같은 코드로 남아 있는데, 15분 동안 아무도 쓰지 않으면 잠들어서 첫 접속에 약 1분 걸린다. 데모 기판 하나(넷리스트 → 기판·DRC)는 젯슨에서 2초, Render에서 6~9초 걸렸다(2026-11-08, `check_live.mjs` P2).
 
 ## 프로젝트 개요
 
@@ -265,7 +265,7 @@ cd server && npx tsx check_outputs_sweep.ts
 ```bash
 python server/pcb/check_deploy.py
 ```
-배포 이미지 10항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 띄운 뒤 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), skidl 코드가 띄운 자식 프로세스가 함께 정리되고(그 자식이 파이썬의 오류 출력을 쥐고 있어도 실행이 바로 끝나는지) 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
+배포 이미지 11항목 (Docker 필요, `npm test`에는 넣지 않음. 젯슨용은 젯슨에서 `--dockerfile Dockerfile.jetson`). 이미지를 빌드해 빈 `/tmp`로 띄운 뒤(Render처럼 `/tmp`나 HOME이 이미지와 다르게 주어져도 되는지) 컨테이너 안 KiCad 10, 이미지에 `.env`가 없는지, 기판·DRC·거버, 실행 경로, 3D 모델에 부품 몸체가 들어가는지(KiCad 이미지에는 3D 모델이 없어 `server/pcb/3dmodels` 사본을 쓴다), 배포 서버 차단, 데모 넷리스트가 이미지에 들어 있는지, DRC에 풋프린트 라이브러리 경고가 없는지(이미지에 라이브러리 표가 없으면 부품마다 경고), 그 표가 `/tmp`나 HOME이 아니라 `KICAD_CONFIG_HOME`이 가리키는 이미지 폴더에 있는지(`/tmp` 아래에 두었을 때 Render의 데모 기판마다 경고가 9~15개 났다), skidl 코드가 띄운 자식 프로세스가 함께 정리되고(그 자식이 파이썬의 오류 출력을 쥐고 있어도 실행이 바로 끝나는지) 좀비가 남지 않는지(1번 프로세스 tini), 3D 모델을 8개씩 두 번 동시에 내보내도 모두 같은 크기로 받는지를 확인한다.
 
 ```bash
 npm run test:browser     # 서버를 스스로 띄우고 끈다. 몇 개만: npm run test:browser -- drawer pcb_sketch
@@ -273,9 +273,9 @@ npm run test:browser     # 서버를 스스로 띄우고 끈다. 몇 개만: npm
 아래 브라우저 검사 전부를 한 번에 (대략 10분, KiCad와 playwright의 Chromium 필요, `npm test`에는 넣지 않음). `scripts/check_*.mjs` 중 배포된 서버용인 `check_live.mjs`를 뺀 것 모두와 `check_3d.ts`의 뷰어 항목(BASE)을 차례로 돌린다. 파일 이름으로 찾으므로 새 브라우저 검사는 저절로 들어간다. API와 vite 개발 서버를 OS가 주는 빈 포트에 띄운다(3000·8113은 쓰지 않는다. `SF_BROWSER_API_PORT`·`SF_BROWSER_VITE_PORT`나 `--api-port`·`--vite-port`로 정할 수도 있다). 키는 넘기지 않는다: `server/skidl_run.ts`의 `SECRET_ENV`에 맞는 이름은 환경과 `server/.env`(이름만 읽는다)에서 모두 빈 값이나 가짜 값으로 주고(dotenv는 이미 있는 변수를 덮어쓰지 않는다), 모델과 Supabase 주소는 닫힌 로컬 포트로 보낸다. 검사마다 결과 한 줄, 끝에 요약을 찍는다. 다 끝나거나 실패하거나 Ctrl+C를 눌러도 두 서버와 그 자식 프로세스를 모두 끄고, 두 포트에 남은 것이 없는지 확인한다(Windows에서는 이 명령이 강제로 끝나도 Node가 띄운 프로세스가 함께 끝난다). 종료 코드가 0이 아닌 검사, 0으로 끝났어도 FAIL 줄을 찍은 검사, 시간 한도(`SF_BROWSER_CHECK_MIN`, 기본 20분)를 넘긴 검사는 실패다. 서버에 KiCad가 없으면(`/health`의 kicad가 null) 기판을 만드는 `check_board_panel`·`check_3d`는 SKIP으로 적고 통과로 세지 않는다. 하나라도 통과하지 못하면 종료 코드 1이다. 기판 검사는 `npm test`처럼 `server/outputs/`에 파일을 쓴다. `--list`는 돌릴 검사 목록만 보인다.
 
 ```bash
-node scripts/check_live.mjs https://schemaforge.kro.kr
+node scripts/check_live.mjs https://schemaforge-app.duckdns.org
 ```
-배포된 서버를 브라우저로 쓰는 10항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지, 첫 화면·데모 기판·3D 뷰어·PDF·웹 글꼴을 쓰는 동안 Content-Security-Policy 위반이 없고 글꼴이 하나 이상 받아지는지(사이트의 CSP는 앞의 Caddy가 붙인다. 빠진 출처는 콘솔 한 줄만 남기고 그 파일을 막으므로, 콘솔 문구와 `securitypolicyviolation` 이벤트를 함께 모은다). 주소를 바꾸면 로컬 컨테이너(DEPLOY.md 4절의 `http://localhost:8114`)에도 쓸 수 있다.
+배포된 서버를 브라우저로 쓰는 10항목: `/health`의 KiCad, 데모 기판 생성, 3D 모델, 거버 zip 내려받기, 계정 없는 방문자에게 AI 다듬기·AI 편집이 이유와 함께 거절되는지, 화면 오류가 없는지, 첫 화면이 3D 뷰어와 PDF 코드를 받지 않고 진입 파일이 작은지(800 KiB 미만), PDF 단추가 PDF를 주는지, 첫 화면·데모 기판·3D 뷰어·PDF·웹 글꼴을 쓰는 동안 Content-Security-Policy 위반이 없고 글꼴이 하나 이상 받아지는지(사이트의 CSP는 앞의 Caddy가 붙인다. 빠진 출처는 콘솔 한 줄만 남기고 그 파일을 막으므로, 콘솔 문구와 `securitypolicyviolation` 이벤트를 함께 모은다). 주소를 바꾸면 Render 예전 주소나 로컬 컨테이너(DEPLOY.md 4절의 `http://localhost:8114`)에도 쓸 수 있다.
 
 ```bash
 node scripts/check_drawer.mjs     # npm run dev 를 켠 채로

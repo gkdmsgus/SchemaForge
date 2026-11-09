@@ -7,11 +7,11 @@
 // still gives a PDF, P10 no Content-Security-Policy violation while the home page, the demo board, the 3D viewer, the PDF
 // and the web fonts load (the site's CSP is set by Caddy in front of it: a source it leaves out blocks that file with
 // only a console line, which P7 never saw). Needs the playwright package (in package.json) and its Chromium.
-// Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge.kro.kr; DEMO=motor, SHOT=board.png)
+// Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge-app.duckdns.org, the Jetson; the old Render address works too; DEMO=motor, SHOT=board.png)
 import fs from 'node:fs'
 import { chromium } from 'playwright'
 
-const BASE = (process.argv[2] || process.env.BASE || 'https://schemaforge.kro.kr').replace(/\/$/, '')
+const BASE = (process.argv[2] || process.env.BASE || 'https://schemaforge-app.duckdns.org').replace(/\/$/, '')
 const DEMO = process.env.DEMO || 'motor'
 let failed = 0
 const check = (name, ok, info = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`) }
