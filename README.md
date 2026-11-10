@@ -200,7 +200,7 @@ cd server && npx tsx check_job_slots.ts
 ```bash
 cd server && npx tsx check_auth_flow.ts
 ```
-로그인과 기록 25항목. 가짜 Supabase(인증 서버와 표 API)를 띄우고 실제 서버를 배포 모드로 돌린다. 가입하면 확인 메일 안내만 오는지, 확인 전 로그인·이미 가입한 주소·잘못된 비밀번호·Supabase 중단(503)의 안내, 토큰 갱신과 만료(401 auth_expired), 허용 목록, 기록·대화·즐겨찾기의 주인 확인(남의 것은 404), 누가 로그인한 뒤에도 표 요청이 늘 서버 키로 나가는지, `/netlist/restore`, Supabase 없는 개발 모드, Mouser 가격 조회가 허용 목록 밖 계정을 키를 쓰기 전에 거절하고, 만료된 토큰에는 갱신하라는 401(auth_expired)로, Supabase 중단에는 503으로 답하는지를 확인한다.
+로그인과 기록 27항목. 가짜 Supabase(인증 서버와 표 API)를 띄우고 실제 서버를 배포 모드로 돌린다. 가입하면 확인 메일 안내만 오는지, 확인 전 로그인·이미 가입한 주소·잘못된 비밀번호·Supabase 중단(503)의 안내, 토큰 갱신과 만료(401 auth_expired), 허용 목록, 기록·대화·즐겨찾기의 주인 확인(남의 것은 404), 누가 로그인한 뒤에도 표 요청이 늘 서버 키로 나가는지, `/netlist/restore`, Supabase 없는 개발 모드, Mouser 가격 조회가 허용 목록 밖 계정을 키를 쓰기 전에 거절하고, 만료된 토큰에는 갱신하라는 401(auth_expired)로, Supabase 중단에는 503으로 답하는지, 배포 서버가 시작할 때와 `SF_SUPABASE_KEEPALIVE_HOURS`(기본 24시간, 0이면 끔)마다 표를 한 번 읽어 무료 프로젝트가 멈추지 않게 하는지를 확인한다.
 
 ```bash
 cd server && npx tsx check_model_config.ts

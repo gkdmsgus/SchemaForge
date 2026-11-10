@@ -1,4 +1,4 @@
-// Checks A1-A22: sign-up, sign-in, history, favorites and the AI editor's chat against Supabase (index.ts). A mock
+// Checks A1-A23: sign-up, sign-in, history, favorites and the AI editor's chat against Supabase (index.ts). A mock
 // Supabase runs on a local port: GoTrue (sign-up, the password and refresh grants, /user, logout) and a small
 // in-memory PostgREST for sessions, chat_messages and favorites that records the headers of every request. The
 // real server runs in production mode with ALLOWED_EMAILS=a@x.com; its model calls go to the mock too. A22 runs it
@@ -556,6 +556,13 @@ async function main() {
   try {
     if (!prod.up) return check('A0 production server on the mock Supabase', false, `did not start (limit ${START_MS / 1000} s): ${prod.log().trim().slice(-400)}`)
     base = prod.base
+    // A23 (start): the keep-alive read went out when the server started, before anyone signed in
+    const firstRest = seen.findIndex(q => q.path.startsWith('/rest/v1/'))
+    const firstLogin = seen.findIndex(q => q.grant === 'password')
+    const started = seen[firstRest]
+    check('A23 a deployed server reads sessions once when it starts, with the service key, before any sign-in',
+      !!started && started.method === 'GET' && started.path === '/rest/v1/sessions' && started.apikey === SERVICE_KEY && (firstLogin < 0 || firstRest < firstLogin),
+      started ? `${started.method} ${started.path} at request ${firstRest}, first sign-in at ${firstLogin}` : 'no PostgREST request at start')
     await flow()
   } finally {
     await stopServer(prod.proc)
@@ -568,6 +575,25 @@ async function main() {
     await devFlow()
   } finally {
     await stopServer(dev.proc)
+  }
+  // A23 (again): it reads again every SF_SUPABASE_KEEPALIVE_HOURS (0.0005 h = 1.8 s here; 24 by default), and 0 turns
+  // it off. A paused free project refused every sign-in on 2026-11-10
+  await new Promise<void>(resolve => mockServer.listen(0, '127.0.0.1', () => resolve()))
+  const again = `http://127.0.0.1:${(mockServer.address() as AddressInfo).port}`
+  const reads = async (hours: string) => {
+    const from = seen.length
+    const srv = await startServer({ NODE_ENV: 'production', SUPABASE_URL: again, SUPABASE_SERVICE_KEY: SERVICE_KEY, ALLOWED_EMAILS: 'a@x.com', SF_SUPABASE_KEEPALIVE_HOURS: hours })
+    try {
+      if (!srv.up) return -1
+      await new Promise(r => setTimeout(r, 6000))
+      return seen.slice(from).filter(q => q.method === 'GET' && q.path === '/rest/v1/sessions').length
+    } finally { await stopServer(srv.proc) }
+  }
+  try {
+    const often = await reads('0.0005'), off = await reads('0')
+    check('A23 the keep-alive read repeats on its interval and 0 turns it off', often >= 3 && off === 0, `every 1.8 s: ${often} reads in about 6 s; off: ${off}`)
+  } finally {
+    if (mockServer.listening) await stopMock()
   }
 }
 

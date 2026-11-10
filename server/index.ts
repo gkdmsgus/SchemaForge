@@ -63,6 +63,19 @@ const AUTH_OPTIONS = { auth: { persistSession: false, autoRefreshToken: false } 
 const db = SUPABASE_ENABLED
   ? createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!, AUTH_OPTIONS)
   : null
+// A free Supabase project pauses after some days with little use, and every sign-in then fails with SUPABASE_DOWN
+// (2026-11-10: the project was paused and both servers refused every login). A deployed server reads one row of
+// sessions when it starts and every SF_SUPABASE_KEEPALIVE_HOURS after (24; 0 turns it off): a database read, as a
+// visitor's history is. check_auth_flow.ts A23
+const KEEPALIVE_RAW = process.env.SF_SUPABASE_KEEPALIVE_HOURS
+const KEEPALIVE_HOURS = KEEPALIVE_RAW === undefined || KEEPALIVE_RAW.trim() === '' ? 24 : Number(KEEPALIVE_RAW)
+if (db && process.env.NODE_ENV === 'production' && KEEPALIVE_HOURS > 0) {
+  const keepAlive = () => db.from('sessions').select('id').limit(1).then(
+    r => { if (r.error) console.warn('[supabase] keep-alive read failed:', r.error.message) },
+    e => console.warn('[supabase] keep-alive read failed:', (e as Error).message))
+  void keepAlive()
+  setInterval(() => void keepAlive(), KEEPALIVE_HOURS * 3600_000).unref()
+}
 /** a fresh client for one sign-up, sign-in or refresh, dropped with the request, so no user session sticks to db */
 const authClient = () => createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!, AUTH_OPTIONS)
 
