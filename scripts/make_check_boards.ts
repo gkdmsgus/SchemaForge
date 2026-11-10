@@ -40,7 +40,8 @@ for (const circuit of CIRCUITS) {
   if (!stale.length) continue
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'sf_checkboard_'))
   try {
-    const net = await runSkidl(fs.readFileSync(source, 'utf8'), work)
+    // 240 s, not the server's 90: a paging PC (about 2 GB free, 2026-11-10) ran the server's limit out on circuits that work
+    const net = await runSkidl(fs.readFileSync(source, 'utf8'), work, 240000)
     for (const style of stale) {
       fs.copyFileSync(net, `${stem(circuit, style)}.net`)
       const run = spawnSync('python', ['pcb_generator.py', `${stem(circuit, style)}.net`, `${stem(circuit, style)}.kicad_pcb`, '--style', style],

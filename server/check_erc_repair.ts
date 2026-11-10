@@ -49,8 +49,12 @@ const withPrelude = (code: string, prelude: string) => code.replace(/^from skidl
 const RESET_LINE = /^u1\['RESET'\] \+= vcc\r?\n/m
 const broken = blink.replace(RESET_LINE, '')
 const cwd = process.cwd()
-const erc = (p: string) => runErc(p, cwd)
-const run = (c: string) => runSkidl(c, out)
+// Time limits for runs that should finish: the server's own (skidl 90 s, ERC 30 s) ran out while the PC paged with about
+// 2 GB of memory free (E12 and E25 on 2026-11-10), and a run that was only slow is not what these items check. The items
+// about a time limit keep theirs (E2's 1 ms, E13's 2.5 s, E23's 4 s)
+const SKIDL_MS = 240000, ERC_MS = 120000
+const erc = (p: string) => runErc(p, cwd, ERC_MS)
+const run = (c: string) => runSkidl(c, out, SKIDL_MS)
 const guideOf = 'original guide'
 const fixedNet = await run(blink)
 const brokenNet = await run(broken)
@@ -192,7 +196,7 @@ check('E17 rewiring correct pins rejected', kept0(ledFlip) && /맞게 이어져 
 // E18. Python's tracebacks reach the Code tab without colour codes, even when the parent sets FORCE_COLOR
 process.env.FORCE_COLOR = '1'
 let colourErr = ''
-try { await runSkidl(blink.replace("d1.value = 'RED'", 'd1.value = RED'), out) } catch (e) { colourErr = errText(e) }
+try { await runSkidl(blink.replace("d1.value = 'RED'", 'd1.value = RED'), out, SKIDL_MS) } catch (e) { colourErr = errText(e) }
 delete process.env.FORCE_COLOR
 const envC = childEnv({ FORCE_COLOR: '1', PATH: 'x' })
 check('E18 plain tracebacks', /NameError/.test(colourErr) && !colourErr.includes('\x1b[') && envC.PYTHON_COLORS === '0' && !('FORCE_COLOR' in envC),
@@ -348,7 +352,7 @@ const leakProbe = withPrelude(blink,
   "if leaked or os.environ.get('SF_CHECK_PLAIN') != 'kept':\n" +
   "    sys.exit('env leaked=%s plain=%s' % (leaked, os.environ.get('SF_CHECK_PLAIN')))\n")
 let e12 = ''
-try { await runSkidl(leakProbe, out); e12 = 'child saw no secret and kept SF_CHECK_PLAIN' } catch (e) { e12 = `FAIL ${errText(e).trim().split('\n').pop()}` }
+try { await runSkidl(leakProbe, out, SKIDL_MS); e12 = 'child saw no secret and kept SF_CHECK_PLAIN' } catch (e) { e12 = `FAIL ${errText(e).trim().split('\n').pop()}` }
 const filtered = Object.keys(planted).filter(k => k in env)
 check('E12 secrets stripped from the skidl env', !e12.startsWith('FAIL') && filtered.join() === 'SF_CHECK_PLAIN'
   && !!(env.PATH || env.Path) && (process.platform !== 'win32' || !!env.SYSTEMROOT || !!env.SystemRoot),
@@ -359,8 +363,8 @@ for (const k of Object.keys(planted)) delete process.env[k]
 const cwdOf = (marker: string) => (existsSync(marker) ? readFileSync(marker, 'utf8').trim() : '')
 const mOk = join(work, 'cwd_ok.txt'), mFail = join(work, 'cwd_fail.txt'), mSlow = join(work, 'cwd_slow.txt')
 let okRun = false, failRun = false, slowRun = ''
-try { await runSkidl(withPrelude(blink, recordCwd(mOk)), out); okRun = true } catch { /* reported below */ }
-try { await runSkidl(withPrelude(blink, recordCwd(mFail) + "sys.exit('stop here')\n"), out) } catch (e) { failRun = /stop here/.test(errText(e)) }
+try { await runSkidl(withPrelude(blink, recordCwd(mOk)), out, SKIDL_MS); okRun = true } catch { /* reported below */ }
+try { await runSkidl(withPrelude(blink, recordCwd(mFail) + "sys.exit('stop here')\n"), out, SKIDL_MS) } catch (e) { failRun = /stop here/.test(errText(e)) }
 try { await runSkidl(recordCwd(mSlow) + 'time.sleep(30)\n', out, 2500) } catch (e) { slowRun = errText(e) }
 const dirs = [cwdOf(mOk), cwdOf(mFail), cwdOf(mSlow)]
 const left: string[] = []
@@ -372,14 +376,14 @@ check('E13 temp folder removed (ok / error / timeout)', okRun && failRun && /tim
 //      reported as timed out after 90 s (review of 2026-11-06). The time limit is its own, far above a normal run
 const chatty = withPrelude(blink, "import sys\nsys.stdout.write('x' * (1 << 20)); sys.stdout.flush()\n")
 let e22 = ''
-try { await runSkidl(chatty, out, 30000); e22 = 'netlist written' } catch (e) { e22 = `FAIL ${errText(e).trim().split('\n').pop()}` }
+try { await runSkidl(chatty, out, SKIDL_MS); e22 = 'netlist written' } catch (e) { e22 = `FAIL ${errText(e).trim().split('\n').pop()}` }
 check('E22 1 MB on stdout does not stall the code', e22 === 'netlist written', e22)
 
 // E23. stderr is kept to its last 64 KB. Without a limit, code that writes to it forever took the whole server down in
 //      about 2 s (RangeError: Invalid string length in the data handler, 800 MB); and the Code tab reads the line
 //      number out of the traceback's end, so that end stays
 let tail = ''
-try { await runSkidl(withPrelude(blink, "import sys\nsys.stderr.write('x' * (1 << 20) + '\\n'); sys.stderr.flush()\nraise NameError('the last line')\n"), out, 30000) } catch (e) { tail = errText(e) }
+try { await runSkidl(withPrelude(blink, "import sys\nsys.stderr.write('x' * (1 << 20) + '\\n'); sys.stderr.flush()\nraise NameError('the last line')\n"), out, SKIDL_MS) } catch (e) { tail = errText(e) }
 const rss0 = process.memoryUsage().rss
 let flood = ''
 try { await runSkidl("import sys\nwhile True: sys.stderr.write('x' * 65536)\n", out, 4000) } catch (e) { flood = errText(e) }
@@ -393,7 +397,7 @@ const relay = readFileSync(join('test_circuits', 'npn_relay.py'), 'utf8')
 const noBase = relay.replace(/^q1\['B'\] \+= base\r?\n/m, '')
 const noBaseNet = await run(noBase)
 const baseOf = (r: ErcRun) => (r.ok ? r.findings.flatMap(f => f.refs).find(x => x.ref === 'Q1') : undefined)
-const smdBase = baseOf(await runErc(noBaseNet, cwd, 30000, 'smd')), thtBase = baseOf(await runErc(noBaseNet, cwd, 30000, 'tht'))
+const smdBase = baseOf(await runErc(noBaseNet, cwd, ERC_MS, 'smd')), thtBase = baseOf(await runErc(noBaseNet, cwd, ERC_MS, 'tht'))
 const ercRoute = src.slice(src.indexOf("app.post('/erc_graph'"), src.indexOf('// ── GET /download/:filename'))
 check('E24 pad numbers by board style', noBase !== relay && smdBase?.pin === '1' && thtBase?.pin === '2' && smdBase?.sym === '1' && thtBase?.sym === '1'
   && /runErc\(netPath, process\.cwd\(\), undefined, pcbStyle\(style\)\)/.test(ercRoute),

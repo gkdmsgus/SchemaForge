@@ -29,7 +29,8 @@ function remove(graph: NetGraph, ref: string): NetGraph {
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'sf_cirval_'))
 async function demo(name: string): Promise<NetGraph> {
   const code = fs.readFileSync(path.join('server', 'test_circuits', `${DEMOS[name]}.py`), 'utf8')
-  return parseNetlist(fs.readFileSync(await runSkidl(code, work), 'utf8'))
+  // 240 s, not the server's 90: a paging PC (about 2 GB free, 2026-11-10) ran the server's limit out on circuits that work
+  return parseNetlist(fs.readFileSync(await runSkidl(code, work, 240000), 'utf8'))
 }
 
 const [motor, led, ne555, relay] = await Promise.all(['motor', 'led', 'ne555', 'relay'].map(demo))

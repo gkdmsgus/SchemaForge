@@ -31,7 +31,8 @@ async function main() {
       `${built.length} circuits in ${((Date.now() - t0) / 1000).toFixed(1)} s`)
 
     const code = readFileSync(join(circuits, 'nmos_motor.py'), 'utf8')
-    const fresh = await runSkidl(code, tmp)
+    // 240 s, not the server's 90: a paging PC (about 2 GB free, 2026-11-10) ran the server's limit out on circuits that work
+    const fresh = await runSkidl(code, tmp, 240000)
     check('M2 stored netlist = a fresh skidl run', same(readFileSync(join(cache, 'nmos_motor.net'), 'utf8')) === same(readFileSync(fresh, 'utf8')))
 
     mkdirSync(out)
