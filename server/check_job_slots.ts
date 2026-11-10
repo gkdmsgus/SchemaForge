@@ -193,10 +193,13 @@ async function server() {
       let answered = 0
       const board = post('/generate_pcb_stream', { graph: demo.graph, baseName: 'slotwait' }, '198.51.100.7')
         .then(async r => { answered = Date.now(); return r.text() })
-      let looks = 0, early = 0
+      // the server writes the netlist once it has its slot and sends the stream's headers right after; a busy PC can show
+      // the file between the two (1 look of 18-46 on 2026-11-10). A netlist written while it waited is there the whole
+      // wait (500 ms at least) before the answer: early is a file first seen more than 250 ms before it
+      let looks = 0, firstSeen = 0
       while (!answered && Date.now() - sent < 30000) {
         looks++
-        if (made('slotwait_').length) early++
+        if (!firstSeen && made('slotwait_').length) firstSeen = Date.now()
         await sleep(50)
       }
       const answers = await Promise.all(six)
@@ -208,8 +211,9 @@ async function server() {
         && w.seen.waiting >= 1 && whole === 6 && after === idleJobs,
         `most running ${w.seen.running}, waiting ${w.seen.waiting} (${w.seen.reads} reads, ${w.seen.missing} without jobs); ${whole}/6 whole; after ${after}`)
       const waited = answered - sent
-      check('S3 a board request waits in line and writes its netlist only once it has its slot', waited >= 500 && early === 0
-        && /event: done/.test(boardText), `waited ${waited} ms; its netlist there in ${early} of ${looks} looks while it waited; ${/event: done/.test(boardText) ? 'done' : boardText.slice(-120)}`)
+      const ahead = firstSeen ? answered - firstSeen : 0
+      check('S3 a board request waits in line and writes its netlist only once it has its slot', waited >= 500 && ahead <= 250
+        && /event: done/.test(boardText), `waited ${waited} ms; its netlist ${firstSeen ? `first seen ${ahead} ms before the answer` : 'not seen'} in ${looks} looks; ${/event: done/.test(boardText) ? 'done' : boardText.slice(-120)}`)
     }
 
     // S4. a full line, 3 running and 16 waiting: the next request is told at once, in Korean, with Retry-After, and a
