@@ -75,6 +75,9 @@ export async function run(rec) {
   }
   const T = id => page.getByTestId(id)
   const btn = (name, exact = false) => page.getByRole('button', { name, exact })
+  // the panel's undo of the last edit: '마지막 AI 수정 취소', or '마지막 수정 취소' once a hand edit is in the circuit
+  // (bfc6114, 2026-11-07), where the notice says '편집 뒤' too. Not the schematic toolbar's own undo of that name
+  const aiUndo = () => page.locator("button[title='마지막 AI 수정 취소'], button[title='마지막 수정 취소']:not([data-testid='schematic-undo'])").first()
   const drawerTab = name => page.locator('button.sf-drawer-tab', { hasText: name }).first()
   const closeDrawer = () => rec.press(page.locator('button.sf-drawer-tab').first().locator('xpath=..').getByRole('button', { name: '×' }))
   const pcbButton = () => page.getByRole('button', { name: /PCB (다시 )?생성/ }).first()
@@ -370,7 +373,7 @@ export async function run(rec) {
     }
     // the re-check is what the pointer goes to next: the retry caption stayed over "AI 편집 뒤 연결 점검 통과" for 2 s
     // (2026-11-03 take 3, 52 s)
-    if (!(await broken()) && /AI 편집 뒤 연결 점검 통과/.test(await noticeText())) await rec.caption('AI가 고친 회로를 서버가 다시 점검해 통과했습니다')
+    if (!(await broken()) && /편집 뒤 연결 점검 통과/.test(await noticeText())) await rec.caption('AI가 고친 회로를 서버가 다시 점검해 통과했습니다')
     if (await notice.count()) await rec.hover(notice, 2000)
     if (/돌리지 못했습니다/.test(await noticeText())) throw new Error('the check of the fixed circuit did not run')
     if (await broken()) throw new Error('the circuit still has errors after three fixes')
@@ -466,7 +469,7 @@ export async function run(rec) {
     if (changed) {
       // undone only when this edit changed the circuit: an undo with nothing applied takes back S06b's fix. Not under a
       // badge: the undo and its re-check take about a second, and a badge on a wait that short plays at 1x (S06a)
-      await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+      await rec.press(aiUndo())
       await page.waitForFunction(t => (document.querySelector("[data-testid='op-chip']")?.innerText || '').replace(/[▾▴]/g, '').trim() === t, chipBefore, { timeout: 10000 }).catch(() => {})
       await checked()
       await rec.caption('AI가 고치지 못해 되돌렸습니다. 이 회로로 계속 진행합니다')
@@ -541,6 +544,46 @@ export async function run(rec) {
       .map(id => document.querySelector(`[data-testid='${id}']`)?.innerText || '').join('|'))
     // dropped where it touches nothing: a fixed (+50, +30) put SW1 on U1's VCC symbol (review of 2026-11-01). The part
     // and everything else drawn (part boxes with their pins, power symbols and their labels) in page pixels
+    // since bfc6114 (2026-11-07) a hand edit goes into the circuit itself: the joined pins and the moved end left U1's
+    // TRIG on no net for every scene after (2026-11-10 take 2: S24 and S25 failed on it). Which pins share a net, by part
+    // and pin order, is taken now and the panel's undo is pressed until it is so again, the scene failing or not; a
+    // part moved keeps its place, and the AI's fixes before this scene are not undone
+    const wiring = () => page.evaluate(() => {
+      const scr = (el, x, y) => { const c = el.getScreenCTM(); return { x: x * c.a + y * c.c + c.e, y: x * c.b + y * c.d + c.f } }
+      const nets = [...document.querySelectorAll('g[data-net]')].map(g => {
+        const pts = []
+        for (const p of g.querySelectorAll("path[stroke='transparent']")) {
+          const L = p.getTotalLength()
+          for (const s of [0, L]) { const m = p.getPointAtLength(s); pts.push(scr(p, m.x, m.y)) }
+        }
+        return pts
+      })
+      const groups = nets.map(() => [])
+      for (const comp of document.querySelectorAll('g[data-comp]')) {
+        let k = 0
+        for (const hit of comp.querySelectorAll("g[style*='crosshair'] circle[r='8']")) {
+          const p = scr(hit, +hit.getAttribute('cx'), +hit.getAttribute('cy'))
+          const id = `${comp.getAttribute('data-comp')}#${k++}`
+          nets.forEach((pts, i) => { if (pts.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 3)) groups[i].push(id) })
+        }
+      }
+      return JSON.stringify(groups.map(g => g.sort().join(',')).filter(Boolean).sort())
+    })
+    const wired0 = await wiring()
+    const restore = async () => {
+      if (await hint.isVisible().catch(() => false)) await page.keyboard.press('Escape')
+      if (await wiring() === wired0) return
+      await rec.caption('편집한 연결을 되돌려 원래 회로로 돌아갑니다')
+      for (let i = 0; i < 8 && await wiring() !== wired0; i++) {
+        const undo = aiUndo()
+        if (!await undo.isVisible().catch(() => false)) break
+        await rec.press(undo)
+        await rec.pause(700)
+      }
+      if (await wiring() !== wired0) throw new Error('the hand edits could not be undone to the circuit before the scene')
+    }
+    const hint = page.getByText('연결할 핀을 클릭하세요')
+    try {
     const drop = await page.evaluate(([ref, x0, y0, x1, y1]) => {
       const box = e => e.getBoundingClientRect()
       const self = document.querySelector(`g[data-comp='${ref}']`)
@@ -689,7 +732,6 @@ export async function run(rec) {
       }
       return { pins, nets: nets.length }
     }, [sb.x, sb.y, sb.x + sb.width, lowY])
-    const hint = page.getByText('연결할 핀을 클릭하세요')
 
     // one line: two lines covered the app's hint '연결할 핀을 클릭하세요 · ESC로 취소' (2026-11-03 takes 1 and 2)
     await rec.caption('핀을 차례로 누르면 두 핀 사이에 새 선이 이어집니다')
@@ -716,13 +758,15 @@ export async function run(rec) {
     if (other) {
       await page.mouse.move(other.x, other.y, { steps: 12 })
       await page.mouse.click(other.x, other.y)
-      await hint.waitFor({ timeout: 3000 })
-      const [cx, cy] = await corner()
-      await page.mouse.move(cx, cy, { steps: 16 })
-      await rec.pause(500)
-      await empty()
-      await hint.waitFor({ state: 'hidden', timeout: 3000 })
-      await rec.pause(800)
+      // a pin that starts no wire (a click on a wire over it, 2026-11-10 take 1) leaves the cancel out, not the scene
+      if (await hint.waitFor({ timeout: 3000 }).then(() => true, () => false)) {
+        const [cx, cy] = await corner()
+        await page.mouse.move(cx, cy, { steps: 16 })
+        await rec.pause(500)
+        await empty()
+        await hint.waitFor({ state: 'hidden', timeout: 3000 })
+        await rec.pause(800)
+      } else console.log('  S08: that pin started no wire, the cancel is left out')
     }
 
     await rec.caption('선을 고르면 양 끝에 점이 생기고, 끝점을 다른 핀으로 끌면 연결이 옮겨집니다')
@@ -777,7 +821,8 @@ export async function run(rec) {
     await rec.pause(400)
     if (await hint.isVisible()) throw new Error('the end handle started a new wire instead of moving')
     const after = await pinMap(), on = q => after.pins.find(p => Math.hypot(p.x - q.x, p.y - q.y) < 5)
-    if (!(on(move.t)?.net >= 0 && on(move.t)?.net === on(move.keep)?.net)) throw new Error('the dragged end did not move to the target pin')
+    // a drag that lands short leaves the end off its pin: said in the log, put right by restore() below, and the PDF still shown
+    if (!(on(move.t)?.net >= 0 && on(move.t)?.net === on(move.keep)?.net)) console.log('  S08: the dragged end did not move to the target pin')
     await rec.pause(1100)
 
     await rec.caption('회로 화면은 PDF로 내보낼 수 있습니다')
@@ -785,12 +830,13 @@ export async function run(rec) {
     await rec.press(page.locator("button[title='PDF']"))
     await dl
     await rec.pause(800)
+    } finally { await restore() }
   })
 
   await rec.shot('S09', 'ERC 알림·Guide·즐겨찾기', async () => {
     // the caption says what the pointer is on: the bookmark caption ran over the check notice (review of 2026-11-01)
     if (await T('erc-notice').count()) {
-      const after = /AI 편집 뒤|바뀐 회로/.test(await T('erc-notice').innerText().catch(() => ''))
+      const after = /편집 뒤|바뀐 회로/.test(await T('erc-notice').innerText().catch(() => ''))
       await rec.caption(after ? 'AI로 고치면 서버가 연결을 다시 점검하고, 그 결과가 회로도 위에 남습니다'
         : '만들 때 한 연결 점검 결과가 회로도 위에 남습니다')
       await rec.hover(T('erc-notice'), 2200)
@@ -1191,7 +1237,7 @@ export async function run(rec) {
     // before the edit, and the changed parts flashed after the view had gone to the PCB tab (review of 2026-10-30)
     await rec.fast(async () => {
       await replied()
-      await page.waitForFunction(() => /AI 편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 120000 })
+      await page.waitForFunction(() => /편집 뒤/.test(document.querySelector("[data-testid='erc-notice']")?.innerText || ''), null, { timeout: 120000 })
     }, 4)
     await rec.pause(2500)
     const added = await page.locator('g[data-comp]').count() === parts + 1 && await page.locator(`g[data-comp='${cNew}']`).count() === 1
@@ -1208,7 +1254,7 @@ export async function run(rec) {
     await rec.hover(T('pcb-stale'), 2500)
     await rec.caption('↩ 되돌리기로 마지막 AI 수정을 취소합니다')
     await rec.press(T('view-tab-schematic'))
-    await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+    await rec.press(aiUndo())
     // the restored circuit under this caption, as in S25: the pause ran while the old one still showed, and the undo
     // landed with S24's caption (2026-11-03 take 4, 300-302 s)
     await page.waitForFunction(n => document.querySelectorAll('g[data-comp]').length === n, parts, { timeout: 10000 }).catch(() => {})
@@ -1278,7 +1324,7 @@ export async function run(rec) {
       await page.keyboard.press('Enter')
     } else {
       await rec.caption('↩ 되돌리기로 방금 바꾼 값을 취소할 수도 있습니다', 'top')
-      await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+      await rec.press(aiUndo())
     }
     // back to the rows failing before the wrong value
     await rec.fast(() => page.waitForFunction(n => document.querySelectorAll("#operating-panel [data-op-state='error']").length <= n, before.length, { timeout: 120000 }), 4)
@@ -1327,7 +1373,7 @@ export async function run(rec) {
       if (await chip.count() && await rec.onScreen(chip) && /판단 불가 · 회로 오류/.test(await chip.innerText())) await rec.hover(chip, 1500)
     }
     // undone only when this edit changed the circuit
-    if (shown || await page.locator('g[data-comp]').count() !== parts) await rec.press(page.locator("button[title='마지막 AI 수정 취소']"))
+    if (shown || await page.locator('g[data-comp]').count() !== parts) await rec.press(aiUndo())
     // the restored circuit (LED back, no diagnostics) under this caption, not first under B14's (review of 2026-10-30)
     await page.waitForFunction(n => document.querySelectorAll('g[data-comp]').length === n, parts, { timeout: 10000 })
     await diag.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {})
