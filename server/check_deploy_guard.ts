@@ -6,6 +6,7 @@
 // D12 the built app's cache headers, on a small dist/ of its own. D13 a build in any folder stays out of the image and lint.
 // D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
 // D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT); D15b the Jetson image is given it.
+// D16 the file routes from a server under a dot folder (a worktree under .claude/), with names that leave outputs/ refused.
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -378,6 +379,65 @@ async function cacheHeaders() {
   }
 }
 
+// D16. the file routes from a server whose folder sits under a dot folder, as a worktree under .claude/ does: send turns
+//      away a path with a part that starts with a dot, and it was given the whole path, so /download said 404 for a file
+//      that was there and the Netlist tab said the server had no netlist (2026-11-08). A name that leaves outputs/, and
+//      a dot file in it, are still refused. A temp folder of its own, with a small dist/ and outputs/
+async function dotFolder() {
+  const top = mkdtempSync(join(tmpdir(), 'sf_dot_'))
+  const cwd = join(top, '.hidden', 'server'), out = join(cwd, 'outputs')
+  mkdirSync(join(out, 'dotcheck_gerber'), { recursive: true })
+  mkdirSync(join(cwd, 'dist'))
+  const files = { 'dist/index.html': '<!doctype html><title>dotcheck page</title>', 'outputs/dotcheck.net': '(export (version D))',
+    'outputs/dotcheck.kicad_pcb': '(kicad_pcb dotcheck)', 'outputs/dotcheck_gerber/dotcheck.zip': 'PK dotcheck',
+    'outputs/.env': 'SECRET=dotcheck', 'secret.txt': 'SECRET outside outputs' }
+  for (const [path, text] of Object.entries(files)) writeFileSync(join(cwd, path), text)
+  const port = await freePort()
+  const here = process.cwd()
+  const proc = spawn(process.execPath, [join(here, 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(here, 'index.ts')], {
+    cwd, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '', SF_OUTPUTS_SWEEP: '' },
+    stdio: 'ignore',
+  })
+  /** the path exactly as written (fetch would resolve %2E%2E), and the answer's status, attachment name and body */
+  const got = (path: string) => new Promise<{ status: number; disposition: string; body: string }>((resolve, reject) => {
+    request({ host: '127.0.0.1', port, path }, r => {
+      let body = ''
+      r.on('data', (d: Buffer) => { body += d.toString() })
+      r.on('end', () => resolve({ status: r.statusCode ?? 0, disposition: String(r.headers['content-disposition'] ?? ''), body }))
+    }).on('error', reject).end()
+  })
+  try {
+    if (!(await upIn(`http://127.0.0.1:${port}`, proc))) return check('D16 file routes under a dot folder', false, `server did not start on port ${port}`)
+    const served = {
+      '/download/dotcheck.net': ['(export (version D))', 'schematic.net'],
+      '/download_pcb/dotcheck.kicad_pcb': ['(kicad_pcb dotcheck)', 'dotcheck.kicad_pcb'],
+      '/download_gerber_file/dotcheck_gerber/dotcheck.zip': ['PK dotcheck', 'dotcheck.zip'],
+      '/some/route': ['<!doctype html><title>dotcheck page</title>', ''],
+    }
+    const wrong: string[] = []
+    for (const [path, [body, name]] of Object.entries(served)) {
+      const a = await got(path)
+      if (a.status !== 200 || a.body !== body || (name && !a.disposition.includes(`filename="${name}"`))) wrong.push(`${path} ${a.status} ${a.disposition || a.body.slice(0, 60)}`)
+    }
+    const refused = ['/download/%2E%2E%2Fsecret.txt', '/download/..%5Csecret.txt', '/download_pcb/%2E%2E%2Fsecret.txt',
+      '/download_gerber_file/%2E%2E/secret.txt', '/download_gerber_file/dotcheck_gerber/%2E%2E%2F%2E%2E%2Fsecret.txt',
+      '/download/.env', '/download_pcb/.env']
+    for (const path of refused) {
+      const a = await got(path)
+      if (a.status !== 404 || a.body.includes('SECRET')) wrong.push(`${path} ${a.status} (want 404)`)
+    }
+    check('D16 files are served from a server under a dot folder; a name leaving outputs/ or a dot file is still 404', !wrong.length,
+      wrong.length ? wrong.join(' | ') : `${Object.keys(served).length} served, ${refused.length} refused`)
+  } finally {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const gone = new Promise(r => proc.once('exit', r))
+      proc.kill()
+      await gone
+    }
+    try { rmSync(top, { recursive: true, force: true }) } catch { /* the server may hold it a moment longer */ }
+  }
+}
+
 // D13. a build left anywhere in the checkout stays out of the image and of lint: a stray server/dist went into the image
 //      (.dockerignore's 'dist' is the root's only) and was served there before the image's own build (index.ts takes cwd/dist
 //      first), and npm run lint read its 460 errors (review of 2026-11-07). .dockerignore read as Docker reads it, lint by ESLint
@@ -404,5 +464,6 @@ live().catch(e => check('D9 production server', false, (e as Error).message))
   .then(portTaken).catch(e => check('D11 a port in use', false, (e as Error).message))
   .then(portReserved).catch(e => check('D11b a reserved port', false, (e as Error).message))
   .then(cacheHeaders).catch(e => check('D12 cache headers', false, (e as Error).message))
+  .then(dotFolder).catch(e => check('D16 file routes under a dot folder', false, (e as Error).message))
   .then(buildOutput).catch(e => check('D13 a build anywhere', false, (e as Error).message))
   .finally(() => { process.exitCode = ok ? 0 : 1 })

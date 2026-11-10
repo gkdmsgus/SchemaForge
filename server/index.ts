@@ -1269,12 +1269,15 @@ app.post('/erc_graph', async (req: Request, res: Response) => {
 })
 
 // ── GET /download/:filename ────────────────────────────────────────
+// A file goes out by its name under root, here and in the routes below: send turns away a path with a part that starts
+// with a dot, and given the whole path it read the folders above outputs/ too, so a server in a worktree under .claude/
+// answered 404 for a file that was there (2026-11-08). With root only the name is read: a dot file in outputs/ stays
+// refused (check_deploy_guard.ts D16)
 
 app.get('/download/:filename', (req: Request, res: Response) => {
   const filename = safeName(req.params['filename'])
   if (!filename || !existsSync(join(OUTPUTS_DIR, filename))) return res.status(404).json({ error: 'File not found.' })
-  const filePath = join(OUTPUTS_DIR, filename)
-  res.download(filePath, 'schematic.net')
+  res.download(filename, 'schematic.net', { root: OUTPUTS_DIR })
 })
 
 // ── POST /netlist/restore ──────────────────────────────────────────
@@ -1703,8 +1706,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
 app.get('/download_pcb/:filename', (req: Request, res: Response) => {
   const filename = safeName(req.params['filename'])
   if (!filename || !existsSync(join(OUTPUTS_DIR, filename))) return res.status(404).json({ error: 'File not found.' })
-  const filePath = join(OUTPUTS_DIR, filename)
-  res.download(filePath, filename)
+  res.download(filename, filename, { root: OUTPUTS_DIR })
 })
 
 // ── POST /mouser_search ────────────────────────────────────────────
@@ -1886,9 +1888,8 @@ app.get('/download_gerber_file/:dir/:filename', (req: Request, res: Response) =>
   const dir = safeName(req.params['dir'])
   const filename = safeName(req.params['filename'])
   if (!dir || !filename) return res.status(404).json({ error: 'File not found.' })
-  const filePath = join(OUTPUTS_DIR, dir, filename)
-  if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found.' })
-  res.download(filePath, filename)
+  if (!existsSync(join(OUTPUTS_DIR, dir, filename))) return res.status(404).json({ error: 'File not found.' })
+  res.download(filename, filename, { root: join(OUTPUTS_DIR, dir) })
 })
 
 // ── GET /demo_result/:name ────────────────────────────────────────
@@ -1940,7 +1941,8 @@ app.get('/health', (_req: Request, res: Response) => {
 
 if (existsSync(distPath)) {
   app.get('/{*path}', (_req: Request, res: Response) => {
-    res.sendFile(join(distPath, 'index.html'))
+    // by name under root, as /download does: a build under a dot folder answered 404 here
+    res.sendFile('index.html', { root: distPath })
   })
 }
 
