@@ -228,7 +228,10 @@ async function live() {
       for (const end of ['.net', '.kicad_pcb', '.board.json', '.kicad_prl']) rmSync(join('outputs', stem + end), { force: true })
       return d.board.parts.find(q => q.ref === resistor)?.value ?? '(no part)'
     }
-    const values = await Promise.all(['0.1" pitch', '470\\', '"470"'].map(board))
+    // one after another: one visitor runs two boards at once and the third waits 60 s at most, which a busy PC ran past
+    // ("busy" in 2 of 4 npm test runs, 2026-11-09/10). The slots are check_job_slots.ts's; this is the cleaning
+    const values: string[] = []
+    for (const v of ['0.1" pitch', '470\\', '"470"']) values.push(await board(v))
     const noGraph = await post('/generate_pcb_stream', { graph: {} })
     check('D9b a graph on the board route is cleaned: inch mark, trailing backslash, quotes; not a graph is 400', !!resistor
       && values.join() === '0.1 pitch,470,470' && noGraph.status === 400 && /json/.test(noGraph.headers.get('content-type') ?? ''),
