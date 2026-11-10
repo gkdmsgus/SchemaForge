@@ -243,9 +243,58 @@ function bjtSpec(value: string, style: 'smd' | 'tht' | null): { spec: BjtSpec; n
   return { spec: SPECS.bjt[name], note: `값 ${value || '(없음)'}의 자료가 없어 ${name} 기준으로 계산` }
 }
 
+// the part number anywhere in the value (IRLZ44NPBF is an IRLZ44N), longest name first so that a name never stands in for
+// a longer one that holds it. IRFZ44N and IRLZ44N differ in a letter, so neither holds the other
+const MOS_NAMES = Object.keys(SPECS.mos).sort((a, b) => b.length - a.length)
+/** each MOSFET's package; the board's Q_NMOS seat is SOT-23 on SMD and TO-92 on THT (server/pcb/footprints_table.py) */
+const MOS_PKG: Record<string, 'SOT-23' | 'TO-92' | 'TO-220'> = { '2N7002': 'SOT-23', NDS7002A: 'SOT-23', '2N7000': 'TO-92', IRFZ44N: 'TO-220', IRLZ44N: 'TO-220' }
+const PKG_ORDER = ['SOT-23', 'TO-92', 'TO-220']
+/**
+ * The RDS(on) a gate of `vgs` is guaranteed: the smallest of the datasheet rows at or below it (IRLZ44N: 35 mΩ from 4 V,
+ * 25 mΩ from 5 V, 22 mΩ from 10 V). Null under every row: the datasheet says nothing of RDS(on) there (2026-11-08 review:
+ * a 4.95 V gate on IRFZ44N and 3.27 V on IRLZ44N were heated with the 10 V and 4 V rows and passed)
+ */
+function rdsRow(spec: MosSpec, vgs: number): { vgs: number; rds: Num } | null {
+  const rows = [{ vgs: spec.vgs_rated.v, rds: spec.rds_on }, ...(spec.rds_rows ?? [])].filter(r => atLeast(vgs, r.vgs))
+  return rows.length ? rows.reduce((a, r) => (r.rds.v < a.rds.v ? r : a)) : null
+}
+/**
+ * A TO-220 part's conduction heat at this current with no heatsink, the gate at `vgs`: I² × the RDS(on) row the gate is
+ * guaranteed × its rise at TJ 175 °C, against (TJ max − 25 °C) ÷ RθJA in still air and the case-at-25 °C dissipation; the
+ * current it stands in free air. Null for a part whose current rating is already its own (small-signal parts rated in free
+ * air) and for a gate under every RDS(on) row (rdsRow)
+ */
+function mosHeat(spec: MosSpec, i: number, vgs: number) {
+  const a = spec.free_air, row = rdsRow(spec, vgs)
+  if (!a || !row) return null
+  const hot = row.rds.v * a.rds_hot.v, pAir = (a.tj_max.v - 25) / a.rth_ja.v
+  return { p: i * i * hot, pAir, pCase: a.pd_case.v, iAir: Math.sqrt(pAir / hot), hot, a, row }
+}
+/** stands this current with no heatsink with the gate at `vgs`, short of the 90 % that warns (op_switch) */
+const standsAlone = (spec: MosSpec, i: number, vgs: number) => {
+  const h = mosHeat(spec, i, vgs)
+  return !atLeast(i, NEAR * spec.id_max.v) && !(h && atLeast(h.p, NEAR * h.pAir))
+}
+/** a limit written to three figures without rounding past it ("부하 9500 mA 이하면", never 9505) */
+const down = (v: number) => { if (v <= 0) return v; const e = 10 ** (Math.floor(Math.log10(v)) - 2); return Math.floor(v / e + 1e-9) * e }
+/**
+ * The most a load whose current is not known draws through a switch's sense resistor: the switch's rated current, or the
+ * load's supply over the sense resistor alone when that is less (load and switch taken as dropping nothing). 2026-11-09
+ * review: 47 A × 1 Ω read as a 47 V drop and 2209 W on a 12 V supply, where 12 A is the most that can flow
+ */
+function senseBound(sw: Switch): { i: number; why: string; rating: boolean } {
+  const lim = sw.bjt ? sw.bjt.ic_max : sw.mos!.id_max
+  const tops = sw.loads.map(l => (l.supply ?? l.src)?.hi)
+  const top = tops.length && tops.every(v => v != null) ? Math.max(...(tops as number[])) : null
+  if (top != null && top > 0 && sw.sense.ohms > 0 && top / sw.sense.ohms < lim.v) {
+    return { i: top / sw.sense.ohms, why: `부하 전원 ${V(top)} ÷ ${sw.sense.ref} ${ohm(sw.sense.ohms)}`, rating: false }
+  }
+  return { i: lim.v, why: `${sw.bjt ? 'IC' : 'ID'} 최대`, rating: true }
+}
 function mosSpec(value: string, style: 'smd' | 'tht' | null): { spec: MosSpec; note: string | null } {
   const v = value.toUpperCase().replace(/\s+/g, '')
-  for (const [name, spec] of Object.entries(SPECS.mos)) if (v.includes(name)) return { spec, note: null }
+  const known = MOS_NAMES.find(n => v.includes(n))
+  if (known) return { spec: SPECS.mos[known], note: null }
   const name = assumedMos(style)
   return { spec: SPECS.mos[name], note: `값 ${value || '(없음)'}의 자료가 없어 ${name} 기준으로 계산` }
 }
@@ -308,6 +357,63 @@ const PASSIVE = new Set(['R', 'C', 'CP', 'L', 'D', 'LED', 'Q_NPN', 'Q_NMOS', 'SW
 const isExternal = (p: OpPart) => /^Conn_/.test(p.part) || !PASSIVE.has(p.part)
 /** a motor wired through a connector: a load, never a supply */
 const isMotor = (p: OpPart) => /^Conn_/.test(p.part) && /MOTOR|모터/i.test(p.value)
+
+/**
+ * The signal level a header's value names. MCUs reach the board only through a header, so its value is the one word on
+ * what the pin puts out: a 3.3 V chip or board (ESP32, ESP8266, STM32, RP2040/Pico, a Raspberry Pi or Jetson header),
+ * a written level (3.3V, 3V3, 5V), or a 5 V board (Arduino Uno, Nano, Mega, ATmega328). The chip comes before the family
+ * name (an Arduino Nano ESP32 or Nano 33 is 3.3 V, a Jetson Nano too) and a written level before a board's usual one.
+ * A power header (PWR) or a motor is no signal, and a value naming both levels names none.
+ * UNO, NANO and MEGA are a 5 V board only as the board itself: "Arduino" before the name at most, and after it nothing but
+ * a revision, a written level or a pin. Any other word keeps both levels (UNO Q, Nano Matter, Orin Nano may be 3.3 V boards).
+ * A written level is the signal's only on a header that carries no supply beside it and does not call itself one (VIN,
+ * USB): there it is the supply's voltage, which says nothing of the signal's (2026-11-08 review: "5V_IN" on the relay's
+ * +5V/IN/GND header passed a 3.3 V MCU's 1.5 kΩ base). A supply beside it is another pin on a net, not a ground, whose
+ * voltage is known or whose name says supply, or that feeds anything but a transistor's base or gate (straight or through
+ * a resistor): a load, another supply pin. Not by the name alone (second review of 2026-11-08: a motor's VM, V+, VMOT,
+ * MOTOR_PWR on the header's other pin read its "5V" as the signal's and passed a 3.3 V MCU)
+ */
+const BOARD_TAIL = /^(R3|REV3|V3|2560|\d+V\d*|D\d{1,2}|A\d{1,2}|PIN\d*|PWM\d*|IO\d*|GPIO\d*|OUT\d*|SIG|SIGNAL|IN)$/
+const SUPPLY_WORD = /^(VIN|VCC|VDD|VBUS|VBAT|USB|BATT?|BATTERY|SUPPLY)$/
+/** the levels a text writes: 3.3V, 3V3, 5V, 5.0V */
+const writtenLevels = (t: string) => {
+  const s = t.toUpperCase()
+  return { v33: /(?<![\d.])3(?:\.3\s*V|V3)(?!\d)/.test(s), v5: /(?<![\d.])5(?:\.0)?\s*V(?![\dA-Z])/.test(s) }
+}
+/** a transistor's base or gate pin */
+const controlPin = (x: Ctx, nd: Node) => { const q = x.part(nd.ref); return !!q && (q.part === 'Q_NPN' || q.part === 'Q_NMOS') && nd.pin === 1 }
+/** `by`: what the level is read from, for the basis ("J1 값 Arduino Uno") */
+function headerLevel(x: Ctx, p: OpPart, signal: string): { v: 3.3 | 5; by: string } | null {
+  if (!/^Conn_/.test(p.part) || isMotor(p) || /PWR|POWER|전원/i.test(p.value)) return null
+  const s = p.value.toUpperCase()
+  const level = (v: 3.3 | 5 | null, more = '') => (v == null ? null : { v, by: `${p.ref} 값 ${p.value}${more}` })
+  if (/ESP-?32|ESP-?8266|STM32|RP2040|(?<![A-Z])PICO(?![A-Z])|RASPBERRY|JETSON|NANO\s*33/.test(s)) return level(3.3)
+  const words = s.split(/[^A-Z0-9]+/).filter(Boolean)
+  const at = words.findIndex(w => /^(UNO|NANO|MEGA|MEGA2560)$/.test(w))
+  const board = at >= 0 && words.slice(0, at).every(w => w === 'ARDUINO') && words.slice(at + 1).every(w => BOARD_TAIL.test(w))
+  // the chip with no board named around it (an Arduino Nano ATmega328 is still the 5 V board)
+  const bare = at < 0 && /ATMEGA328/.test(s)
+  const board5 = board || /ATMEGA328/.test(s)
+  const { v33, v5 } = writtenLevels(s)
+  // what a pin's net feeds, other than this header: only bases and gates (a signal), or anything else (a supply)
+  const toControl = (nd: Node) => controlPin(x, nd) || (x.part(nd.ref)?.part === 'R' && x.on(x.other(nd.ref, nd.pin)).some(o => controlPin(x, o)))
+  const feeds = (n: string) => x.on(n).some(nd => nd.ref !== p.ref && !toControl(nd))
+  const supplyNet = (n: string) => n !== signal && x.on(n).some(nd => nd.ref === p.ref) && !x.isGnd(n) && voltsFromName(n) !== 0
+    && (Math.abs(x.voltOf(n)?.v ?? 0) > 0.05 || !!x.blockedWhy(n) || (voltsFromName(n) ?? 0) > 0 || /VCC|VDD|VIN|VBUS|VBAT/i.test(n) || feeds(n))
+  if (bare) {
+    // a bare chip puts out the level of the supply it runs on, and an ATmega328P runs at 3.3 V as well as 5 V (2026-11-09
+    // review: "ATmega328P" beside a +3V3 pin that lights an LED read as 5 V): the one level every supply pin of the header
+    // is known at; a supply at another or an unknown voltage, or a written level against it, leaves both
+    // with no supply pin beside it there is nothing to say which (third review of 11-09: no pin read as 5 V, an unknown one as either)
+    const sup = x.nets().filter(supplyNet)
+    if (!sup.length) return v33 !== v5 ? level(v33 ? 3.3 : 5) : null
+    const one = ([3.3, 5] as const).find(l => sup.every(n => { const v = x.voltOf(n)?.v; return v != null && Math.abs(v - l) <= 0.05 }))
+    return one != null && !(one === 3.3 ? v5 : v33) ? level(one, `, 같은 커넥터의 ${V(one)} 전원으로 도는 칩`) : null
+  }
+  if (!v33 && !v5) return level(board5 ? 5 : null)
+  if (words.some(w => SUPPLY_WORD.test(w)) || /배터리/.test(s) || x.nets().some(supplyNet)) return level(board5 && v5 && !v33 ? 5 : null)
+  return level(v33 && v5 ? null : v33 ? 3.3 : 5)
+}
 
 // ── circuit index and supplies ─────────────────────────────────────────────────
 
@@ -937,7 +1043,8 @@ const stringVf = (s: LedString, specs: LedSpec[]) => (s.k > 1 ? specs[0].vf_typ.
 const stringVfMax = (s: LedString, specs: LedSpec[]) =>
   (s.k > 1 ? Math.max(...specs.map(sp => sp.vf_max.v)) : specs.reduce((a, sp) => a + sp.vf_max.v, 0))
 
-interface Cand { label: string; lv: Level; signal: boolean }
+/** `signal`: an assumed level (the signal voltage is not known); `named`: a signal whose level its header names */
+interface Cand { label: string; lv: Level; signal: boolean; named?: boolean }
 interface Load {
   label: string
   kind: 'res' | 'fixed' | 'clamp' | 'unknown'
@@ -976,6 +1083,8 @@ interface Switch {
   unknownCause?: string
   /** a failing verdict that comes from a drive supply put in backwards (it would pass the right way round) */
   driveCause?: string
+  /** a MOSFET's lowest gate-source voltage while on, when it is known (the RDS(on) row its heat is reckoned with) */
+  vgsLo?: number
 }
 
 const loadI = (loads: Load[], d: number) => loads.reduce((s, l) =>
@@ -1100,6 +1209,25 @@ function loadsOn(x: Ctx, c: string, self: string, strings: Map<string, LedString
 }
 
 const signalCands = (): Cand[] => SIGNAL_CANDIDATES.map(v => ({ label: V(v), lv: { lo: v, hi: v, why: `신호 전압 모름 → ${V(v)} 가정` }, signal: true }))
+/**
+ * The signal on these nodes from the parts that drive it: the one level their headers all name, else both candidates
+ * (a header naming none, two naming different levels, or a driving part that is not a header).
+ */
+function signalOn(x: Ctx, net: string, skip: string): Cand[] {
+  const parts = [...new Map(x.on(net).filter(n => n.ref !== skip).map(n => [n.ref, x.part(n.ref)] as const)).values()]
+    .filter((p): p is OpPart => !!p && isExternal(p))
+  if (!parts.length) return signalCands()
+  const one = (v: 3.3 | 5, by: string): Cand[] => [{ label: V(v), lv: { lo: v, hi: v, why: `${by} → ${V(v)} 신호로 계산` }, signal: false, named: true }]
+  // the signal net's own name, when it writes 3.3 V alone, is that pin's level before any name of the board (2026-11-09
+  // review: a pin on VCC_3V3, 3V3_OUT or IOREF_3V3 of an "Arduino Uno" header read as 5 V). Only ever lowering it: a 5 V in
+  // the name is as often the load's (PWM_5V, FAN_5V_CTRL) and lifted an ESP32's 3.3 V pin to 5 V (third review of 11-09)
+  const own = writtenLevels(net)
+  if (own.v33 && !own.v5) return one(3.3, `${parts.map(p => p.ref).join(', ')} 핀의 넷 이름 ${net}`)
+  const levels = parts.map(p => headerLevel(x, p, net))
+  const v = levels[0]?.v
+  if (v == null || levels.some(l => l?.v !== v)) return signalCands()
+  return one(v, levels.map(l => l!.by).join(', '))
+}
 
 /** what drives the base/gate: a supply, a 555 output, a resistor from a signal, or nothing */
 function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: string) {
@@ -1164,12 +1292,12 @@ function controlOf(x: Ctx, q: OpPart, kind: 'bjt' | 'mos', ctl: string, e: strin
     if (!d.from || !far.length) {
       return fail('error', `${q.ref} ${word} 저항 ${d.r.ref}의 반대쪽이 아무 데도 연결되지 않아 켜지지 않습니다`, [`${d.from ?? '(연결 없음)'}에는 ${d.r.ref} 하나뿐입니다`])
     }
-    if (far.some(n => { const p = x.part(n.ref); return !!p && isExternal(p) })) { out.fromSignal = true; out.cands = signalCands(); return out }
+    if (far.some(n => { const p = x.part(n.ref); return !!p && isExternal(p) })) { out.fromSignal = true; out.cands = signalOn(x, d.from, d.r.ref); return out }
     return fail('unknown', `${q.ref} ${word} 저항 ${d.r.ref} 반대쪽 ${d.from}의 전압을 알 수 없습니다`)
   }
   if (external) {
     if (kind === 'bjt') return fail('error', `${q.ref} 베이스에 저항 없이 외부 신호가 바로 연결되어 베이스 전류가 제한되지 않습니다`)
-    out.fromSignal = true; out.cands = signalCands(); return out
+    out.fromSignal = true; out.cands = signalOn(x, ctl, q.ref); return out
   }
   if (out.pull) return fail('error', `${q.ref} ${word}에 ${out.pull.r.ref}(GND 쪽)만 연결되어 있어 켜지지 않습니다`)
   if (x.on(ctl).length <= 1) return fail('error', `${q.ref} ${word}에 아무것도 연결되지 않아 켜지지 않습니다`)
@@ -1334,29 +1462,89 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
     const spec = sw.mos!
     const th = spec.vgs_th_max.v, rated = spec.vgs_rated.v
     const div = sw.pull && sw.drive ? sw.pull.ohms / (sw.drive.ohms + sw.pull.ohms) : 1
-    // the source rises by the sense resistor's drop; with an unknown load, at most the part's rated current flows
-    const iS = known ? loadI(sw.loads, 0) : spec.id_max.v
-    const vS = sw.sense.ohms * iS
-    // gate voltages written so that 4.995 V never reads as the 5 V it falls short of
-    const vg = (l: { lo: number; hi: number }) => span(l.lo, l.hi, v => two(v, rated, V)[0])
-    const why = [div < 1 ? `${sw.drive!.r.ref}/${sw.pull!.r.ref} 분압` : '', vS > 0 ? `감지 저항 ${sw.sense.ref}` : ''].filter(Boolean).join('·')
-    const per = sw.cands.map(cd => {
-      const vgs = { lo: cd.lv.lo * div - vS, hi: cd.lv.hi * div }
-      // shown with the sense drop taken off both ends; the top end without it is only for the maximum rating
-      const shown = { lo: vgs.lo, hi: Math.max(vgs.lo, cd.lv.hi * div - vS) }
-      const over = atLeast(vgs.hi, spec.vgs_max.v)
-      const state: OpState = over ? 'error' : atLeast(vgs.lo, rated) ? 'pass' : atLeast(vgs.lo, th) ? 'warn' : 'error'
-      const word = over ? `최대 정격 ${V(spec.vgs_max.v)} 이상` : state === 'pass' ? '완전히 켜짐'
-        : state === 'warn' ? '문턱은 넘지만 켜짐 저항 보장 전압 미만' : '켜지지 않을 수 있음'
-      const lossy = why !== '' && atLeast(cd.lv.lo, rated) && !atLeast(vgs.lo, rated)
-      return { cd, vgs, shown, state, lossy, over, line: `${cd.label}: VGS ${vg(shown)}${why ? ` (${why})` : ''} → ${word}` }
-    })
-    const lines = [
+    // the source rises by the sense resistor's drop. With the load's current unknown that drop lies anywhere between none
+    // and the part's rated current: judged at both ends, and a verdict that differs between them is not known (2026-11-08
+    // review: 0.1 Ω at IRLZ44N's 47 A read as a 4.7 V drop and "켜지지 않을 수 있습니다" for a motor that may draw 1 A)
+    const bound = senseBound(sw)
+    const iS = known ? loadI(sw.loads, 0) : bound.i
+    const vSmax = sw.sense.ohms * iS
+    // gate voltages written so that 4.995 V never reads as the 5 V it falls short of. A gate the sense drop takes below 0 V
+    // is written as "0 V 이하": no such current flows with the switch on (2026-11-08 second review: "VGS -1.43 V" at ID max)
+    const gv = (v: number, ref: number) => (v < 0 ? '0 V 이하' : two(v, ref, V)[0])
+    const vgAt = (l: { lo: number; hi: number }, ref: number) => (l.lo < 0 ? (l.hi < 0 ? gv(l.hi, ref) : `${gv(l.lo, ref)}~${gv(l.hi, ref)}`)
+      : span(l.lo, l.hi, v => gv(v, ref)))
+    const vg = (l: { lo: number; hi: number }) => vgAt(l, rated)
+    // `edge`: the end with no sense drop, which a load that draws any current at all only comes near. A gate that meets the
+    // guarantee or the threshold there only by being equal to it falls short of it once current flows (2026-11-09 review:
+    // "부하가 0 mA 이하면" and "-0 µA 이하면" for a gate right at 5 V or at the threshold)
+    const judge = (vS: number, edge = false) => {
+      const why = [div < 1 ? `${sw.drive!.r.ref}/${sw.pull!.r.ref} 분압` : '', vS > 0 ? `감지 저항 ${sw.sense.ref}` : ''].filter(Boolean).join('·')
+      const meets = (g: number, level: number) => atLeast(g, level) && !(edge && atLeast(level, g))
+      const per = sw.cands.map(cd => {
+        const vgs = { lo: cd.lv.lo * div - vS, hi: cd.lv.hi * div }
+        // shown with the sense drop taken off both ends; the top end without it is only for the maximum rating
+        const shown = { lo: vgs.lo, hi: Math.max(vgs.lo, cd.lv.hi * div - vS) }
+        const over = atLeast(vgs.hi, spec.vgs_max.v)
+        const state: OpState = over ? 'error' : meets(vgs.lo, rated) ? 'pass' : meets(vgs.lo, th) ? 'warn' : 'error'
+        const atEdge = !over && (state === 'warn' ? atLeast(vgs.lo, rated) : state === 'error' && atLeast(vgs.lo, th))
+        const word = (over ? `최대 정격 ${V(spec.vgs_max.v)} 이상` : state === 'pass' ? '완전히 켜짐'
+          : state === 'warn' ? '문턱은 넘지만 켜짐 저항 보장 전압 미만' : '켜지지 않을 수 있음')
+          + (atEdge ? ` (게이트가 ${state === 'warn' ? `보장 전압 ${wa(V(rated))}` : `문턱 ${wa(V(th))}`} 같아 전류가 조금이라도 흐르면 그보다 낮아집니다)` : '')
+        const lossy = why !== '' && atLeast(cd.lv.lo, rated) && !atLeast(vgs.lo, rated)
+        const below = shown.lo < 0 ? `, 강하 ${V(vS)} > ${V(cd.lv.lo * div)}` : ''
+        return { cd, vgs, shown, state, lossy, over, atEdge, line: `${cd.label}: VGS ${vg(shown)}${why ? ` (${why}${below})` : ''} → ${word}` }
+      })
+      const state: OpState = per.some(p => p.over) ? 'error' : per.every(p => p.state === 'pass') ? 'pass'
+        : per.some(p => p.state === 'pass') ? 'warn' : per.every(p => p.state === 'error') ? 'error' : 'warn'
+      return { vS, why, per, state }
+    }
+    const worst = judge(vSmax)
+    const unsure = !known && !clamp && vSmax > 0 && sw.loads.some(l => l.kind === 'unknown')
+    const best = unsure ? judge(0, true) : worst
+    // the end with the most current: the part's rating, or what the load's supply drives through the sense resistor alone
+    const maxEnd = bound.rating ? 'ID 최대' : `부하 ${mA(iS)}(${bound.why})`
+    const head = [
       `게이트 문턱 최대 ${V(th)}: ${cite(spec.vgs_th_max)}`,
       `켜짐 저항 보장: VGS ${V(rated)}에서 RDS(on) 최대 ${ohm(spec.rds_on.v)} (${cite(spec.rds_on)})`,
       `게이트 최대 ${V(spec.vgs_max.v)}: ${cite(spec.vgs_max)}`,
       ...sw.cands.filter(cd => !cd.signal).map(cd => `구동 전압: ${cd.lv.why}`),
-      ...senseLine(vS, known ? `부하 ${mA(iS)}` : `ID 최대 ${mA(iS)}(부하 전류를 몰라 정격으로 계산)`),
+    ]
+    // compared signal by signal: two ends that differ for any signal are not known, even when the merged verdicts happen
+    // to agree (2026-11-08 second review: R2 0.05 Ω read "warn" at ID max for both ends, 0.1 Ω read 판단 불가)
+    const differs = (i: number) => best.per[i].state !== worst.per[i].state
+    if (best.per.some((_, i) => differs(i))) {
+      const R = sw.sense.ohms
+      // the largest load current at which each signal that changes still does what it does with no drop
+      const upto = best.per.filter((p, i) => p.state !== 'error' && differs(i)).map(p => {
+        const i = down((p.cd.lv.lo * div - (p.state === 'pass' ? rated : th)) / R)
+        return `부하가 ${mA(i)} 이하면 ${p.cd.label}${p.cd.signal || p.cd.named ? ' 신호' : ' 구동'}에서 ${p.state === 'pass' ? '완전히 켜집니다' : `${eul(`문턱 ${V(th)}`)} 넘습니다`}.`
+      })
+      // a gate with no pull-down floats whatever the load draws: said here too, as its own fault (2026-11-09 review: it
+      // showed only once a current was written)
+      const floats = !sw.pull && ctlInfo.fromSignal
+      verdict(floats ? 'warn' : 'unknown', `${q.ref} 부하 전류를 몰라 감지 저항 ${sw.sense.ref}의 전압 강하를 알 수 없어 켜짐을 판단할 수 없습니다${floats ? ' · 풀다운 저항 없음' : ''}`, [
+        ...head,
+        `소스 감지 저항 ${sw.sense.ref} ${ohm(R)} × 부하 0~${bound.rating ? `ID 최대 ${mA(iS)}` : `${mA(iS)}(${bound.why})`} = 0~${V(vSmax)}만큼 구동 전압이 줄어듭니다 (부하 전류를 몰라 0부터 ${bound.rating ? '정격' : '가장 큰 전류'}까지)`,
+        ...best.per.map(p => `강하 0이면 ${p.line}`), ...worst.per.map(p => `${maxEnd}면 ${p.line}`), ...upto,
+        ...(floats ? ['게이트 풀다운이 없으면 입력이 끊겼을 때 게이트가 떠서 저절로 켜질 수 있습니다'] : []),
+      ], floats ? undefined : q.ref)
+      if (!floats) sw.result.causeRule = 'op_switch'
+      sw.result.fix = `${floats ? '게이트와 GND 사이에 10 kΩ 저항을 답니다. ' : ''}부하 값에 전류를 적으면(예: MOTOR 0.1A) 감지 저항 ${sw.sense.ref}의 전압 강하로 다시 판단합니다.${upto.length ? ` ${upto.join(' ')}` : ''}`
+      sw.offWhy = `${q.ref} 부하 전류를 몰라 켜졌을 때의 전압 강하를 계산하지 않았습니다`
+      continue
+    }
+    // the same verdict at both ends: shown at the end that decides it (an unknown drop cannot make "켜지지 않음" truer), but
+    // not where that end only fails by being right at the threshold ("3 V < 문턱 최대 3 V"): there the drop is what decides
+    const J = unsure && worst.state === 'error' && !best.per.some(p => p.atEdge) ? best : worst
+    const { why, per } = J
+    // the gate at the end with the most current: with an unknown load the lowest it can be, so the RDS(on) row its heat is
+    // reckoned with is one the gate surely reaches (2026-11-09 review: 9.65 V passed, and the heat still took the 4 V row
+    // "게이트에 4 V 이상이 걸리면")
+    sw.vgsLo = Math.min(...worst.per.map(p => p.vgs.lo))
+    const lines = [
+      ...head,
+      ...(J !== worst ? [`부하 전류를 몰라 소스 감지 저항 ${sw.sense.ref}의 강하(최대 ${V(vSmax)})를 빼고 계산해도 켜지지 않습니다`]
+        : senseLine(J.vS, known ? `부하 ${mA(iS)}` : bound.rating ? `ID 최대 ${mA(iS)}(부하 전류를 몰라 정격으로 계산)` : `부하 ${mA(iS)}(부하 전류를 몰라 ${ro(bound.why)} 계산)`)),
       ...per.map(p => p.line),
     ]
     const over = per.find(p => p.over)
@@ -1368,7 +1556,132 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
     }
     const vgsList = per.map(p => vg(p.shown)).join(' / ')
     let state: OpState, summary: string, fix: string | undefined
-    const logicLevel = '3.3 V에서 켜짐 저항이 보장된 논리 레벨 MOSFET(데이터시트에 VGS 2.5~3.3 V의 RDS(on)이 적힌 부품)으로 바꾸는 것이 해결책인데, 앱 부품표에는 아직 없습니다.'
+    // what to change for a gate short of this part's guarantee, said for the signal it comes from (2026-11-08 review).
+    // First what takes the signal down and is worth changing: a divider worse than 100 Ω : 10 kΩ, a sense resistor dropping
+    // 1 % of the signal at a known load. Then, for the gate those leave, the part of the table that it turns fully on and
+    // whose limits hold (the load with no heatsink), the board's own seat first; with the load unknown, every such part
+    // and what it stands. Else a logic-level part from outside the table, a gate driver, or an NPN stage that puts the load's
+    // supply on the gate, under 90 % of the gate's maximum. A gate driver IC is not a part the app places
+    // (server/pcb/footprints_table.py)
+    const lowest = Math.min(...MOS_NAMES.map(n => SPECS.mos[n].vgs_rated.v))
+    const lowName = MOS_NAMES.find(n => SPECS.mos[n].vgs_rated.v === lowest)!
+    const tops = sw.loads.map(l => (l.supply ?? l.src)?.hi).filter((v): v is number => v != null)
+    const top = tops.length ? Math.max(...tops) : null
+    const liftMax = NEAR * spec.vgs_max.v
+    const lift = top != null && atLeast(top, rated) && !atLeast(top, liftMax) ? `${V(top)} 전원` : `${V(rated)} 이상 ${V(liftMax)} 미만의 전원`
+    const loadA = known ? loadI(sw.loads, 0) : null
+    const seat = x.style === 'tht' ? 'TO-92' : x.style === 'smd' ? 'SOT-23' : null
+    const seats = (n: string) => (seat ? MOS_PKG[n] === seat : MOS_PKG[n] !== 'TO-220')
+    // parts of the table the board's own transistor seat does not take, said wherever one is offered (2026-11-08 second
+    // review: the list for an unknown load offered TO-92 2N7000 first on an SMD board without a word)
+    const misfit = (ns: string[]) => {
+      const off = ns.filter(n => !seats(n))
+      return off.length ? `${off.map(n => `${eun(n)} ${MOS_PKG[n] === 'TO-220' ? '큰 TO-220' : MOS_PKG[n]}`).join(', ')} 부품이라 기판의 ${seat ? `${seat} ` : '작은 '}트랜지스터 자리에는 그대로 맞지 않습니다` : ''
+    }
+    const pkgNote = (n: string) => (seats(n) ? '' : ` (${misfit([n])})`)
+    /** what a part stands with its gate at `vgs` (the RDS(on) row guaranteed there, for a TO-220 with no heatsink) */
+    const stands = (n: string, vgs: number) => { const h = mosHeat(SPECS.mos[n], 0, vgs); return h ? `방열판 없이 대략 ${mA(down(h.iAir))}까지` : `${mA(SPECS.mos[n].id_max.v)}까지` }
+    const advise = (p: (typeof per)[number]): string | null => {
+      const sig = p.cd.signal || !!p.cd.named
+      const what = sig ? `${p.cd.label} 신호` : `게이트를 구동하는 ${p.cd.label}`
+      const from = p.cd.lv.lo
+      const vS = loadA != null ? sw.sense.ohms * loadA : 0
+      const divBad = div < 1 && !atLeast(div, 100 / 101)
+      const senseBad = vS > 0 && atLeast(vS, 0.01 * from)
+      const divAfter = divBad ? 100 / 101 : div
+      // the gate once those are changed (the sense drop taken as gone)
+      const reach = from * divAfter - (senseBad ? 0 : vS)
+      const divWay = divBad ? `게이트 저항 ${eul(sw.drive!.r.ref)} 풀다운 ${sw.pull!.r.ref}의 1/100 이하로(예: 100 Ω과 10 kΩ)` : ''
+      const senseWay = (r: number | null) => `감지 저항 ${eul(sw.sense.ref!)} ${r != null ? `${ohm(r)} 이하로` : '더 작은 값으로'}`
+      type Plan = { div: boolean; sense: number | null; gate: number }
+      // the fewest of those changes that bring the gate to `at` (the guarantee of the part it ends with): none, the divider,
+      // the sense resistor sized for `at` (always below what it is), or both; and the gate they leave. Null when they cannot
+      // (2026-11-08 second review: "RS를 0.316 Ω 이하로 줄이고" for an RS of 0.05 Ω that IRLZ44N turns on with as it is)
+      // with the load's current unknown a sense resistor takes some drop off the gate: a gate equal to `at` with none falls
+      // short of it once current flows (judge's edge)
+      const gets = (g: number, at: number) => atLeast(g, at) && !(loadA == null && sw.sense.ohms > 0 && atLeast(at, g))
+      const plan = (at: number): Plan | null => {
+        if (gets(from * div - vS, at)) return { div: false, sense: null, gate: from * div - vS }
+        if (divBad && gets(from * divAfter - vS, at)) return { div: true, sense: null, gate: from * divAfter - vS }
+        if (!senseBad) return null
+        const alone = down((from * div - at) / loadA!)
+        if (alone > 0) return { div: false, sense: alone, gate: at }
+        const both = down((from * divAfter - at) / loadA!)
+        return divBad && both > 0 ? { div: true, sense: both, gate: at } : null
+      }
+      const say = (pl: Plan) => [pl.div ? divWay : '', pl.sense != null ? senseWay(pl.sense) : ''].filter(Boolean)
+      const leadBy = (d: boolean, s: boolean) => {
+        // the gate shown is after the sense drop too: named beside the divider whenever there is one
+        const by = [d ? `${sw.drive!.r.ref}/${sw.pull!.r.ref} 분압` : '', s || (d && J.vS > 0) ? `감지 저항 ${sw.sense.ref}` : ''].filter(Boolean).join('·')
+        return by ? `${eun(what)} ${ro(by)} 게이트에 ${vg(p.shown)}만 걸립니다. ` : ''
+      }
+      // not sized (the load's current unknown, or no size that does it): every change worth making, said without a value
+      const vagueWays = [divWay, senseBad ? senseWay(null) : ''].filter(Boolean)
+      const vagueLead = leadBy(divBad, senseBad)
+      // what the changes can do is what plan() sizes: `reach` is only the bound a sense resistor of 0 Ω would give, which no
+      // value reaches, so a gate that meets a guarantee only there is not brought to it (2026-11-09 review: a 5 V gate on
+      // 2N7002 with RS 1 Ω was told "RS를 더 작은 값으로" and NDS7002A, which no RS turns fully on)
+      // what a part makes of the known load with the gate a plan leaves, as op_switch would judge it: 'ok' with no heatsink,
+      // 'sink' with one, 'never' even so. Said with the plan, and a part that never stands it is not offered (third review of
+      // 11-09: the own part's divider fix left a 45 A load at 159 W, and IRLZ44N, which a heatsink lets carry 10 A, was struck)
+      const heatFit = (s: MosSpec, vgs: number): 'ok' | 'sink' | 'never' => {
+        if (loadA == null || standsAlone(s, loadA, vgs)) return 'ok'
+        const h = mosHeat(s, loadA, vgs)
+        return atLeast(loadA, s.id_max.v) || (h && atLeast(h.p, h.pCase)) ? 'never' : 'sink'
+      }
+      const sinkNote = (s: MosSpec, vgs: number) => {
+        if (heatFit(s, vgs) !== 'sink') return ''
+        const h = mosHeat(s, loadA!, vgs)
+        return h ? ` 부하 ${mA(loadA!)}에서는 발열이 대략 ${W(h.p)}라 방열판이 필요합니다 (스위치 전류 한계 참고).`
+          : ` 부하 ${mA(loadA!)}는 정격 ${mA(s.id_max.v)}에 가깝습니다 (스위치 전류 한계 참고).`
+      }
+      const own = plan(rated)
+      if (own && !say(own).length) return null
+      if (own && heatFit(spec, own.gate) !== 'never') return `${leadBy(own.div, own.sense != null)}${say(own).join(' 줄이고, ')} 줄이면 됩니다.${sinkNote(spec, own.gate)}`
+      const onAt = MOS_NAMES.filter(n => SPECS.mos[n] !== spec && plan(SPECS.mos[n].vgs_rated.v) != null)
+      // the gate another part would see: what the changes leave at a known load; else the signal through the divider, or
+      // that part's own lowest guarantee when a sense resistor takes an unknown drop off it
+      const gateFor = (n: string) => {
+        const at = SPECS.mos[n].vgs_rated.v
+        return loadA != null ? plan(at)?.gate ?? at : sw.sense.ohms > 0 ? at : reach
+      }
+      const fails = (n: string) => {
+        const s = SPECS.mos[n]
+        return [atLeast(p.cd.lv.hi, s.vgs_max.v) ? `게이트 최대 ${V(s.vgs_max.v)}` : '', top != null && atLeast(top, s.vds_max.v) ? `드레인 최대 ${V(s.vds_max.v)}` : '',
+          heatFit(s, gateFor(n)) === 'never' ? `부하 ${mA(loadA!)}, 방열판을 달아도 견디지 못함` : ''].filter(Boolean)
+      }
+      // the board's own seat first, then the part that asks the fewest other changes
+      const changes = (n: string) => { const pl = plan(SPECS.mos[n].vgs_rated.v); return pl ? say(pl).length : 0 }
+      const fit = onAt.filter(n => !fails(n).length)
+        .sort((a, b) => Number(seats(b)) - Number(seats(a)) || Number(heatFit(SPECS.mos[a], gateFor(a)) !== 'ok') - Number(heatFit(SPECS.mos[b], gateFor(b)) !== 'ok')
+          || changes(a) - changes(b) || PKG_ORDER.indexOf(MOS_PKG[a]) - PKG_ORDER.indexOf(MOS_PKG[b]))
+      if (fit.length && loadA != null) {
+        const n = fit[0], at = SPECS.mos[n].vgs_rated.v
+        const pl = plan(at)
+        const ways = pl ? say(pl) : vagueWays
+        return `${pl ? leadBy(pl.div, pl.sense != null) : vagueLead}${ira(what)}면 ${ways.map(w => `${w} 줄이고, `).join('')}켜짐 저항이 ${V(at)}에서 보장되는 ${ro(n)} 바꾸면 됩니다${pkgNote(n)}.${sinkNote(SPECS.mos[n], gateFor(n))}`
+      }
+      if (fit.length) {
+        const off = misfit(fit)
+        return `${vagueLead}${ira(what)}면 ${vagueWays.length ? `${vagueWays.join(' 줄이고, ')} 줄인 뒤 ` : ''}부품표에서 완전히 켜지는 것은 `
+          + `${fit.map(n => `${n}(${V(SPECS.mos[n].vgs_rated.v)}에서 보장, ${MOS_PKG[n]}, ${stands(n, gateFor(n))})`).join(', ')}입니다. ${off ? `${off}. ` : ''}`
+          + '부하 전류를 몰라 어느 것이 견디는지는 판단하지 못했습니다. 부하 값에 전류를 적으면(예: MOTOR 0.1A) 다시 판단합니다.'
+      }
+      const mid = vagueWays.length ? `${vagueWays.join(' 줄이고, ')} 줄이면 게이트가 ${V(reach)} 가까이 오릅니다. ` : ''
+      const none = onAt.length
+        ? `부품표에서 ${ro(what)} 완전히 켜지는 ${onAt.join('·')}도 이 회로를 견디지 못합니다 (${onAt.map(n => `${n}: ${fails(n).join(', ')}`).join('; ')})`
+        : `${ro(what)}는 앱 부품표의 어느 MOSFET도 켜짐 저항을 보장하지 않습니다 (가장 낮은 보장 전압은 ${lowName}의 ${V(lowest)})`
+      const g = V(reach)
+      const part = reach > 0 ? `${onAt.length ? '이 회로를 견디고 ' : ''}데이터시트에 VGS ${reach > 2.5 && g !== V(2.5) ? `2.5~${g}` : `${g} 이하`}의 RDS(on)이 적힌 논리 레벨 MOSFET을 고르거나` : ''
+      return sig
+        ? `${vagueLead}${mid}${none}. ${part ? `${part}, ` : ''}신호와 게이트 사이에 게이트 드라이버를 넣거나, 작은 NPN 트랜지스터로 ${eul(lift)} 게이트에 걸어 줍니다 (이때는 신호가 HIGH일 때 꺼지는 반대 동작이 됩니다).`
+        : `${vagueLead}${mid}${none}. ${part ? `${part} ` : ''}${ro(lift)} 게이트를 구동합니다.`
+    }
+    const advice = (ps: typeof per) => [...new Set(ps.map(advise).filter((s): s is string => !!s))].join(' ')
+    // a gate voltage beside the threshold, written so the two never read the same; a range across the threshold is said
+    // by its lowest end, the one that falls short ("3.27~4.95 V < 4 V" read as a false inequality, 2026-11-08 review)
+    const thV = (p: (typeof per)[number]) => (atLeast(p.shown.hi, th) && !atLeast(p.shown.lo, th) ? `최저 ${gv(p.shown.lo, th)}`
+      : vgAt(p.shown, th))
     if (over) {
       const [a, b] = two(over.vgs.hi, spec.vgs_max.v, V)
       state = 'error'; summary = `${q.ref} 게이트 ${a} ≥ 최대 ${b}: 게이트가 파괴될 수 있습니다`
@@ -1376,15 +1689,20 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
     else if (passing.length) {
       state = 'warn'
       summary = `${q.ref}: ${passing.map(p => p.cd.label).join(', ')} 신호에서만 완전히 켜집니다 (${per.filter(p => p.state !== 'pass').map(p => `${p.cd.label} → VGS ${vg(p.shown)}`).join(', ')})`
-      fix = `${passing.map(p => p.cd.label).join(', ')} 신호로 구동하면 됩니다. 더 낮은 신호로 구동하려면 ${logicLevel}`
+      fix = `${passing.map(p => p.cd.label).join(', ')} 신호로 구동하면 됩니다. ${advice(per.filter(p => p.state !== 'pass'))}`.trim()
     } else if (per.every(p => p.state === 'error')) {
-      state = 'error'; summary = `${q.ref} 게이트 ${per.map(p => span(p.shown.lo, p.shown.hi, v => two(v, th, V)[0])).join(' / ')} < 문턱 최대 ${V(th)}: 켜지지 않을 수 있습니다`
+      state = 'error'; summary = `${q.ref} 게이트 ${per.map(thV).join(' / ')} < 문턱 최대 ${V(th)}: 켜지지 않을 수 있습니다`
+      fix = advice(per) || undefined
     } else {
       state = 'warn'
-      summary = `${q.ref} 게이트 ${vgsList}: 문턱은 넘지만 켜짐 저항 보장 전압 ${V(rated)} 미만이라 발열·전압 강하가 생길 수 있습니다`
+      // some signals under the threshold, the rest over it but under the guarantee: each said as it is
+      const off = per.filter(p => p.state === 'error'), dim = per.filter(p => p.state !== 'error')
+      summary = off.length
+        ? `${q.ref}: ${off.map(p => p.cd.label).join(', ')} 신호는 게이트 ${off.map(thV).join(', ')} < 문턱 최대 ${ira(V(th))} 켜지지 않을 수 있고, ${dim.map(p => p.cd.label).join(', ')} 신호도 게이트 ${ro(dim.map(p => vg(p.shown)).join(', '))} 켜짐 저항 보장 전압 ${V(rated)} 미만이라 발열·전압 강하가 생길 수 있습니다`
+        : `${q.ref} 게이트 ${vgsList}: 문턱은 넘지만 켜짐 저항 보장 전압 ${V(rated)} 미만이라 발열·전압 강하가 생길 수 있습니다`
       const lossy = per.filter(p => p.lossy)
       if (lossy.length) summary += ` · ${lossy.map(p => p.cd.label).join(', ')} 신호는 ${ro(why)} ${lossy.map(p => vg(p.shown)).join(', ')}`
-      fix = `게이트 전압이 이 MOSFET의 켜짐 저항 보장 전압 ${V(rated)}에 못 미칩니다. ${logicLevel}`
+      fix = `게이트 전압이 이 MOSFET의 켜짐 저항 보장 전압 ${V(rated)}에 못 미칩니다. ${advice(per)}`.trim()
     }
     if (!sw.pull && ctlInfo.fromSignal && state === 'pass') {
       state = 'warn'
@@ -1398,9 +1716,9 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
       const vgsOk = (lo: number, vs: number) => atLeast(lo * div - vs, rated) && !atLeast(lo * div, spec.vgs_max.v)
       // the source lifted by an LED over its rating: with correctly sized LEDs the gate would do
       const capped = capLeds(sw.loads)
-      if (vS > 0 && known && capped.some((l, i) => l !== sw.loads[i]) && sw.cands.every(cd => vgsOk(cd.lv.lo, sw.sense.ohms * loadI(capped, 0)))) sw.loadCaused = true
+      if (vSmax > 0 && known && capped.some((l, i) => l !== sw.loads[i]) && sw.cands.every(cd => vgsOk(cd.lv.lo, sw.sense.ohms * loadI(capped, 0)))) sw.loadCaused = true
       const rev = sw.cands.find(cd => cd.lv.cause)?.lv.cause
-      if (rev && sw.cands.every(cd => vgsOk(Math.abs(cd.lv.lo), vS))) sw.driveCause = rev
+      if (rev && sw.cands.every(cd => vgsOk(Math.abs(cd.lv.lo), vSmax))) sw.driveCause = rev
     }
     sw.offWhy = sw.dropMax != null ? ''
       : clamp ? `${q.ref} 부하가 단락되어 계산하지 않았습니다`
@@ -1419,7 +1737,12 @@ interface Sink {
   by?: string
 }
 /** `label`: where the resistor is, said before its reference in the summary ("Q1 아래 전류 감지 저항 R2") */
-interface Heat { p: number; why: string; cause?: string; label?: string }
+interface Heat {
+  p: number; why: string; cause?: string; causeRule?: OpRule; label?: string
+  /** `p` is only an upper bound, at a current that is not known (a sense resistor at the switch's rated current):
+   *  over 90 % of the rating it is not judged; `iOk` is the load current up to which it stays under that */
+  bound?: { iOk: number; pMin: number; base: string }
+}
 
 function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => Sink | null, heat: (r: OpPart, h: Heat) => void): OpResult[] {
   const out: OpResult[] = []
@@ -1791,11 +2114,29 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
       } else res('error', `${sw.q.ref}: ${clamp.note}`, [...notes, `${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(lim.v)}: ${cite(lim)}`], clamp.cause)
       continue
     }
+    // a TO-220 part's current rating holds with its case at 25 °C; with no heatsink its own conduction heat limits it first.
+    // The heat is reckoned with the RDS(on) row its gate is guaranteed (rdsRow); a gate under every row, or one not known,
+    // leaves RDS(on) and so the heat unknown, which follows the gate's own verdict (2026-11-08 second review)
+    const free = sw.mos?.free_air ? sw.mos : null
+    const gate = sw.vgsLo
+    const row = free && gate != null ? rdsRow(free, gate) : null
+    const rated = free?.vgs_rated.v ?? 0
+    /** the heat at the gate it has, or (gate unknown or too low) at the lowest gate that has a row: what it would be then */
+    const heatAt = (i: number) => (free ? mosHeat(free, i, row ? gate! : rated) : null)
+    const gateLow = !!free && !row
+    const ifGate = gateLow ? `게이트에 ${V(rated)} 이상이 걸리면 ` : ''
+    const air = heatAt(0)
+    const airLines = (h: NonNullable<ReturnType<typeof mosHeat>>) => [
+      `방열판 없이 견디는 손실 ${W(h.pAir)} = (TJ 최대 ${h.a.tj_max.v} °C − 주위 25 °C) ÷ RθJA ${h.a.rth_ja.v} °C/W (${cite(h.a.tj_max)}; ${cite(h.a.rth_ja)}). 주위가 더 더우면 더 작습니다`,
+      `뜨거울 때의 켜짐 저항: ${gateLow ? '' : `게이트 ${two(gate!, h.row.vgs, V)[0]} ≥ ${V(h.row.vgs)}라 `}VGS ${V(h.row.vgs)}의 RDS(on) ${ohm(h.row.rds.v)} × ${h.a.rds_hot.v} = ${ohm(h.hot)} (${cite(h.row.rds)}; ${cite(h.a.rds_hot)})`,
+      `케이스를 25 °C로 유지할 때 최대 손실 ${W(h.pCase)}: ${cite(h.a.pd_case)}`,
+    ]
     const unknown = sw.loads.filter(l => l.kind === 'unknown')
     if (unknown.length) {
-      res('unknown', `${sw.q.ref} 부하 전류를 알 수 없습니다 (${unknown.map(l => l.note).join(', ')}). 최대 ${mA(lim.v)} 이하여야 합니다`,
-        [...notes, `${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(lim.v)}: ${cite(lim)}`], unknown.every(l => l.cause) ? unknown[0].cause : undefined)
-      out[out.length - 1].fix = `부하 값에 데이터시트의 전류를 적습니다 (예: MOTOR 0.1A). ${sw.q.ref}는 ${mA(lim.v)}까지 견딥니다. 적은 값으로 다시 판단합니다.`
+      const upTo = air ? `${ifGate}방열판 없이 대략 ${mA(down(air.iAir))} 이하여야 합니다 (케이스를 25 °C로 유지하면 최대 ${mA(lim.v)})` : `최대 ${mA(lim.v)} 이하여야 합니다`
+      res('unknown', `${sw.q.ref} 부하 전류를 알 수 없습니다 (${unknown.map(l => l.note).join(', ')}). ${upTo}`,
+        [...notes, `${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(lim.v)}: ${cite(lim)}`, ...(air ? airLines(air) : [])], unknown.every(l => l.cause) ? unknown[0].cause : undefined)
+      out[out.length - 1].fix = `부하 값에 데이터시트의 전류를 적습니다 (예: MOTOR 0.1A). ${eun(sw.q.ref)} ${air ? `${ifGate}방열판 없이 대략 ${mA(down(air.iAir))}까지 견딥니다 (케이스를 25 °C로 유지하면 ${mA(lim.v)})` : `${mA(lim.v)}까지 견딥니다`}. 적은 값으로 다시 판단합니다.`
       continue
     }
     const i = loadI(sw.loads, 0)
@@ -1808,11 +2149,36 @@ function checkSwitchLimits(switches: Switch[], ledFailed: (ref: string) => boole
     ]
     // an LED string without enough resistance is the LED rule's fault; the switch overload follows from it
     const ledCause = loadI(capLeds(sw.loads), 0) < NEAR * lim.v ? overLed(sw.loads, ledFailed) : undefined
+    const heat = heatAt(i)
+    const gText = gate == null ? '' : gate < 0 ? '0 V 이하' : two(gate, rated, V)[0]
+    if (heat) {
+      lines.push(gateLow
+        ? `게이트가 ${V(rated)} 이상이면 켜짐 저항 발열 대략 ${W(heat.p)} = (${mA(i)})² × ${ohm(heat.hot)}. ${gate != null ? `지금 게이트 ${gText}에서는` : '지금 게이트 전압은 알 수 없고,'} 데이터시트가 RDS(on)을 보장하지 않습니다 (가장 낮은 보장 조건 VGS ${V(rated)})`
+        : `켜짐 저항 발열 대략 ${W(heat.p)} = (${mA(i)})² × ${ohm(heat.hot)}`, ...airLines(heat))
+    }
     if (atLeast(i, lim.v)) {
       const [a, b] = two(i, lim.v, mA)
       res('error', `${sw.q.ref} 부하 ${a} ≥ 최대 ${b}`, lines, ledCause)
+    } else if (heat && gateLow) {
+      // RDS(on) is not guaranteed at this gate: the heat is not known, and the gate's verdict is why (counted there once)
+      res('unknown', gate != null
+        ? `${sw.q.ref} 부하 ${mA(i)}: 게이트 ${ga(gText)} 켜짐 저항 보장 전압 ${V(rated)}보다 낮아 켜짐 저항을 몰라 발열을 판단할 수 없습니다`
+        : `${sw.q.ref} 부하 ${mA(i)}: 게이트 전압을 몰라 켜짐 저항과 발열을 판단할 수 없습니다 (트랜지스터 켜짐 참고)`, lines, sw.q.ref)
+      out[out.length - 1].causeRule = 'op_drive'
+      // even the smallest RDS(on) the part guarantees at any gate heats it past what it stands with no heatsink: that much
+      // is known whatever the gate comes to (third review of 11-09: 45 A on IRLZ44N from an ESP32 said only "판단합니다")
+      const best = mosHeat(free!, i, Infinity)
+      const sure = best && atLeast(best.p, best.pAir) ? ` 어느 게이트 전압에서도 발열이 대략 ${W(best.p)} 이상이라 방열판 없이 견디는 ${W(best.pAir)}를 넘으므로, 방열판은 필요합니다.` : ''
+      out[out.length - 1].fix = `게이트에 ${V(rated)} 이상이 걸리게 하면(트랜지스터 켜짐 참고) 발열을 판단합니다. 그때 ${eun(sw.q.ref)} 방열판 없이 대략 ${mA(down(heat.iAir))}까지 견딥니다.${sure}`
+    } else if (heat && atLeast(heat.p, heat.pCase)) {
+      const [a, b] = two(heat.p, heat.pCase, W)
+      res('error', `${sw.q.ref} 부하 ${mA(i)}: 켜짐 저항 발열 대략 ${a} ≥ 케이스를 25 °C로 유지할 때의 최대 ${b}라 방열판을 달아도 견디지 못합니다`, lines, ledCause)
+    } else if (heat && atLeast(heat.p, NEAR * heat.pAir)) {
+      const [a, b] = two(heat.p, heat.pAir, W)
+      res('warn', `${sw.q.ref} 부하 ${mA(i)}: 켜짐 저항 발열 대략 ${a}로 방열판 없이 견디는 ${b}${atLeast(heat.p, heat.pAir) ? '를 넘어 방열판이 필요합니다' : '에 가깝습니다'} (방열판은 계산하지 않습니다)`, lines, ledCause)
+      out[out.length - 1].fix = `${sw.q.ref}에 방열판을 달거나, 켜짐 저항이 더 작은 MOSFET을 씁니다. 방열판 없이는 대략 ${mA(down(heat.iAir))}까지입니다.`
     } else if (atLeast(i, NEAR * lim.v)) res('warn', `${sw.q.ref} 부하 최대 ${two(i, lim.v, mA)[0]}로 한계 ${mA(lim.v)}에 가깝습니다`, lines, ledCause)
-    else res('pass', `${sw.q.ref} 부하 최대 ${mA(i)} (최대 ${mA(lim.v)})`, lines)
+    else res('pass', `${sw.q.ref} 부하 최대 ${mA(i)} (최대 ${mA(lim.v)}${heat ? `, 방열판 없이 대략 ${mA(down(heat.iAir))}` : ''})`, lines)
   }
   return out
 }
@@ -1841,7 +2207,8 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
     if (sense && sw.sense.ohms > 0) {
       const lim = sw.bjt ? sw.bjt.ic_max : sw.mos!.id_max
       const known = loadsKnown(sw.loads)
-      const iL = known ? loadI(sw.loads, 0) : lim.v
+      const most = senseBound(sw)
+      const iL = known ? loadI(sw.loads, 0) : most.i
       const iB = sw.kind === 'bjt' && sw.drive && top > 0 && sw.drive.ohms > 0 ? top / sw.drive.ohms : 0
       const i = iL + iB
       const where = `${sw.q.ref} 아래 전류 감지 저항 ${sense.ref}`
@@ -1851,9 +2218,13 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
       const capped = capLeds(sw.loads)
       const iCapped = known && loadsKnown(capped) ? loadI(capped, 0) + iB : null
       const cause = iCapped != null && iCapped ** 2 * sw.sense.ohms < NEAR * pr.p_max.v ? overLed(sw.loads, ledFailed) : undefined
-      add(sense, { p: i * i * sw.sense.ohms, label: where, ...(cause ? { cause } : {}), why: known
+      // the rated current only bounds an unknown load: within the rating it proves the pass, over it proves nothing
+      // (2026-11-08 review: 0.1 Ω at IRLZ44N's 47 A read as 221 W and "안 됨"), which is the unknown load's 판단 불가
+      // `pMin`: the base current alone, with no load current at all, which an unknown load can only add to
+      const bound = known ? undefined : { iOk: Math.max(0, Math.sqrt(NEAR * pr.p_max.v / sw.sense.ohms) - iB), pMin: iB * iB * sw.sense.ohms, base: `베이스 최대 ${mA(iB)}` }
+      add(sense, { p: i * i * sw.sense.ohms, label: where, ...(cause ? { cause } : {}), ...(bound ? { bound, cause: sw.q.ref, causeRule: 'op_switch' as const } : {}), why: known
         ? `${where}: 부하 최대 ${mA(iL)}${base}가 모두 지나 P = I² × R = (${mA(i)})² × ${ohm(sw.sense.ohms)}`
-        : `${where}: 부하 전류를 몰라 ${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(iL)}${base}로 계산 P = I² × R = (${mA(i)})² × ${ohm(sw.sense.ohms)} (${cite(lim)})` })
+        : `${where}: 부하 전류를 몰라 ${most.rating ? `${sw.bjt ? 'IC' : 'ID'} 최대 ${mA(iL)}` : `${mA(iL)}(${most.why})`}${base}로 계산 P = I² × R = (${mA(i)})² × ${ohm(sw.sense.ohms)} (${most.rating ? cite(lim) : '부하와 스위치의 전압 강하를 0으로 둔 가장 큰 전류'})` })
     }
   }
   // between two fixed voltages, or a fixed voltage and a 555 output (which swings from 0 V to its high level)
@@ -1905,9 +2276,24 @@ function checkResistorPower(x: Ctx, switches: Switch[], heats: Map<string, { r: 
   for (const { r, h } of heats.values()) {
     const [a, b] = two(h.p, pr.p_max.v, W)
     const detail = [h.why, `정격 ${W(pr.p_max.v)}: ${cite(pr.p_max)}${x.style ? '' : ' (PCB 전이라 정격이 작은 SMD 기준)'}`]
-    const res = (state: OpState, summary: string) => out.push({ rule: 'op_rpower', ref: r.ref, state, summary, detail, ...(h.cause && state !== 'pass' ? { cause: h.cause } : {}) })
+    const res = (state: OpState, summary: string, own = false) => out.push({ rule: 'op_rpower', ref: r.ref, state, summary, detail,
+      ...(h.cause && state !== 'pass' && !own ? { cause: h.cause, ...(h.causeRule ? { causeRule: h.causeRule } : {}) } : {}) })
     const who = h.label ?? r.ref
-    if (atLeast(h.p, pr.p_max.v)) res('error', `${who} 발열 ${a} ≥ 정격 ${b}`)
+    const pMin = h.bound?.pMin ?? 0
+    if (h.bound && atLeast(pMin, NEAR * pr.p_max.v)) {
+      // the base current alone already heats it past 90 % of the rating: whatever the load draws, its own fault (2026-11-09
+      // review: "부하가 0 mA 이하면 정격 125 mW의 90% 미만입니다" with 250 mW from the base alone)
+      const [m, n] = two(pMin, pr.p_max.v, W)
+      detail.push(`부하 전류를 빼고 ${h.bound.base}만 지나도 ${W(pMin)}이고, 부하 전류가 더해지면 더 커집니다`)
+      if (atLeast(pMin, pr.p_max.v)) res('error', `${who} 발열 ${m} ≥ 정격 ${n} (베이스 전류만으로)`, true)
+      else res('warn', `${who} 발열이 베이스 전류만으로 ${m}로 정격 ${n}에 가깝고, 부하 전류가 더해지면 넘을 수 있습니다`, true)
+    } else if (h.bound && atLeast(h.p, NEAR * pr.p_max.v)) {
+      res('unknown', `${who} 발열을 판단할 수 없습니다: 부하 전류를 몰라 가장 큰 전류로 계산하면 ${W(h.p)}입니다`)
+      // "미만": at the limit itself the heat is 90 % of the rating, which warns (2026-11-09 review: "1500 mA 이하면" against
+      // a warn at 1.5 A)
+      detail.push(`부하가 ${mA(down(h.bound.iOk))} 미만이면 정격 ${W(pr.p_max.v)}의 90% 미만입니다`)
+      out[out.length - 1].fix = '부하 값에 전류를 적으면(예: MOTOR 0.1A) 다시 판단합니다.'
+    } else if (atLeast(h.p, pr.p_max.v)) res('error', `${who} 발열 ${a} ≥ 정격 ${b}`)
     else if (atLeast(h.p, NEAR * pr.p_max.v)) res('warn', `${who} 발열 ${a}로 정격 ${b}에 가깝습니다`)
     else res('pass', `${who} 발열 최대 ${W(h.p)} (정격 ${W(pr.p_max.v)})`)
   }

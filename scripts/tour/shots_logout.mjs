@@ -11,7 +11,7 @@ export async function run(rec) {
     // off the 로그인 button it brought back, so the button reads (review of 2026-10-30)
     await page.mouse.move(900, 300, { steps: 12 })
     await rec.pause(1500)
-    await rec.caption('https://schemaforge.kro.kr')
+    await rec.caption('https://schemaforge-app.duckdns.org')
     await rec.pause(3000)
   })
 }

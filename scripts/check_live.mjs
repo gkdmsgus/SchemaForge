@@ -1,16 +1,17 @@
 // A deployed server (or the deploy image run locally), driven in a browser like a visitor:
 // P1 /health reports KiCad, P2 a demo board is built, P3 KiCad's 3D model loads, P4 the gerber zip downloads,
-// P5-P6 a visitor without an account is told why AI 다듬기 and the AI editor are refused (the board is still
+// P5-P6 a visitor without an account is told why AI 다듬기 and the AI editor are refused (P6 after closing the login
+// window P5 opened, as a visitor does; the board is still
 // built), P7 no page errors, P8 the home page fetches neither the 3D viewer nor the PDF code, and its entry file stays
 // small (they were all in one 1,837 kB file, for visitors who never make a board: review of 2026-11-06), P9 the PDF button
 // still gives a PDF, P10 no Content-Security-Policy violation while the home page, the demo board, the 3D viewer, the PDF
 // and the web fonts load (the site's CSP is set by Caddy in front of it: a source it leaves out blocks that file with
 // only a console line, which P7 never saw). Needs the playwright package (in package.json) and its Chromium.
-// Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge.kro.kr; DEMO=motor, SHOT=board.png)
+// Usage: node scripts/check_live.mjs [BASE]   (default https://schemaforge-app.duckdns.org, the Jetson; the old Render address works too; DEMO=motor, SHOT=board.png)
 import fs from 'node:fs'
 import { chromium } from 'playwright'
 
-const BASE = (process.argv[2] || process.env.BASE || 'https://schemaforge.kro.kr').replace(/\/$/, '')
+const BASE = (process.argv[2] || process.env.BASE || 'https://schemaforge-app.duckdns.org').replace(/\/$/, '')
 const DEMO = process.env.DEMO || 'motor'
 let failed = 0
 const check = (name, ok, info = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`) }
@@ -88,8 +89,13 @@ try {
   const note = await page.getByTestId('ai-note').getAttribute('title').catch(() => null)
   check('P5 AI 다듬기 refused with a reason, board built anyway', !!note && /허용된 계정/.test(note), note ?? 'no note')
 
+  // the refusal also opens the login window, a modal <dialog> since 2026-11-08: the page behind it is inert, so a message
+  // typed there was never sent and P6 failed on all four demos. A visitor closes it first; so does this check
+  const login = page.locator('dialog[open]')
+  if (await login.count()) { await page.keyboard.press('Escape'); await login.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {}) }
   const box = page.getByTestId('chat-input')
-  if (await box.count()) {
+  if (await login.count()) check('P6 AI editor refusal shown', false, 'the login window P5 opened does not close with Escape')
+  else if (await box.count()) {
     await box.fill('R1을 470으로 바꿔줘'); await box.press('Enter')
     await page.waitForTimeout(2000)
     const bubble = await page.getByText(/허용된 계정으로 로그인/).first().innerText().catch(() => '')

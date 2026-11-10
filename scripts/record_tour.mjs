@@ -5,7 +5,7 @@
 //      that login over to the recorded window and never types a password.
 // Part B keeps the login and waits for videos/tour_control.txt: "take" records part B again, "logout" records
 // the closing logout clip, "flow" runs every circuit type through to gerbers (tour/flow_b.mjs), "quit" ends. Waits are played faster in the edit (badge "▶▶ n배속").
-// Usage: node scripts/record_tour.mjs A|B [BASE]   (default https://schemaforge.kro.kr)
+// Usage: node scripts/record_tour.mjs A|B [BASE]   (default https://schemaforge-app.duckdns.org)
 import { chromium } from 'playwright'
 import { spawn } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { GPU_ARGS, VIEW, overlay, recorder, edit, duration } from './tour/lib.mjs'
 
 const PART = (process.argv[2] || 'A').toUpperCase()
-const BASE = (process.argv[3] || 'https://schemaforge.kro.kr').replace(/\/$/, '')
+const BASE = (process.argv[3] || 'https://schemaforge-app.duckdns.org').replace(/\/$/, '')
 const OUT = join(process.cwd(), 'videos')
 const HERE = dirname(fileURLToPath(import.meta.url))
 const CONTROL = join(OUT, 'tour_control.txt')

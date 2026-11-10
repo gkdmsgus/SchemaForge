@@ -18,6 +18,8 @@ Exit code 0 only if every check passes.
   38 the demo netlists are built into the image (demo_cache/), so a demo opens without running skidl
   39 what skidl code starts is killed with it and reaped (tini as PID 1, no zombies)
   40 eight 3D model exports at once, twice, all succeed with the same size (each in a folder of its own)
+  41 the footprint table is in the image where KICAD_CONFIG_HOME names it, not under /tmp or HOME (the container runs
+     with an empty /tmp, so item 33 sees what Render saw: 9-15 footprint warnings per demo board, 2026-11-08)
 """
 import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
 
@@ -105,7 +107,9 @@ def main():
     size = sh('docker', 'image', 'inspect', IMAGE, '--format', '{{.Size}}').stdout.strip()
 
     sh('docker', 'rm', '-f', NAME, check=False)
-    sh('docker', 'run', '-d', '--name', NAME, '-p', f'{args.port}:8002', IMAGE)
+    # with an empty /tmp, as a host may give it: nothing the server needs may live there (the footprint table did, and
+    # Render's boards warned on every footprint, 2026-11-08). exec and 1 GB, so only emptiness differs from the image's
+    sh('docker', 'run', '-d', '--name', NAME, '-p', f'{args.port}:8002', '--tmpfs', '/tmp:rw,exec,mode=1777,size=1g', IMAGE)
     try:
         base = f'http://localhost:{args.port}'
         health = None
@@ -206,6 +210,16 @@ def main():
                   f'{got}')
         else:
             check('40 concurrent 3D exports', False, 'no board')
+
+        # the footprint table where neither /tmp nor HOME decides it: written to $HOME/.config under /tmp, it was gone on
+        # Render, and every demo board there warned 9-15 times (2026-11-08). Item 33 runs with an empty /tmp; this one
+        # asks kicad-cli's own setting, with HOME pointed elsewhere as a host may
+        where = sh('docker', 'exec', '-e', 'HOME=/nonexistent', NAME, 'sh', '-c',
+                   'echo "${KICAD_CONFIG_HOME:-unset}"; test -s "$KICAD_CONFIG_HOME/10.0/fp-lib-table" && echo table',
+                   check=False).stdout.split()
+        home = where[0] if where else ''
+        check('41 footprint table outside /tmp and HOME', home.startswith('/') and not home.startswith('/tmp')
+              and where[1:] == ['table'], f'KICAD_CONFIG_HOME={home or "?"}, {"table found" if where[1:] == ["table"] else "no table"}')
     finally:
         if not args.keep:
             sh('docker', 'rm', '-f', NAME, check=False)
