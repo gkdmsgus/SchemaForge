@@ -508,7 +508,9 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     rSwLed: !cir101(rSwLed).length && led(rSwLed)?.state === 'pass',
     shared: !cir101(shared).length && !cir101(sharedLow).length && led(shared)?.state === 'warn' && /나눠 씁니다/.test(led(shared)?.summary ?? ''),
     bareRed: cir101(bare('RED')).join() === 'D1' && led(bare('RED'))?.state === 'error',
-    bareGreen: cir101(bare('GREEN')).join() === 'D1' && led(bare('GREEN'))?.state === 'unknown',
+    // green has its datasheet since 0c2f0b3 (2026-11-12) and fails as red does; a colour with none (white) stays 판단 불가
+    bareGreen: cir101(bare('GREEN')).join() === 'D1' && led(bare('GREEN'))?.state === 'error',
+    bareWhite: cir101(bare('WHITE')).join() === 'D1' && led(bare('WHITE'))?.state === 'unknown',
     onQ: cir101(onQ).join() === 'D1' && led(onQ)?.state === 'error',
     oneString: refused.join('|') === 'D1,D2,D3' && /전원과 D1의 A 핀 사이/.test(chat),
     colourBlind: !cir101(green).length,
