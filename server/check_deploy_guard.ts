@@ -7,10 +7,11 @@
 // D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
 // D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT); D15b the Jetson image is given it.
 // D16 the file routes from a server under a dot folder (a worktree under .claude/), with names that leave outputs/ refused.
+// D9h a visitor's circuit is at most 30 parts (board route and /netlist/restore).
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { request } from 'http'
 import { createServer } from 'net'
 import { tmpdir } from 'os'
@@ -264,6 +265,29 @@ async function live() {
       gerberGone.status === 404 && gerberSaid.code === 'board_gone' && /남아 있지 않습니다/.test(gerberSaid.error ?? '')
       && boardGone.status === 404 && /남아 있지 않습니다/.test(boardSaid.error ?? ''),
       `gerber ${gerberGone.status} ${gerberSaid.code ?? '(no code)'} "${gerberSaid.error}" | board ${boardGone.status} "${boardSaid.error}"`)
+
+    // D9h. a visitor's circuit is at most 30 parts, on the board route and on /netlist/restore, whose file the board route
+    //      then takes by name: 200 parts kept python busy 60 s and ended in English (review of 2026-11-08). 31 is told at once
+    //      in Korean and writes no file; 30 is taken
+    {
+      const parts = (n: number) => {
+        const refs = Array.from({ length: n }, (_, i) => `R${i + 1}`)
+        return { components: refs.map(ref => ({ ref, value: '1k' })),
+                 nets: [{ name: 'A', nodes: refs.map(ref => ({ ref, pin: '1' })) }, { name: 'GND', nodes: refs.map(ref => ({ ref, pin: '2' })) }] }
+      }
+      const answer = async (r: Response) => ({ status: r.status, said: await r.json().catch(() => ({})) as { error?: string; code?: string; written?: boolean } })
+      const t0 = Date.now()
+      const board = await answer(await post('/generate_pcb_stream', { graph: parts(31), baseName: 'capcheck' }))
+      const boardMs = Date.now() - t0
+      const restoreBig = await answer(await post('/netlist/restore', { filename: 'capcheck_31.net', graph: parts(31) }))
+      const restoreFit = await answer(await post('/netlist/restore', { filename: 'capcheck_30.net', graph: parts(30) }))
+      const files = readdirSync('outputs').filter(f => f.startsWith('capcheck'))
+      for (const f of files) rmSync(join('outputs', f), { force: true })
+      const capped = (a: typeof board) => a.status === 400 && a.said.code === 'too_big' && /30개/.test(a.said.error ?? '') && /주세요/.test(a.said.error ?? '')
+      check('D9h a visitor\'s circuit: 31 parts told at once in Korean, no file written; 30 taken', capped(board) && boardMs < 1000
+        && capped(restoreBig) && restoreFit.status === 200 && restoreFit.said.written === true && files.join() === 'capcheck_30.net',
+        `board ${board.status} in ${boardMs} ms "${board.said.error}" | restore 31 ${restoreBig.status} ${restoreBig.said.code} | restore 30 ${restoreFit.status} written ${restoreFit.said.written} | files ${files.join(',') || 'none'}`)
+    }
 
     // D9c. a BOM price search spends the operator's Mouser quota, one call per line: a visitor is told refused and keeps
     //      the search links, before any key is read (review of 2026-11-06)

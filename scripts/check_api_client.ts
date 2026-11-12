@@ -159,6 +159,11 @@ reset()
 handler = () => json(200, { ok: true, written: true })
 check('restoreNetlist: a bad filename is not sent', (await api.restoreNetlist('../x.net', {})) === false && calls.length === 0)
 check('restoreNetlist: a good one is sent and says written', (await api.restoreNetlist('led_ab12cd34.net', { components: [] })) === true && calls[0].url === '/netlist/restore')
+// the login goes along: the server caps a visitor's circuit at 30 parts there, not a member's (review of 2026-11-08)
+reset()
+store.set('sf_token', 'TK')
+await api.restoreNetlist('led_ab12cd34.net', { components: [] })
+check('restoreNetlist: the saved login goes along', calls[0]?.auth === 'Bearer TK', JSON.stringify(calls[0]))
 
 // the netlist check's trouble in words: a busy server's own sentence (what happened, what to do), not "HTTP 503"
 // (review of 2026-11-08); the other failures keep theirs, and an answer has none

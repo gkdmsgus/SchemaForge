@@ -126,7 +126,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return readJson<T>(res)
 }
 
-/** a request that needs no login (sign-up, login, netlist restore) */
+/** a request that needs no login (sign-up, login) */
 async function postOpen<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -325,10 +325,11 @@ export function ercGraphTrouble(status: number, data: { error?: string; code?: s
 
 /**
  * Render's disk is wiped on a restart or sleep: writes a saved session's netlist file again from its circuit
- * (the server never overwrites one that exists). true = it was missing and is written now.
+ * (the server never overwrites one that exists). true = it was missing and is written now. The login goes along: a
+ * visitor's circuit is capped at 30 parts there (server/index.ts VISITOR_PARTS), a member's is not.
  */
 export async function restoreNetlist(filename: string, graph: unknown): Promise<boolean> {
   if (!/^[A-Za-z0-9_-]{1,80}\.net$/.test(filename) || !graph) return false
-  const data = await postOpen<{ written?: boolean }>('/netlist/restore', { filename, graph })
+  const data = await call<{ written?: boolean }>('POST', '/netlist/restore', { filename, graph })
   return !!data.written
 }

@@ -1333,7 +1333,13 @@ app.get('/download/:filename', (req: Request, res: Response) => {
 
 const NETLIST_NAME = /^[A-Za-z0-9_-]{1,80}\.net$/
 
-app.post('/netlist/restore', (req: Request, res: Response) => {
+// A visitor's circuit (no listed account) is at most this many parts, on the board route and here, whose file the board
+// route then takes by name: 200 parts kept python busy 60 s and ended in English (review of 2026-11-08). The demos have
+// 3 to 9; a member's circuit is not capped. check_deploy_guard D9f
+const VISITOR_PARTS = 30
+const tooBig = (req: AuthRequest, g: NetGraph) => g.components.length > VISITOR_PARTS && !!memberRefusal(GUARD, req.user)
+
+app.post('/netlist/restore', optionalAuth as any, (req: AuthRequest, res: Response) => {
   const { filename, graph } = req.body || {}
   if (typeof filename !== 'string' || !NETLIST_NAME.test(filename)) {
     return res.status(400).json({ error: 'filename: letters, digits, _ and - only, ending in .net' })
@@ -1342,6 +1348,7 @@ app.post('/netlist/restore', (req: Request, res: Response) => {
   if (existsSync(netPath)) return res.json({ ok: true, written: false })
   const clean = cleanGraph(graph)
   if (!clean || !clean.components.length) return res.status(400).json({ error: 'graph with components and nets required' })
+  if (tooBig(req, clean)) return res.status(400).json({ code: 'too_big', error: PCB_SAYS.tooBig })
   try {
     // 'wx' fails if the file appeared meanwhile: never overwrite
     writeFileSync(netPath, graphToNetlist(clean), { encoding: 'utf8', flag: 'wx' })
@@ -1576,6 +1583,8 @@ const boardRuns = new Map<string, { abort: AbortController; ended: Promise<void>
  * server's paths. The traceback goes to the server's log.
  */
 const PCB_SAYS = {
+  // VISITOR_PARTS (30): a visitor's circuit, said before anything runs
+  tooBig: '로그인하지 않으면 부품 30개까지 기판을 만들 수 있습니다. 부품을 줄이거나 로그인해 주세요.',
   badGraph: '회로 내용을 읽지 못해 기판을 만들 수 없습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
   netGone: '서버에 이 회로의 파일이 남아 있지 않습니다. 서버가 다시 시작되거나 오래된 파일을 정리하면 지워집니다. 회로를 다시 만든 뒤 PCB를 생성해 주세요.',
   replaced: '같은 기판을 다른 창에서 새로 만들기 시작해서 여기서는 멈췄습니다. 그 창에서 결과를 보거나, 재시도를 누르면 여기서 다시 만듭니다.',
@@ -1603,6 +1612,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   // a graph with no part left: the generator died on it and the SSE error carried its traceback, server paths and all
   // (review of 2026-11-07). Answered before anything runs; /erc_graph still checks such a graph (no_ground)
   if (clean && !clean.components.length) return res.status(400).json({ error: '부품이 하나도 없는 회로라 기판을 만들 수 없습니다.' })
+  if (clean && tooBig(req, clean)) return res.status(400).json({ code: 'too_big', error: PCB_SAYS.tooBig })
   let netPath: string
   let pcbFilename: string
   let netText: string | null = null      // written once this request has its slot
