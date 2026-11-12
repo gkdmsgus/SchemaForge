@@ -217,10 +217,35 @@ const SIGNUP_ERRORS: Record<string, [number, string]> = {
   signup_disabled: [403, '지금은 새로 가입할 수 없습니다.'],
 }
 
+// ── What a request body must hold ──────────────────────────────────
+// A field of the wrong type crashed a route (a number as a description: TypeError, a 500 with the stack) or was kept as
+// it came (an email that is a number, a graph that is a word). Each route says in Korean what it could not read.
+// check_inputs.ts I2
+
+/** text with something in it */
+const filled = (v: unknown): v is string => typeof v === 'string' && v.trim() !== ''
+/** nothing, or text */
+const textOrNone = (v: unknown) => v == null || typeof v === 'string'
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+/** a schematic as the screen keeps it: a list of parts and a list of nets, each net with a list of pins */
+const isGraph = (v: unknown): v is NetGraph => isObject(v) && Array.isArray(v.components) && Array.isArray(v.nets)
+  && v.components.every(isObject) && v.nets.every(n => isObject(n) && Array.isArray(n.nodes) && n.nodes.every(isObject))
+
+const INPUT_SAYS = {
+  login: '이메일과 비밀번호를 입력하세요.',
+  record: '기록에 저장할 내용을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  message: '대화 내용을 저장하지 못했습니다. 보낸 내용을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  favorite: '즐겨찾기할 기록을 찾지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+  description: '만들 회로를 글로 설명해 주세요.',
+  edit: '회로나 요청 문장을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 요청해 주세요.',
+  code: '실행할 코드가 없습니다. Code 탭에 코드를 적은 뒤 실행해 주세요.',
+  parts: '부품 목록을 읽지 못했습니다. 페이지를 새로고침한 뒤 다시 찾아 주세요.',
+}
+
 // POST /auth/register
 app.post('/auth/register', async (req: Request, res: Response) => {
   const { email, password } = req.body || {}
-  if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
+  if (!filled(email) || !filled(password)) return res.status(400).json({ error: INPUT_SAYS.login })
   const closed = localLoginRefusal(GUARD)
   if (closed) return res.status(503).json({ error: closed })
 
@@ -252,7 +277,7 @@ app.post('/auth/register', async (req: Request, res: Response) => {
 // POST /auth/login
 app.post('/auth/login', async (req: Request, res: Response) => {
   const { email, password } = req.body || {}
-  if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력하세요.' })
+  if (!filled(email) || !filled(password)) return res.status(400).json({ error: INPUT_SAYS.login })
   const closed = localLoginRefusal(GUARD)
   if (closed) return res.status(503).json({ error: closed })
 
@@ -353,7 +378,9 @@ app.get('/sessions', requireAuth as any, async (req: AuthRequest, res: Response)
 // POST /sessions — 세션 저장
 app.post('/sessions', requireAuth as any, async (req: AuthRequest, res: Response) => {
   const { prompt, code, guide, graph, filename } = req.body || {}
-  if (!prompt) return res.status(400).json({ error: 'prompt required' })
+  if (!filled(prompt) || ![code, guide, filename].every(textOrNone) || !(graph == null || isGraph(graph))) {
+    return res.status(400).json({ error: INPUT_SAYS.record })
+  }
   if (!db) return res.json({ id: randomUUID() })
 
   const row = { user_id: req.user!.id, prompt: String(prompt), code: code ?? null, guide: guide ?? null, graph: graph ?? null, filename: filename ?? null }
@@ -364,8 +391,8 @@ app.post('/sessions', requireAuth as any, async (req: AuthRequest, res: Response
 
 // PATCH /sessions/:id — 이름 바꾸기, AI 편집·Code 탭 결과 저장
 app.patch('/sessions/:id', requireAuth as any, async (req: AuthRequest, res: Response) => {
-  const patch = sessionPatch(req.body || {})
-  if (!Object.keys(patch).length) return res.status(400).json({ error: 'name, graph, code, guide or filename required' })
+  const patch = sessionPatch(isObject(req.body) ? req.body : {})
+  if (!Object.keys(patch).length || !(patch.graph == null || isGraph(patch.graph))) return res.status(400).json({ error: INPUT_SAYS.record })
   if (!db) return res.json({ ok: true })
   if (!isId(req.params.id)) return res.status(404).json({ error: NOT_FOUND })
   const r = await db.from('sessions').update(patch).eq('id', req.params.id).eq('user_id', req.user!.id).select('id')
@@ -407,8 +434,8 @@ app.get('/sessions/:id/messages', requireAuth as any, async (req: AuthRequest, r
 // POST /sessions/:id/messages — 채팅 메시지 저장
 app.post('/sessions/:id/messages', requireAuth as any, async (req: AuthRequest, res: Response) => {
   const { role, content, actions } = req.body || {}
-  if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string' || !content) {
-    return res.status(400).json({ error: 'role (user or assistant) and content required' })
+  if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string' || !content || !(actions == null || Array.isArray(actions))) {
+    return res.status(400).json({ error: INPUT_SAYS.message })
   }
   if (!db) return res.json({ ok: true })
   const s = await ownSession(req.params.id, req.user!.id)
@@ -442,7 +469,7 @@ app.get('/favorites', requireAuth as any, async (req: AuthRequest, res: Response
 // POST /favorites — only the caller's own session; a second star on it gives back the same row
 app.post('/favorites', requireAuth as any, async (req: AuthRequest, res: Response) => {
   const { session_id } = req.body || {}
-  if (!session_id) return res.status(400).json({ error: 'session_id required' })
+  if (!filled(session_id)) return res.status(400).json({ error: INPUT_SAYS.favorite })
   if (!db) return res.json({ id: randomUUID() })
   const s = await ownSession(session_id, req.user!.id)
   if (s.fail) return dbFail(res, s.fail)
@@ -674,8 +701,8 @@ Question rules:
 Output the JSON object and nothing else.`
 
 app.post('/clarify', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
-  const description = (req.body?.description || '').trim()
-  if (!description) return res.status(400).json({ error: 'description required' })
+  const description = filled(req.body?.description) ? req.body.description.trim() : ''
+  if (!description) return res.status(400).json({ error: INPUT_SAYS.description })
   try {
     const openai = modelClient()
     const response = await openai.chat.completions.create({
@@ -744,9 +771,12 @@ circuit still needs and changes only what was asked.
 
 Output the JSON object only. No markdown, no prose.`
 
+/** a plan answer that was not JSON, or a failure modelFailure does not know: it said "plan parse failed" or the error's English */
+const PLAN_FAILED = '설계 계획을 만들지 못했습니다. 잠시 뒤 다시 시도해 주세요.'
+
 app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
-  const description = (req.body?.description || '').trim()
-  if (!description) return res.status(400).json({ error: 'description required' })
+  const description = filled(req.body?.description) ? req.body.description.trim() : ''
+  if (!description) return res.status(400).json({ error: INPUT_SAYS.description })
   try {
     const openai = modelClient()
     const response = await openai.chat.completions.create({
@@ -761,7 +791,7 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
     })
     const raw = response.choices[0]?.message?.content || '{}'
     let parsed: Record<string, unknown>
-    try { parsed = JSON.parse(raw) } catch { return res.status(500).json({ error: 'plan parse failed' }) }
+    try { parsed = JSON.parse(raw) } catch { return res.status(500).json({ error: PLAN_FAILED }) }
     if (!Array.isArray(parsed.specs)) parsed.specs = []
     if (!Array.isArray(parsed.parts)) parsed.parts = []
     if (!Array.isArray(parsed.risks)) parsed.risks = []
@@ -769,7 +799,7 @@ app.post('/plan', optionalAuth as any, requireMember as any, async (req: Request
   } catch (e) {
     console.error('/plan error:', e)
     const f = modelFailure(e)
-    res.status(f?.status ?? 500).json({ error: f?.text ?? (e as Error).message })
+    res.status(f?.status ?? 500).json({ error: f?.text ?? PLAN_FAILED })
   }
 })
 
@@ -802,10 +832,11 @@ function jsonText(body: string): string {
 }
 
 app.post('/chat_edit', optionalAuth as any, requireMember as any, async (req: Request, res: Response) => {
-  const { graph, message, history = [] } = req.body as {
-    graph: NetGraph; message: string; history: { role: string; content: string }[]
-  }
-  if (!graph || !message) return res.status(400).json({ error: 'graph and message required' })
+  const { graph, message, history: sent = [] } = (req.body || {}) as { graph: unknown; message: unknown; history: unknown }
+  if (!isGraph(graph) || !filled(message) || !Array.isArray(sent)) return res.status(400).json({ error: INPUT_SAYS.edit })
+  // the conversation so far as the model takes it: a turn that is not one is left out
+  const history = sent.filter((h): h is { role: 'user' | 'assistant'; content: string } =>
+    isObject(h) && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string')
 
   const compSummary = (graph.components || []).map(c => `${c.ref}(${c.value || '?'})`).join(', ')
   // ref.pin: an edit that lists a net's pins copies the real ones instead of guessing them
@@ -851,7 +882,7 @@ changed.`
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },
-    ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+    ...history.map(h => ({ role: h.role, content: h.content })),
     { role: 'user' as const, content: message },
   ]
 
@@ -989,8 +1020,8 @@ const CODE_FIX_TIMEOUT = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델이
 const CODE_FIX_NO_ANSWER = `${CODE_FAILED} 고쳐 달라고 했지만 AI 모델에게서 고친 코드를 받지 못했습니다. 잠시 뒤에 재시도를 눌러 주세요.`
 
 app.post('/generate', optionalAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
-  const description = (req.body?.description || '').trim()
-  if (!description) return res.status(400).json({ error: 'Please enter a circuit description.' })
+  const description = filled(req.body?.description) ? req.body.description.trim() : ''
+  if (!description) return res.status(400).json({ error: INPUT_SAYS.description })
   // The '자동 재시도' setting: one model fix for a code error and one for netlist (ERC) errors.
   // Older clients send nothing and keep both.
   const autoFix = req.body?.autoFix !== false
@@ -1170,9 +1201,11 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
     res.write(sse('done', JSON.stringify({ code: skidlCode, guide, filename, graph, erc: ercDone })))
   } catch (e) {
     if (!clientClosed) {
+      // a failure modelFailure does not know said "Server error: <its English>"; what it was goes to the log
+      if (!abort.signal.aborted && !modelFailure(e)) console.error('/generate error:', e)
       const msg = abort.signal.aborted
         ? '회로 생성 시간이 초과됐습니다.'
-        : modelFailure(e)?.text ?? `Server error: ${(e as Error).message}`
+        : modelFailure(e)?.text ?? '회로를 만들다가 서버 오류가 났습니다. 재시도를 눌러 주세요.'
       res.write(sse('error', JSON.stringify({ message: msg })))
     }
   } finally {
@@ -1188,7 +1221,7 @@ app.post('/generate', optionalAuth as any, requireMember as any, async (req: Aut
 
 app.post('/test_code', requireAuth as any, requireMember as any, async (req: AuthRequest, res: Response) => {
   const code: string = typeof req.body?.code === 'string' ? req.body.code : ''
-  if (!code.trim()) return res.status(400).json({ error: 'No code provided.' })
+  if (!code.trim()) return res.status(400).json({ error: INPUT_SAYS.code })
   let outputPath: string
   try {
     outputPath = await runSkidl(code)
@@ -1757,8 +1790,11 @@ app.post('/mouser_search', optionalAuth as any, async (req: AuthRequest, res: Re
   const refusal = memberRefusal(GUARD, req.user)
   if (refusal) return req.authFailed ? refuse(req, res, refusal) : res.json({ available: false, refused: true, results: [] })
   const { components } = req.body || {}
-  if (!Array.isArray(components) || !components.length) return res.status(400).json({ error: 'No components' })
-  if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `Too many components (max ${MOUSER_MAX_LINES})` })
+  // a line is the BOM's: ref, value, part template and package as text (a value may be a number)
+  const line = (c: unknown) => isObject(c) && ['ref', 'name', 'pkg'].every(k => textOrNone(c[k]))
+    && (textOrNone(c.value) || typeof c.value === 'number')
+  if (!Array.isArray(components) || !components.length || !components.every(line)) return res.status(400).json({ error: INPUT_SAYS.parts })
+  if (components.length > MOUSER_MAX_LINES) return res.status(400).json({ error: `부품 가격은 한 번에 ${MOUSER_MAX_LINES}줄까지 찾을 수 있습니다. 나눠서 찾아 주세요.` })
 
   const apiKey = process.env.MOUSER_API_KEY
   if (!apiKey) return res.json({ available: false, reason: 'MOUSER_API_KEY not set', results: [] })

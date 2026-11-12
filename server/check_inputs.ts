@@ -1,8 +1,9 @@
-// Checks I1: what the server answers a request it cannot use. Every case is a real request to a server started here,
+// Checks I1-I2: what the server answers a request it cannot use. Every case is a real request to a server started here,
 // in development and in production (NODE_ENV=production), and passes only on the status it names, with JSON whose error
 // is a Korean sentence and no stack or server path anywhere in the answer. Express's own pages showed the stack in
 // development (a broken JSON body: "SyntaxError ... at JSON.parse" and the server's paths) and English in production.
 // I1 the body or address Express could not read: broken JSON, too large, a malformed %-escape; a route that is not there.
+// I2 a field of the wrong type or missing on each route that reads a body (a number for a description was a TypeError).
 // No model, Supabase or Mouser is called: the model's address is a closed port and no Mouser key is given.
 // Usage (from server/): npx tsx check_inputs.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
@@ -91,6 +92,40 @@ const I1: Case[] = [
   { name: 'no such route', method: 'POST', path: '/no_such_route', body: '{}', status: 404 },
 ]
 
+// I2. a field of the wrong type or missing, on each route that reads a body (not the board, 3D, gerber and ERC routes).
+//     Development only past the sign-in: production refuses these routes to a visitor first (check_deploy_guard D9)
+const ID = '00000000-0000-4000-8000-000000000000'
+const GRAPH = { components: [], nets: [] }
+const I2_SIGN_IN: Case[] = [
+  { name: 'register: email a number', method: 'POST', path: '/auth/register', body: json({ email: 5, password: 'x' }), status: 400 },
+  { name: 'login: email a list, password an object', method: 'POST', path: '/auth/login', body: json({ email: ['a'], password: {} }), status: 400 },
+]
+const post = (path: string, body: unknown, name: string, token = false): Case => ({ name: `${path} ${name}`, method: 'POST', path, body: json(body), status: 400, token })
+const I2: Case[] = [
+  post('/sessions', { prompt: 123 }, 'prompt a number', true),
+  post('/sessions', { prompt: 'x', graph: 'a word' }, 'graph a word', true),
+  post('/sessions', { prompt: 'x', code: {} }, 'code an object', true),
+  { name: '/sessions a list for a body', method: 'POST', path: '/sessions', body: '[1,2]', status: 400, token: true },
+  { name: 'PATCH /sessions graph a number', method: 'PATCH', path: `/sessions/${ID}`, body: json({ graph: 5 }), status: 400, token: true },
+  { name: 'PATCH /sessions nothing to change', method: 'PATCH', path: `/sessions/${ID}`, body: '{}', status: 400, token: true },
+  post(`/sessions/${ID}/messages`, { role: 'user', content: 5 }, 'content a number', true),
+  post(`/sessions/${ID}/messages`, { role: 'user', content: 'hi', actions: 'x' }, 'actions a word', true),
+  post('/favorites', { session_id: 5 }, 'session_id a number', true),
+  post('/clarify', { description: 5 }, 'description a number'),
+  post('/clarify', {}, 'no description'),
+  post('/plan', { description: {} }, 'description an object'),
+  post('/generate', { description: ['x'] }, 'description a list'),
+  post('/chat_edit', { graph: { components: 'x', nets: [] }, message: 'x' }, 'parts a word'),
+  post('/chat_edit', { graph: { components: [], nets: [{ name: 'A' }] }, message: 'x' }, 'a net with no pin list'),
+  post('/chat_edit', { graph: GRAPH, message: 'x', history: 'x' }, 'history a word'),
+  post('/chat_edit', { graph: GRAPH, message: 5 }, 'message a number'),
+  post('/test_code', { code: 5 }, 'code a number', true),
+  post('/mouser_search', { components: 'x' }, 'components a word'),
+  post('/mouser_search', { components: [5] }, 'a line a number'),
+  post('/mouser_search', { components: [{ ref: 'R1', value: {} }] }, 'a value an object'),
+  post('/mouser_search', { components: Array.from({ length: 61 }, (_, i) => ({ ref: `R${i + 1}`, value: '-' })) }, '61 lines'),
+]
+
 async function main() {
   let dev: Server | undefined, prod: Server | undefined
   try {
@@ -104,6 +139,10 @@ async function main() {
       check(name, !bad.length, bad.length ? bad.join(' | ') : `${cases.length} requests on both servers`)
     }
     await both('I1 a body or address Express could not read, a route not there: 400/413/404 in Korean, no stack', I1)
+    await both('I2 sign-in with a field of the wrong type: 400 in Korean', I2_SIGN_IN)
+    const bad = (await Promise.all(I2.map(c => run(dev!, c, token)))).filter(Boolean)
+    check('I2 a field of the wrong type or missing, each route that reads a body: 400 in Korean, no stack', !!token && !bad.length,
+      !token ? 'no local sign-in token' : bad.length ? bad.join(' | ') : `${I2.length} requests`)
   } finally {
     await Promise.all([stop(dev), stop(prod)])
   }
