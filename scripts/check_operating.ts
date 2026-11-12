@@ -147,7 +147,25 @@ const led = circuit([['BT1', 'Battery', '9V'], ['R1', 'R', '680'], ['D1', 'LED',
     [['VCC', 'J1.1', 'R1.1'], ['GND', 'J1.2', 'D1.2'], ['LED_A', 'R1.2', 'D1.1']])
   check('O3f supply through a connector: 판단 불가 with 3.3/5 V figures', is(run(viaConn), 'op_led', 'unknown', 'D1', /3\.3 V면.*5 V면/),
     show(run(viaConn), 'op_led'))
-  check('O3g unknown LED colour: 판단 불가, never pass', is(run(variant(led, setValue('D1', 'GREEN'))), 'op_led', 'unknown', 'D1'))
+  // white, RGB and a two-colour LED have no datasheet in the table: 판단 불가, never pass (GREEN was one until 2026-11-08)
+  const noData = ['WHITE', 'RGB', 'RED/GREEN', 'YELLOW-GREEN', 'ORANGE'].filter(c => !is(run(variant(led, setValue('D1', c))), 'op_led', 'unknown', 'D1'))
+  check('O3g LED colour with no datasheet (white, RGB, two colours): 판단 불가, never pass', !noData.length, noData.join(', '))
+  // the other colours of the same Kingbright families (src/lib/partSpecs.ts): blue VF 3.3~4.0 V @ 20 mA in both, so 5 V
+  // through 680 Ω is (5 − 4.0) / 680 = 1.47 mA up to (5 − 3.3) / 680 = 2.5 mA; 3.3 V reaches no more than its 3.3 V VF;
+  // green on 9 V / 680 Ω: THT WP7113GD (9 − 2.4) / 680 = 9.71 mA up to (9 − 2) / 680 = 10.3 mA, SMD APT2012SGC (9 − 2.5) / 680 = 9.56 mA up to
+  // (9 − 2.2) / 680 = 10 mA, its 25 mA rating; yellow THT WP7113YD (9 − 1.95) / 680 = 10.4 mA; written in Korean or in a value name too
+  const blue5 = variant(variant(led, setValue('BT1', '5V')), setValue('D1', 'BLUE'))
+  const blue33 = variant(variant(led, setValue('BT1', '3.3V')), setValue('D1', 'BLUE'))
+  const as = (c: string, style: 'smd' | 'tht' | null = null) => run(variant(led, setValue('D1', c)), style)
+  check('O3i blue, green and yellow LEDs read their datasheets: 5 V blue 1.47~2.5 mA, 3.3 V blue not lit, green 25 mA rating, 파랑/LED_BLUE_SMD/초록/노랑 read',
+    is(run(blue5, 'smd'), 'op_led', 'pass', 'D1', /1\.47~2\.5 mA/) && is(run(blue5, 'tht'), 'op_led', 'pass', 'D1', /1\.47~2\.5 mA/)
+    && is(run(blue33, 'smd'), 'op_led', 'error', 'D1', /켜지지 않음.*3\.3 V 이하/)
+    && is(as('GREEN', 'tht'), 'op_led', 'pass', 'D1', /9\.71~10\.3 mA \(최대 25 mA/) && is(as('GREEN', 'smd'), 'op_led', 'pass', 'D1', /9\.56~10 mA \(최대 25 mA/)
+    && is(as('YELLOW', 'tht'), 'op_led', 'pass', 'D1', /~10\.4 mA \(최대 30 mA/)
+    && full(as('초록')) === full(as('GREEN')) && full(as('노랑')) === full(as('YELLOW')) && full(as('파랑')) === full(as('BLUE'))
+    && full(as('LED_BLUE_SMD')) === full(as('BLUE'))
+    && !!pick(run(blue5, 'smd'), 'op_led', 'D1')?.detail.some(d => /APT2012QBC\/D/.test(d)),
+    [show(run(blue5, 'smd'), 'op_led'), show(run(blue33, 'smd'), 'op_led'), show(as('GREEN', 'tht'), 'op_led'), show(as('GREEN', 'smd'), 'op_led'), show(as('YELLOW', 'tht'), 'op_led')].join(' / '))
   const smd = run(led, 'smd')
   check('O3h SMD uses the 0805 LED (VF 2.0 V): 10.29 mA', is(smd, 'op_led', 'pass', 'D1', /10\.3 mA/), show(smd, 'op_led'))
 }

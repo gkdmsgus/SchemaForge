@@ -61,6 +61,15 @@ const IR_IRLZ = 'International Rectifier IRLZ44NPbF 데이터시트 PD-94831 (20
 const TI_555 = 'TI NE555 데이터시트 SLFS022K'
 const AMS_1117 = 'Advanced Monolithic AMS1117 데이터시트(ds1117)'
 const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
+// the other colours of the same Kingbright families as the red ones (5 mm WP7113, 0805 APT2012), read 2026-11-08 from
+// kingbrightusa.com; VF typical and maximum from ELECTRICAL / OPTICAL CHARACTERISTICS, IF from ABSOLUTE MAXIMUM RATINGS
+const KB = (part: string, doc: string) => `Kingbright ${part} (${doc})`
+const kbLed = (part: string, name: string, doc: string, typ: number, max: number, at: number, ifMax: number): LedSpec => ({
+  part: `Kingbright ${part} (${name})`,
+  vf_typ: { v: typ, src: `${KB(part, doc)}: VF 일반 ${typ} V @ IF ${at} mA` },
+  vf_max: { v: max, src: `${KB(part, doc)}: VF 최대 ${max} V @ IF ${at} mA` },
+  if_max: { v: ifMax / 1000, src: `${KB(part, doc)}, 절대 최대 정격: DC 순방향 전류 ${ifMax} mA` },
+})
 
 const bjt3904 = (doc: string): BjtSpec => ({
   ic_max: { v: 0.2, src: `${doc}, MAXIMUM RATINGS: IC 연속 200 mA` },
@@ -94,6 +103,12 @@ export const SPECS = {
       vf_max: { v: 2.5, src: 'Kingbright APT2012EC: VF 최대 2.5 V @ IF 20 mA' },
       if_max: { v: 0.03, src: 'Kingbright APT2012EC, 절대 최대 정격: DC 순방향 전류 30 mA' },
     },
+    green_tht: kbLed('WP7113GD', '5 mm 초록', 'Spec No DSAE9335 Rev V.12B', 2, 2.4, 10, 25),
+    green_smd: kbLed('APT2012SGC', '0805 초록', 'Spec No DSAA8210 Rev V.18B', 2.2, 2.5, 20, 25),
+    yellow_tht: kbLed('WP7113YD', '5 mm 노랑', 'Spec No DSAF2448 Rev V.11B', 1.95, 2.4, 10, 30),
+    yellow_smd: kbLed('APT2012SYCK', '0805 노랑', 'Spec No DSAD0949 Rev V.19B', 2.0, 2.5, 20, 30),
+    blue_tht: kbLed('WP7113QBC/D', '5 mm 파랑', 'Spec No DSAG3481 Rev V.18B', 3.3, 4.0, 20, 30),
+    blue_smd: kbLed('APT2012QBC/D', '0805 파랑', 'Spec No DSAH0446 Rev V.16B', 3.3, 4.0, 20, 30),
   } satisfies Record<string, LedSpec>,
 
   diode: {
@@ -241,5 +256,9 @@ export const assumedBjt = (style: 'smd' | 'tht' | null) => (style === 'tht' ? '2
 export const assumedMos = (style: 'smd' | 'tht' | null) => (style === 'tht' ? '2N7000' : '2N7002')
 
 /** Red LED data for the board style; before a PCB exists the lower VF (higher current) is used. */
-export const redLed = (style: 'smd' | 'tht' | null): LedSpec =>
-  style === 'smd' ? SPECS.led.red_smd : SPECS.led.red_tht
+export type LedColor = 'red' | 'green' | 'yellow' | 'blue'
+/** the LED of that colour the footprint stands for; with the style unknown, the one with the lower typical VF */
+export function ledOf(color: LedColor, style: 'smd' | 'tht' | null): LedSpec {
+  const smd = SPECS.led[`${color}_smd`], tht = SPECS.led[`${color}_tht`]
+  return style === 'smd' ? smd : style === 'tht' ? tht : (smd.vf_typ.v < tht.vf_typ.v ? smd : tht)
+}

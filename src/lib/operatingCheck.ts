@@ -1,6 +1,6 @@
 import type { BoardModel, NetGraph } from '../types'
 import { pinNumber } from './graphEdit'
-import { SPECS, assumedBjt, assumedMos, redLed, type BjtSpec, type LedSpec, type MosSpec, type Num } from './partSpecs'
+import { SPECS, assumedBjt, assumedMos, ledOf, type BjtSpec, type LedColor, type LedSpec, type MosSpec, type Num } from './partSpecs'
 
 // "Does this circuit actually work?" — numeric checks on the part values, on top of the
 // structural checks (connected, grounded) the circuit already gets. Each check states
@@ -232,8 +232,13 @@ export const worse = (a: OpState, b: OpState): OpState => (RANK[a] >= RANK[b] ? 
 function ledSpec(value: string, style: 'smd' | 'tht' | null): LedSpec | null {
   const v = value.toUpperCase()
   if (/INFRA|(^|[^A-Z])IR([^A-Z]|$)/.test(v)) return null       // infrared: different part
-  if (/(^|[^A-Z])RED([^A-Z]|$)|빨강|빨간/.test(v)) return redLed(style)
-  return null
+  const word = (w: string) => new RegExp(`(^|[^A-Z])${w}([^A-Z]|$)`)
+  const colors = ([
+    ['red', [word('RED'), /빨강|빨간|적색/]], ['green', [word('GREEN'), /초록|녹색/]],
+    ['yellow', [word('YELLOW'), /노랑|노란|황색/]], ['blue', [word('BLUE'), /파랑|파란|청색/]],
+  ] as [LedColor, RegExp[]][]).filter(([, res]) => res.some(re => re.test(v))).map(([c]) => c)
+  // one colour word only: a two-colour LED (RED/GREEN, YELLOW-GREEN) is no one of these parts
+  return colors.length === 1 ? ledOf(colors[0], style) : null
 }
 
 function bjtSpec(value: string, style: 'smd' | 'tht' | null): { spec: BjtSpec; note: string | null } {
@@ -1768,7 +1773,7 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
     const specs = s.leds.map(l => ledSpec(l.value, x.style))
     const miss = s.leds.find((_, i) => !specs[i])
     if (miss) {
-      res('unknown', `${miss.ref} (${miss.value || '색 없음'}): 이 색의 순방향 전압 자료가 없습니다`, ['순방향 전압과 최대 전류는 빨강 LED(Kingbright)만 자료가 있습니다'])
+      res('unknown', `${miss.ref} (${miss.value || '색 없음'}): 이 색의 순방향 전압 자료가 없습니다`, ['순방향 전압과 최대 전류는 빨강·초록·노랑·파랑 LED(Kingbright)만 자료가 있습니다. 흰색, RGB, 두 색 LED는 아직 없습니다'])
       continue
     }
     const top = x.source(s.top)
@@ -1830,7 +1835,8 @@ function checkLeds(x: Ctx, strings: LedString[], sinkOf: (n: string | null) => S
       `최대 연속 전류 ${mA(ifMax)}: ${cite(spec.if_max)}`,
     ]
     let state: OpState, summary: string
-    if (iHi <= 0) { state = 'error'; summary = `${name} 켜지지 않음: 걸리는 전압 ${V(top.hi - bot.lo)}가 순방향 전압 ${V(vf)}보다 낮습니다` }
+    // equal is not lit either (a blue LED's 3.3 V on 3.3 V): said as 이하, never "3.3 V가 3.3 V보다 낮습니다"
+    if (iHi <= 0) { state = 'error'; summary = `${name} 켜지지 않음: 걸리는 전압 ${V(top.hi - bot.lo)}가 순방향 전압 ${V(vf)} 이하입니다` }
     else if (atLeast(perHi, ifMax)) {
       const [a, b] = two(perHi, ifMax, mA)
       state = 'error'; summary = `${name} 전류 ${a} ≥ 최대 ${b} (${rText})`
