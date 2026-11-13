@@ -37,7 +37,7 @@ const OUT: Record<string, string> = {
   'server/pcb/check_deploy.py': 'Docker: it builds and runs the deploy image',
 }
 const BOARD_READERS = ['scripts/check_bom.ts', 'scripts/check_human_review.ts', 'scripts/check_fixes.ts',
-  'scripts/check_operating.ts', 'scripts/check_board_checks.ts', 'scripts/check_3d.ts']
+  'scripts/check_operating.ts', 'scripts/check_measure_plan.ts', 'scripts/check_board_checks.ts', 'scripts/check_3d.ts']
 
 // the chain's steps as paths from the root: "cd server && npx tsx check_x.ts" runs server/check_x.ts
 const scripts = (JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts

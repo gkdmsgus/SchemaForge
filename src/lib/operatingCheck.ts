@@ -2821,6 +2821,34 @@ function rootOf(r: OpResult, results: OpResult[]): OpResult {
  * failing (circuitErrors) a pass only covers what is still wired, so it reads as not judged instead
  * (2026-11-02 tour: '동작 검사 통과' beside '회로 오류 1' after the LED was taken out).
  */
+/** what a net should read against the board's ground, or why that is not known (measurePlan.ts) */
+export type NetLevel = { lo: number; hi: number; why: string; when?: string } | { lo?: undefined; why: string }
+
+/**
+ * What each net of the circuit should read on the running board, against its ground: the range the checks reckon with
+ * and its basis, for the measurement plan (measurePlan.ts). Relays are taken released, as at power-up; a level that
+ * holds only while a switch is closed, a button is up or a 555 output is HIGH says so in `when`. A circuit the checks do
+ * not judge (pins not told apart) gives every net the reason, no number
+ */
+export function netLevels(c: OpCircuit): Map<string, NetLevel> {
+  const nets = [...new Set(c.pins.values())].sort(natural)
+  const out = new Map<string, NetLevel>()
+  if (c.missing?.length || c.unread?.length) {
+    for (const n of nets) out.set(n, { why: '어느 다리인지 모르는 연결이 있어 동작 검사를 하지 않았습니다' })
+    return out
+  }
+  const x = context(c, new Set(c.parts.filter(p => p.part === 'Relay').map(p => p.ref)))
+  for (const n of nets) {
+    const lv = x.source(n)
+    if (!lv) { out.set(n, { why: x.noSource(n)?.why ?? '동작 검사가 이 넷의 전압을 계산하지 않습니다' }); continue }
+    const v = x.voltOf(n)
+    const when = !v ? `${x.timerOut(n)?.ref ?? '555'} 출력이 HIGH일 때 (깜빡이는 동안 멀티미터는 그 사이 값을 보입니다)`
+      : v.pulled ? '버튼을 누르지 않았을 때' : v.viaSwitch ? `${ga(v.viaSwitch)} 닫혔을 때` : undefined
+    out.set(n, { lo: lv.lo, hi: lv.hi, why: lv.why, ...(when ? { when } : {}) })
+  }
+  return out
+}
+
 export function operatingHeadline(results: OpResult[], circuitErrors = 0): { state: OpState; text: string } {
   if (!results.length) return { state: 'pass', text: '검사할 부품 없음' }
   // a result counts unless it follows a fault at least as severe as itself (a knock-on of that fault)
