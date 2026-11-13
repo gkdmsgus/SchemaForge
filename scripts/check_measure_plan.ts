@@ -86,12 +86,12 @@ const tps = (b: BoardModel) => b.parts.filter(p => p.part === 'TestPoint') as (B
   const b = boards.find(({ name }) => name === 'checkboard_ne555_blink_smd')?.b
   const plan = b ? measurePlan(b) : null
   const csv = plan ? measurePlanCsv(plan) : ''
-  const lines = csv.replace(/^﻿/, '').trim().split('\r\n')
+  const lines = csv.replace(/^\uFEFF/, '').trim().split('\r\n')
   const rows = lines.slice(1).map(l => l.split(','))
   const unknown = plan ? measurePlanCsv({ ...plan, points: plan.points.map(p => ({ ...p, expect: null })) }) : ''
   const json = plan ? JSON.parse(JSON.stringify(plan)) : null
   check('MP4 the table: BOM, a header and one row per test point with the corner coordinates and volts, 모름 when unknown; the JSON names its format',
-    !!plan && csv.startsWith('﻿') && lines[0].startsWith('테스트 포인트,넷,') && rows.length === plan.points.length
+    !!plan && csv.startsWith('\uFEFF') && lines[0].startsWith('테스트 포인트,넷,') && rows.length === plan.points.length
     && rows.every((r, i) => r.length === 8 && r[0] === plan.points[i].tp && r[2] === String(plan.points[i].fromCorner.x) && r[3] === String(plan.points[i].fromCorner.y) && /\d V$/.test(r[5]))
     && unknown.split('\r\n').slice(1, -1).every(l => l.split(',')[5] === '모름')
     && json?.format === 'schemaforge-measure-plan' && json?.version === 1 && json?.units === 'mm',

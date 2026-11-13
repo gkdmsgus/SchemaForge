@@ -81,5 +81,5 @@ export function measurePlanCsv(plan: MeasurePlan): string {
   const head = ['테스트 포인트', '넷', '기판 왼쪽 위에서 X (mm)', '기판 왼쪽 위에서 Y (mm)', '찍는 면', '기대 전압 (GND 기준)', '조건', '근거']
   const rows = plan.points.map(p => [p.tp, p.net, String(p.fromCorner.x), String(p.fromCorner.y), p.side === 'top' ? '윗면' : '양면',
     p.expect ? volts(p.expect) : '모름', p.when ?? '', p.basis])
-  return '﻿' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n') + '\r\n'
+  return '\uFEFF' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n') + '\r\n'
 }
