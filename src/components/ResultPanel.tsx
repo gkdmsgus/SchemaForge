@@ -24,6 +24,7 @@ import { actionLabel, chatEdit } from '../lib/graphEdit'
 import { draftWith, ercFixes, opFixes, pinoutStyleFix, splitWarnings, type Fix } from '../lib/fixes'
 import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
+import { measurePlan, measurePlanCsv } from '../lib/measurePlan'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
 import { validateCircuit } from '../lib/circuitValidation'
 import { getSavedResults } from '../lib/storage'
@@ -123,6 +124,8 @@ export default function ResultPanel({
   const [gerberGone, setGerberGone] = useState(false)
   // which gerber request may still set the state: a new PCB (another style, AI on) makes older answers stale
   const gerberReq = useRef(0)
+  // the measurement plan's file names, as the BOM's (SchemaForge_BOM.csv)
+  const planBase = result?.filename?.replace(/\.net$/, '') || 'SchemaForge'
   // the PCB stream on its way: it stops when this screen goes. The server stops python, and does not start the DRC or the
   // AI rounds, once the connection closes; left open, a board nobody would see went on to the end (review of 2026-11-06)
   const pcbAbort = useRef<AbortController | null>(null)
@@ -1018,6 +1021,13 @@ export default function ResultPanel({
               {/* a board built from a previous circuit: no downloads of files that no longer match */}
               {pcbStatus === 'done' && pcbFilename && !pcbStale && <>
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
+                {/* where to probe and what each test point should read (measurePlan.ts): a table for a multimeter, JSON for a prober */}
+                {board?.final?.parts.some(p => p.part === 'TestPoint') && <>
+                  <button data-testid="measure-plan" onClick={() => saveText(`${planBase}_measure_plan.csv`, measurePlanCsv(measurePlan(board.final!)), 'text/csv;charset=utf-8')}
+                    title="테스트 포인트마다 기판 위 위치와 켰을 때 나와야 하는 전압을 표로 받습니다 (멀티미터로 잴 때)" style={ghostBtn}>↓ 측정표</button>
+                  <button data-testid="measure-plan-json" onClick={() => saveText(`${planBase}_measure_plan.json`, JSON.stringify(measurePlan(board.final!), null, 2), 'application/json')}
+                    title="같은 내용을 JSON으로 받습니다 (좌표로 찾아가는 측정 장치용)" style={{ ...ghostBtn, padding: '2px 6px', fontSize: 10 }}>JSON</button>
+                </>}
                 {gerberStatus === null && <button onClick={generateGerber} style={ghostBtn}>거버</button>}
                 {gerberStatus === 'loading' && <StatusChip tone="accent" busy>거버 생성 중</StatusChip>}
                 {/* done: the zip itself is the "done" sign, so the narrow tab bar does not push it out of view */}
@@ -1317,6 +1327,16 @@ const iconBtn = {
   padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
   background: 'transparent', color: 'var(--sf-fg-dim)',
   transition: 'color 0.12s, background 0.12s',
+}
+
+/** a file made in the browser, saved under this name */
+function saveText(name: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 const ghostBtn = {
