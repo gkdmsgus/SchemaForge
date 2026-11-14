@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
-  fromBoard, fromGraph, operatingChecks, operatingHeadline, parseFarads, parseOhms, parseVolts, voltsFromName,
+  fromBoard, fromGraph, lithiumPack, operatingChecks, operatingHeadline, parseFarads, parseOhms, parseVolts, voltsFromName,
   type OpResult, type OpRule, type OpState,
 } from '../src/lib/operatingCheck.ts'
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
@@ -279,6 +279,39 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     show(run(variant(r7805, setValue('BT1', '7V'))), 'op_reg'))
   check('O7e3 7812: limits not looked up → 판단 불가', is(run(variant(reg, setValue('U1', 'LM7812'))), 'op_reg', 'unknown', 'U1'),
     show(run(variant(reg, setValue('U1', 'LM7812'))), 'op_reg'))
+  // O7g: a lithium-ion battery is judged at full charge, 4.2 V a cell (Panasonic NCR18650B, Murata US18650VTC6),
+  // against the regulator's input limit (2026-11-14, robot-safety idea 1c)
+  const packs = ['4S', '3S1P LiPo', '7.4V Li-ion', '11.1V 리튬', '4S LiFePO4', '4S LiHV', '2xAA', 'CR2032 3V lithium', '9V', '18650']
+    .map(v => [v, lithiumPack(v)] as const)
+  const said = packs.map(([v, p]) => `${v}=${p ? `${p.cells}/${p.nominal}/${Math.round(p.full * 100) / 100}` : '-'}`).join(' ')
+  check('O7g lithium-ion packs read: cells from nS or from 3.5~4.2 V a cell, full = cells x 4.2 V; LiFePO4, LiHV, AA, coin cell, 9V and a bare 18650 not',
+    said === '4S=4/14.4/16.8 3S1P LiPo=3/10.8/12.6 7.4V Li-ion=2/7.4/8.4 11.1V 리튬=3/11.1/12.6 4S LiFePO4=- 4S LiHV=- 2xAA=- CR2032 3V lithium=- 9V=- 18650=-'
+    && SPECS.liIon.charge_v.v === 4.2 && /NCR18650B/.test(SPECS.liIon.charge_v.src) && /US18650VTC6/.test(SPECS.liIon.charge_v.src), said)
+  const full4 = run(variant(reg, setValue('BT1', '4S')))
+  const r4 = pick(full4, 'op_reg', 'U1')
+  check('O7g2 4S (nothing written) into AMS1117-3.3: 16.8 V charged > 15 V, error with what, why and a 3S fix, no 7805 for a 3.3 V output, the battery read (no op_power result)',
+    is(full4, 'op_reg', 'error', 'U1', /완전히 충전하면 입력이 16\.8 V인데, AMS1117-3\.3의 최대 입력은 15 V/) && /고장 날 수/.test(r4?.summary ?? '')
+    && /레귤레이터: /.test(r4?.summary ?? '') && /3S 이하, 완충 12\.6 V/.test(r4?.fix ?? '') && /를 씁니다\.$/.test(r4?.fix ?? '') && !/7805/.test(r4?.fix ?? '') && !pick(full4, 'op_power', 'BT1'),
+    `${show(full4, 'op_reg')} | fix ${r4?.fix} | ${show(full4, 'op_power')}`)
+  const written = run(variant(reg, setValue('BT1', '14.8V 4S LiPo'))), as5 = run(variant(variant(reg, setValue('BT1', '14.8V 4S LiPo')), setValue('U1', 'AMS1117-5.0')))
+  check('O7g3 14.8 V 4S written (only near 15 V before) is an error at 16.8 V; a 5 V output is offered the 7805',
+    is(written, 'op_reg', 'error', 'U1', /16\.8 V/) && /7805로 바꿉니다/.test(pick(as5, 'op_reg', 'U1')?.fix ?? ''),
+    `${show(written, 'op_reg')} | ${pick(as5, 'op_reg', 'U1')?.fix}`)
+  const three = run(variant(reg, setValue('BT1', '3S LiPo'))), r3 = pick(three, 'op_reg', 'U1')
+  const lfp = run(variant(reg, setValue('BT1', '4S LiFePO4 12.8V')))
+  check('O7g4 3S (12.6 V charged) into AMS1117 passes and says the charged voltage; a LiFePO4 pack is not given one',
+    is(three, 'op_reg', 'pass', 'U1') && (r3?.detail ?? []).some(d => /완전히 충전했을 때 입력 12\.6 V/.test(d))
+    && is(lfp, 'op_reg', 'pass', 'U1') && !(pick(lfp, 'op_reg', 'U1')?.detail ?? []).some(d => /완전히 충전/.test(d)),
+    `${show(three, 'op_reg')} | ${show(lfp, 'op_reg')}`)
+  const near = run(variant(r7805, setValue('BT1', '8S'))), over = run(variant(r7805, setValue('BT1', '9S')))
+  check('O7g5 into LM7805: 8S (33.6 V charged) near 35 V warns, 9S (37.8 V) is an error offering 8S, no 7805 swap',
+    is(near, 'op_reg', 'warn', 'U1', /완전히 충전하면 입력 33\.6 V/) && is(over, 'op_reg', 'error', 'U1', /37\.8 V/)
+    && /8S 이하, 완충 33\.6 V/.test(pick(over, 'op_reg', 'U1')?.fix ?? '') && !/7805로/.test(pick(over, 'op_reg', 'U1')?.fix ?? ''),
+    `${show(near, 'op_reg')} | ${show(over, 'op_reg')}`)
+  // the charged voltage reaches the regulator through a switch and a series diode as well
+  const via = run(circuit([['BT1', 'Battery', '4S'], ['SW1', 'SW', ''], ['D1', 'D', '1N5819'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF']],
+    [['VBAT', 'BT1.1', 'SW1.1'], ['VSW', 'SW1.2', 'D1.1'], ['VIN', 'D1.2', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2'], ['V3', 'U1.2', 'C1.1']]))
+  check('O7g6 4S through a switch and a 1N5819 still reaches 16.8 V at the regulator', is(via, 'op_reg', 'error', 'U1', /16\.8 V/), show(via, 'op_reg'))
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
   // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package

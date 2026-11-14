@@ -149,6 +149,30 @@ export function parseVolts(v: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/**
+ * A lithium-ion pack read from a battery value: "4S", "3S1P LiPo", "7.4V Li-ion", "11.1V 리튬". Cells in series from
+ * nS, else from a written voltage of 3.5 to 4.2 V a cell when the value names lithium. Null when it is not one, or names
+ * LiFePO4, LiHV, NiMH, alkaline or lead (they charge to other voltages). Full charge is cells x the cell's charge voltage.
+ */
+export function lithiumPack(value: string): { cells: number; nominal: number; full: number; why: string } | null {
+  const s = String(value ?? '').toUpperCase()
+  if (/LIFE|LFP|LIHV|\bHV\b|NI-?MH|NI-?CD|ALKALINE|알카라인|\bAAA?\b|LEAD|SLA|납/.test(s)) return null
+  const lith = /LI-?ION|LI-?PO|LITHIUM|리튬|18650|21700|14500/.test(s)
+  const written = parseVolts(s)
+  const { charge_v: charge, nominal_v: nominal } = SPECS.liIon
+  let cells: number | null = null, how = ''
+  const sm = /(\d+)\s*S(?:\s*\d+\s*P)?(?![A-Z])/.exec(s)
+  if (sm && Number(sm[1]) >= 1 && Number(sm[1]) <= 24) { cells = Number(sm[1]); how = `${cells}S: 리튬이온 셀 ${cells}개 직렬` }
+  else if (lith && written != null) {
+    const n = Math.round(written / 3.7)
+    if (n >= 1 && written / n >= 3.5 - 1e-9 && written / n <= charge.v + 1e-9) { cells = n; how = `${V(written)} 리튬 배터리: 셀당 3.5~4.2 V로 보면 ${n}개 직렬` }
+  }
+  if (cells == null) return null
+  const full = Math.max(written ?? 0, cells * charge.v)
+  return { cells, nominal: written ?? cells * nominal.v, full,
+    why: `${how}, 완전히 충전하면 ${cells} × ${V(charge.v)} = ${V(full)} (${charge.src})${written == null ? `. 전압이 적혀 있지 않아 셀당 공칭 ${V(nominal.v)}로 계산 (${nominal.src})` : ''}` }
+}
+
 /** "MOTOR 0.3A", "MOTOR 12V 500mA" -> amps */
 export function parseAmps(v: string): number | null {
   const m = /(\d+(?:\.\d+)?)\s*(m?A)(?![A-Za-z])/i.exec(String(v ?? ''))
@@ -427,6 +451,9 @@ interface Volt {
   v: number; why: string; src: 'name' | 'battery' | 'reg'
   /** the lowest it can be, when lower than v (after a series diode's forward drop) */
   lo?: number
+  /** what it reaches when the lithium-ion batteries feeding it are fully charged, when above v, and why */
+  full?: number
+  fullWhy?: string
   /** the switch that has to be closed for this net to get its voltage */
   viaSwitch?: string
   /** an input a switch ties to GND (no part's ground on it): low only while the switch is closed */
@@ -500,11 +527,13 @@ function analyzePower(b: Base, force = false) {
   const ownRail = (n: string) => (named.has(n) && (hasConn(n) || regOut(n))) ||
     b.of('REG').some(r => b.net(r.ref, 2) === n && regSpec(r.value) != null)
 
-  interface Edge { ref: string; plus: string; minus: string; dv: number }
+  interface Edge { ref: string; plus: string; minus: string; dv: number; full?: number; fullWhy?: string }
   const edges: Edge[] = []
   const loose: { ref: string; nets: string[]; why: string }[] = []
   for (const bt of b.of('Battery')) {
-    const plus = b.net(bt.ref, 1), minus = b.net(bt.ref, 2), v = parseVolts(bt.value)
+    // a lithium-ion pack with no voltage written ("4S LiPo") is taken at its cells' nominal voltage
+    const pack = lithiumPack(bt.value)
+    const plus = b.net(bt.ref, 1), minus = b.net(bt.ref, 2), v = parseVolts(bt.value) ?? pack?.nominal ?? null
     if (!plus && !minus) continue
     if (v == null) {
       // a value with no voltage in it: the nets it feeds have no voltage we can trust (not even their names)
@@ -533,18 +562,18 @@ function analyzePower(b: Base, force = false) {
       loose.push({ ref: bt.ref, nets: [plus, minus], why: `${bt.ref} 단자가 떠 있어 이 넷에 전원이 없습니다` })
       continue
     }
-    edges.push({ ref: bt.ref, plus, minus, dv: v })
+    edges.push({ ref: bt.ref, plus, minus, dv: v, ...(pack && pack.full > v + 1e-9 ? { full: pack.full, fullWhy: `${bt.ref} ${pack.why}` } : {}) })
   }
   // the loose battery's nets lose their voltage, unless a connector, a regulator or another battery feeds them
   for (const l of loose) for (const n of l.nets) {
     if (!hasConn(n) && !regOut(n) && !edges.some(e => e.plus === n || e.minus === n)) blocked.set(n, { why: l.why, cause: l.ref })
   }
-  interface Step { to: string; dv: number; label: string; sw?: string; bat?: string }
+  interface Step { to: string; dv: number; label: string; sw?: string; bat?: string; dvFull?: number }
   const adj = new Map<string, Step[]>()
   const link = (from: string, step: Step) => adj.set(from, [...(adj.get(from) || []), step])
   for (const e of edges) {
-    link(e.minus, { to: e.plus, dv: e.dv, label: `${e.ref} ${V(e.dv)}`, bat: e.ref })
-    link(e.plus, { to: e.minus, dv: -e.dv, label: `−${e.ref} ${V(e.dv)}`, bat: e.ref })
+    link(e.minus, { to: e.plus, dv: e.dv, dvFull: e.full ?? e.dv, label: `${e.ref} ${V(e.dv)}`, bat: e.ref })
+    link(e.plus, { to: e.minus, dv: -e.dv, dvFull: -(e.full ?? e.dv), label: `−${e.ref} ${V(e.dv)}`, bat: e.ref })
   }
   const switches: { ref: string; a: string; z: string; label: string }[] = []
   for (const sw of b.parts().filter(p => p.part === 'SW' || p.part === 'Relay')) {
@@ -585,7 +614,7 @@ function analyzePower(b: Base, force = false) {
    * rail fed from outside (the same in both directions, so every walk over a group reaches all of it).
    */
   const walk = (from: string) => {
-    const rel = new Map<string, { v: number; path: string[]; sw?: string; bats: string[] }>([[from, { v: 0, path: [], bats: [] }]])
+    const rel = new Map<string, { v: number; f: number; path: string[]; sw?: string; bats: string[] }>([[from, { v: 0, f: 0, path: [], bats: [] }]])
     const queue = [from]
     const pending: { from: string; step: Step }[] = []
     for (;;) {
@@ -593,13 +622,13 @@ function analyzePower(b: Base, force = false) {
         const n = queue.shift()!, here = rel.get(n)!
         for (const st of adj.get(n) || []) {
           if (st.sw) { pending.push({ from: n, step: st }); continue }
-          if (!rel.has(st.to)) { rel.set(st.to, { v: here.v + st.dv, path: [...here.path, st.label], sw: here.sw, bats: [...here.bats, st.bat!] }); queue.push(st.to) }
+          if (!rel.has(st.to)) { rel.set(st.to, { v: here.v + st.dv, f: here.f + (st.dvFull ?? st.dv), path: [...here.path, st.label], sw: here.sw, bats: [...here.bats, st.bat!] }); queue.push(st.to) }
         }
       }
       const next = pending.find(p => !rel.has(p.step.to) && !ownRail(p.step.to) && !ownRail(p.from))
       if (!next) break
       const here = rel.get(next.from)!
-      rel.set(next.step.to, { v: here.v, path: [...here.path, next.step.label], sw: here.sw ?? next.step.sw, bats: here.bats })
+      rel.set(next.step.to, { v: here.v, f: here.f, path: [...here.path, next.step.label], sw: here.sw ?? next.step.sw, bats: here.bats })
       queue.push(next.step.to)
     }
     return rel
@@ -633,6 +662,7 @@ function analyzePower(b: Base, force = false) {
       if (!r) continue
       volts.set(n, {
         v: base + r.v, src: 'battery', why: r.path.length ? `${r.path.join(' + ')} (${basis})` : named.has(n) ? `넷 이름 ${n}` : basis,
+        ...(r.f > r.v + 1e-9 ? { full: base + r.f, fullWhy: group.filter(e => e.full != null && r.bats.includes(e.ref)).map(e => e.fullWhy).join(' / ') } : {}),
         ...(r.sw ? { viaSwitch: r.sw } : {}),
         ...((bw => (bw ? { cause: bw.ref } : {}))(backwards.find(e => r.bats.includes(e.ref)))),
       })
@@ -676,7 +706,7 @@ function analyzePower(b: Base, force = false) {
     if (lift) {
       const [a, z, sw] = lift
       const target = volts.get(z)?.v ?? named.get(z)!, delta = target - volts.get(a)!.v
-      for (const n of g) { const v = volts.get(n)!; volts.set(n, { ...v, v: v.v + delta, why: `${v.why} + ${sw.label}로 ${z}(${V(target)})에 이어짐`, viaSwitch: v.viaSwitch ?? sw.ref }) }
+      for (const n of g) { const v = volts.get(n)!; volts.set(n, { ...v, v: v.v + delta, ...(v.full != null ? { full: v.full + delta } : {}), why: `${v.why} + ${sw.label}로 ${z}(${V(target)})에 이어짐`, viaSwitch: v.viaSwitch ?? sw.ref }) }
       continue
     }
     for (const n of g) for (const nd of b.on(n)) {
@@ -762,6 +792,7 @@ function analyzePower(b: Base, force = false) {
       const spec = SPECS.diode[d.value.toUpperCase().replace(/\s+/g, '')]
       if (!spec) { blocked.set(k, { why: `${d.ref}(${d.value || '값 없음'})의 순방향 전압 자료가 없어 ${k} 전압을 모릅니다`, cause: d.ref }); changed = true; continue }
       volts.set(k, { v: va.v, lo: (va.lo ?? va.v) - spec.vf_max.v, src: va.src, why: `${va.why} → ${d.ref} 순방향 (VF 0~${V(spec.vf_max.v)}: ${spec.vf_max.src})`,
+        ...(va.full != null ? { full: va.full, fullWhy: va.fullWhy } : {}),
         ...(va.viaSwitch ? { viaSwitch: va.viaSwitch } : {}), ...(va.cause ? { cause: va.cause } : {}) })
       changed = true
     }
@@ -2505,9 +2536,23 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     const inLv = { lo: vin.lo ?? vin.v, hi: vin.v }, head = inLv.lo - reg.vout
     const detail = [`입력 ${rangeV(inLv)} (${vin.why}) − 출력 ${V(reg.vout)} = ${inLv.lo < inLv.hi ? '최소 ' : ''}${V(head)}`,
       `최소 전압 차 ${V(spec.dropout_max.v)}: ${cite(spec.dropout_max)}`, `최대 입력 ${V(spec.vin_max.v)}: ${cite(spec.vin_max)}`]
+    if (vin.full != null) detail.push(`완전히 충전했을 때 입력 ${V(vin.full)}: ${vin.fullWhy}`)
     if (atLeast(vin.v, spec.vin_max.v)) {
       const [a, b] = two(vin.v, spec.vin_max.v, V)
       res('error', `${r.ref} 입력 ${a} ≥ 최대 ${b}`, detail, vin.cause); continue
+    }
+    // a lithium-ion battery is above its written voltage when charged: the regulator has to stand that too
+    if (vin.full != null && atLeast(vin.full, spec.vin_max.v)) {
+      const [a, b] = two(vin.full, spec.vin_max.v, V)
+      const cells = Math.ceil(spec.vin_max.v / SPECS.liIon.charge_v.v) - 1
+      const fewer = `셀 수가 적은 배터리(리튬이온 ${cells}S 이하, 완충 ${V(cells * SPECS.liIon.charge_v.v)})`
+      const fix = reg.vout === 5 && reg.name !== '7805' && vin.full < 35
+        ? `${fewer}를 쓰거나, 입력 35 V까지 견디는 7805로 바꿉니다(출력은 같은 5 V). 레귤레이터는 입력과 출력의 전압 차 × 전류만큼 열이 나니 방열도 확인합니다.`
+        : `${fewer}를 씁니다.`
+      out.push({ rule: 'op_reg', ref: r.ref, state: 'error', detail,
+        summary: `${r.ref} 배터리를 완전히 충전하면 입력이 ${a}인데, ${reg.name}의 최대 입력은 ${b}입니다 (레귤레이터: 전압을 일정하게 낮춰 주는 부품). 견디는 전압을 넘어 고장 날 수 있습니다`,
+        fix })
+      continue
     }
     if (head < spec.dropout_max.v - 1e-9) {
       const [a, b] = two(head, spec.dropout_max.v, V)
@@ -2526,6 +2571,7 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
       res('warn', `${r.ref} 출력 커패시터 ${uF(total)} < 권장 ${uF(spec.cout_min.v)} (발진 위험)`, [...detail, cite(spec.cout_min)]); continue
     }
     if (atLeast(vin.v, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 입력 ${V(vin.v)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
+    if (vin.full != null && atLeast(vin.full, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 배터리를 완전히 충전하면 입력 ${V(vin.full)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
     res('pass', `${r.ref} 입력 ${rangeV(inLv)} → ${V(reg.vout)} (여유 ${inLv.lo < inLv.hi ? '최소 ' : ''}${V(head)})`, detail)
   }
   return out

@@ -61,6 +61,9 @@ const IR_IRLZ = 'International Rectifier IRLZ44NPbF 데이터시트 PD-94831 (20
 const TI_555 = 'TI NE555 데이터시트 SLFS022K'
 const AMS_1117 = 'Advanced Monolithic AMS1117 데이터시트(ds1117)'
 const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
+// two 18650 lithium-ion cells, read 2026-11-14: Panasonic's sheet (batteryspace.com copy) and Murata's (murata.com)
+const PANA_NCR = 'Panasonic NCR18650B 데이터시트 VERSION 13.11 R1'
+const MURATA_VTC6 = 'Murata US18650VTC6 데이터시트 Version 001'
 // the other colours of the same Kingbright families as the red ones (5 mm WP7113, 0805 APT2012), read 2026-11-08 from
 // kingbrightusa.com; VF typical and maximum from ELECTRICAL / OPTICAL CHARACTERISTICS, IF from ABSOLUTE MAXIMUM RATINGS
 const KB = (part: string, doc: string) => `Kingbright ${part} (${doc})`
@@ -249,6 +252,13 @@ export const SPECS = {
     smd: { p_max: { v: 0.125, src: 'Yageo RC0805 부품 스펙시트(RC0805FR-071K5L): 정격 전력 0.125 W @ 70 °C' } },
     tht: { p_max: { v: 0.25, src: 'Yageo CFR-25 데이터시트: 정격 전력 0.25 W @ 70 °C (몸체 길이 6.3 mm, 지름 2.4 mm로 KiCad R_Axial_DIN0207_L6.3mm_D2.5mm 풋프린트 크기)' } },
   } satisfies Record<'smd' | 'tht', ResSpec>,
+
+  // a lithium-ion cell: charged to this voltage, named by this one. A pack of n cells in series is n times these.
+  // LiFePO4 and high-voltage (LiHV) cells charge to other voltages and are not read as lithium-ion
+  liIon: {
+    charge_v: { v: 4.2, src: `${PANA_NCR}: 충전 CC-CV 4.20 V / ${MURATA_VTC6}: 충전 CCCV 4.2 V` },
+    nominal_v: { v: 3.6, src: `${PANA_NCR}, ${MURATA_VTC6}: 공칭 전압 3.6 V` },
+  } satisfies Record<'charge_v' | 'nominal_v', Num>,
 }
 
 /** The transistor the footprint's pinout was taken from (server/pcb/footprints_table.py). */
