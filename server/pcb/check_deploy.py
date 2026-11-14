@@ -20,8 +20,11 @@ Exit code 0 only if every check passes.
   40 eight 3D model exports at once, twice, all succeed with the same size (each in a folder of its own)
   41 the footprint table is in the image where KICAD_CONFIG_HOME names it, not under /tmp or HOME (the container runs
      with an empty /tmp, so item 33 sees what Render saw: 9-15 footprint warnings per demo board, 2026-11-08)
+  42 (Jetson image, run as jetson_run.sh runs it: every capability dropped) code run as the server's own user, with no key of its own, finds no key the server was given in any process's
+     environ or command line and cannot open the server's memory (node and tini execute-only, so not dumpable); a
+     control process of that user with a token in its environment is found, so the search does work (2026-11-13)
 """
-import argparse, json, os, subprocess, sys, time, urllib.request, urllib.error
+import argparse, json, os, secrets, subprocess, sys, time, urllib.request, urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
@@ -109,7 +112,14 @@ def main():
     sh('docker', 'rm', '-f', NAME, check=False)
     # with an empty /tmp, as a host may give it: nothing the server needs may live there (the footprint table did, and
     # Render's boards warned on every footprint, 2026-11-08). exec and 1 GB, so only emptiness differs from the image's
-    sh('docker', 'run', '-d', '--name', NAME, '-p', f'{args.port}:8002', '--tmpfs', '/tmp:rw,exec,mode=1777,size=1g', IMAGE)
+    # a key the server is given, as the deploy gives its keys (an environment variable): item 42 looks for it
+    plant = f'sf-plant-{secrets.token_hex(8)}'
+    # the Jetson image runs as scripts/jetson_run.sh starts it, with every capability dropped: item 42 depends on it (with
+    # Docker's defaults the runtime starts tini able to read it, and tini stayed dumpable, 2026-11-13)
+    jetson = 'jetson' in os.path.basename(args.dockerfile).lower()
+    hardening = ['--cap-drop', 'ALL', '--security-opt', 'no-new-privileges'] if jetson else []
+    sh('docker', 'run', '-d', '--name', NAME, '-p', f'{args.port}:8002', '--tmpfs', '/tmp:rw,exec,mode=1777,size=1g',
+       *hardening, '-e', f'SF_DEPLOY_CHECK_SECRET={plant}', IMAGE)
     try:
         base = f'http://localhost:{args.port}'
         health = None
@@ -220,6 +230,49 @@ def main():
         home = where[0] if where else ''
         check('41 footprint table outside /tmp and HOME', home.startswith('/') and not home.startswith('/tmp')
               and where[1:] == ['table'], f'KICAD_CONFIG_HOME={home or "?"}, {"table found" if where[1:] == ["table"] else "no table"}')
+
+        # code the Code tab runs is python as the server's own user, with the keys taken out of its environment
+        # (skidl_run.ts childEnv). It read them back from /proc/1/environ (tini) and the server's own entry until node and
+        # tini were made execute-only, which leaves those processes not dumpable (2026-11-13). The control: a process of
+        # the same user with a token in its environment, which the same search has to find
+        owner = sh('docker', 'exec', NAME, 'sh', '-c', 'for d in /proc/[0-9]*; do [ "$(cat $d/comm 2>/dev/null)" = node ] '
+                   '&& stat -c %u $d && break; done', check=False).stdout.strip()
+        control = f'sf-control-{secrets.token_hex(8)}'
+        # env -i: a docker exec process starts with the container's environment, the planted key with it
+        sh('docker', 'exec', '-d', '-u', owner or '0', NAME, 'env', '-i', f'SF_CONTROL_TOKEN={control}', 'sleep', '60', check=False)
+        time.sleep(1)
+        probe = """
+import json, os, sys
+me = os.getpid(); found = []; servers = []; opened = []
+for d in os.listdir('/proc'):
+    if not d.isdigit() or int(d) == me: continue
+    for f in ('environ', 'cmdline'):
+        try: data = open(f'/proc/{d}/{f}', 'rb').read()
+        except OSError: continue
+        found += [f'{w}:{d}/{f}' for w in sys.argv[1:] if w.encode() in data]
+    try: comm = open(f'/proc/{d}/comm').read().strip()
+    except OSError: continue
+    if comm in ('node', 'tini'):
+        servers.append(comm)
+        try: open(f'/proc/{d}/mem', 'rb').close(); opened.append(d)
+        except OSError: pass
+print(json.dumps({'found': found, 'servers': sorted(servers), 'mem_opened': opened}))
+"""
+        out = sh('docker', 'exec', '-u', owner or '0', NAME, 'env', '-i', 'PATH=/usr/bin:/bin', 'python3', '-c', probe,
+                 plant, control, check=False).stdout.strip()
+        try:
+            seen = json.loads(out.splitlines()[-1])
+        except (ValueError, IndexError):
+            seen = {'found': ['probe did not run: ' + out[-200:]], 'servers': [], 'mem_opened': []}
+        leaked = [f for f in seen['found'] if f.startswith(plant)]
+        if not jetson:
+            # Render starts its container as root with Docker's capabilities, where none of this holds: said, not passed
+            print('note 42 not run: only the Jetson image runs with every capability dropped (Render serves the old address)')
+        else:
+          check('42 the keys the server holds are out of reach of code run as its user', bool(owner) and not leaked and not seen['mem_opened']
+              and {'node', 'tini'} <= set(seen['servers']) and any(f.startswith(control) for f in seen['found']),
+              f'user {owner or "?"}; key found in {leaked or "nothing"}; memory opened {seen["mem_opened"] or "none"}; '
+              f'servers {seen["servers"]}; control found: {any(f.startswith(control) for f in seen["found"])}')
     finally:
         if not args.keep:
             sh('docker', 'rm', '-f', NAME, check=False)

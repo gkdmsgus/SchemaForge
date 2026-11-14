@@ -66,6 +66,12 @@ RUN mkdir -p /app/kicad-config/10.0 \
         echo "  (lib (name \"$(basename "$d" .pretty)\")(type \"KiCad\")(uri \"$d\")(options \"\")(descr \"\"))"; done; \
       echo ')'; } > /app/kicad-config/10.0/fp-lib-table \
  && chown -R sf /app/kicad-config
+# node, tini and esbuild (which tsx starts for the server) executable but not readable: a process started from a file it
+# cannot read, with no capability to read it anyway (jetson_run.sh drops them all), is not dumpable, so /proc/<pid>/environ
+# and its memory are closed to the same user. The Code tab's Python runs as that user and read the keys from
+# /proc/1/environ (tini), the server's own entry and esbuild's (2026-11-13); the server's own children get no keys
+# (skidl_run.ts childEnv). check_deploy.py item 42
+RUN chmod 711 /usr/local/bin/node /usr/bin/tini  && find /app/server/node_modules -type f -name esbuild -path '*/bin/esbuild' -exec chmod 711 {} +
 USER sf
 # no packages3d: kicad-cli reads the models the vendored footprints point at (server/pcb/3dmodels)
 ENV NODE_ENV=production \
