@@ -275,6 +275,21 @@ export function guardEdit(graph: NetGraph, actions: ChatAction[], message: strin
 export const asksBack = (reply: string): boolean => /[?？]/.test(reply) || /(까요|(?<=[^\s빛])나요|습니까)[.!]?(\s|$)/.test(reply)
 
 /**
+ * The connections an edit changed, compared by their pins and not their names (a net renamed whole moved nothing):
+ * new ones, ones that gained or lost a pin (sharing a pin with one before), and ones gone. A net with no pins is none.
+ */
+export function changedNets(before: NetGraph, after: NetGraph): { added: number; changed: number; removed: number } {
+  const pins = (n: { nodes: { ref: string; pin: string }[] }) => n.nodes.map(nd => `${nd.ref}.${nd.pin}`)
+  const key = (n: { nodes: { ref: string; pin: string }[] }) => [...new Set(pins(n))].sort().join(',')
+  const b = (before.nets || []).filter(n => n.nodes.length), a = (after.nets || []).filter(n => n.nodes.length)
+  const bk = new Set(b.map(key)), ak = new Set(a.map(key))
+  const newer = a.filter(n => !bk.has(key(n))), gone = b.filter(n => !ak.has(key(n)))
+  const meet = (x: (typeof a)[number], y: (typeof a)[number]) => pins(x).some(p => pins(y).includes(p))
+  const changed = newer.filter(n => gone.some(g => meet(n, g))).length
+  return { added: newer.length - changed, changed, removed: gone.filter(g => !newer.some(n => meet(n, g))).length }
+}
+
+/**
  * An AI edit as the chat applies it: references filled in, what the request did not ask for held back (guardEdit),
  * the circuit after, and the note under the reply. The note names parts, not pin numbers or net names (beginners).
  * changed is false when nothing of the edit is left to apply: the circuit, the undo list and the re-check stay, and
@@ -311,6 +326,13 @@ export function chatEdit(graph: NetGraph, proposed: ChatAction[], message: strin
   // what did move is a named part's pin: the model may still have guessed, so the person sees it
   const moved = movedPins(graph, after).filter(m => !renamedWhole(graph, after, m, r => taken.has(r)))
   if (moved.length) note += `\n\n연결을 바꾼 부품: ${parts(moved.map(m => m.pin))}. 의도와 다르면 위의 되돌리기를 누르세요.`
+  // how many connections the edit touched, counted by code: the request may have asked for one and the model changed more
+  // (the "다른 것은 바꾸지 마세요" idea, eSkCAD demo 2026-11-13), so the person sees the size of it in a number
+  const nets = changedNets(graph, after), total = nets.added + nets.changed + nets.removed
+  if (changed && total) {
+    const said = [nets.added ? `새로 생김 ${nets.added}개` : '', nets.changed ? `달라짐 ${nets.changed}개` : '', nets.removed ? `없어짐 ${nets.removed}개` : ''].filter(Boolean)
+    note += `\n\n바뀐 연결선(넷: 전기가 함께 흐르는 핀들의 묶음) ${total}개: ${said.join(', ')}. 요청한 것보다 많으면 위의 되돌리기를 누르세요.`
+  }
   // a new part on no net, or alone on one, is joined to nothing (2026-11-03 tour S23, take 2: "C4가 VCC와 GND 사이에
   // 추가되었습니다" with each of its pins on a net of its own, and no word of it under the reply). Its name is in after:
   // parts() reads the parts before the edit

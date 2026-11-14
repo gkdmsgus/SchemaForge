@@ -14,7 +14,7 @@ import { fromBoard, fromGraph, operatingChecks, operatingHeadline } from '../src
 import { validateCircuit } from '../src/lib/circuitValidation.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { actionLabel, applyActions, asksBack, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
+import { actionLabel, applyActions, asksBack, changedNets, chatEdit, movedPins, pinNumber, skippedAdds, withRefs } from '../src/lib/graphEdit.ts'
 import { carryOver, GAP_X, GAP_Y, placeAdded } from '../src/lib/schematicPlace.ts'
 import { boardNetlist, guideNote, netlistNote } from '../src/lib/drawerNotes.ts'
 import { buildMST, getMaxPin, isPowerNet } from '../src/lib/nets.ts'
@@ -296,6 +296,8 @@ const blinker: NetGraph = {
     net('OUT', 'U1.3', 'R3.1'), net('LED_A', 'R3.2', 'D1.1')],
 }
 const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
+/** the line under an applied AI edit that counts the connections it changed (2026-11-14) */
+const netNote = (total: number, said: string) => `\n\n바뀐 연결선(넷: 전기가 함께 흐르는 핀들의 묶음) ${total}개: ${said}. 요청한 것보다 많으면 위의 되돌리기를 누르세요.`
 
 // G8. "전원 입력 쪽에 100nF 커패시터를 하나 추가해줘": the model added C3, which exists (skipped), and put BT1.1 and C3.1 on
 // a new net N$4, cutting the battery off VCC while the chat said the re-check passed. Now nothing moves: the battery is
@@ -346,10 +348,10 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const ren = chatEdit(blinker, [{ type: 'remove_net', name: 'N$1' }, { type: 'add_net', name: 'CTRL', nodes: [{ ref: 'U1', pin: '5' }, { ref: 'C1', pin: '1' }] }],
     'N$1 선 이름을 CTRL로 바꿔줘')
   const renamed = JSON.stringify(ren.graph.nets.find(n => n.name === 'CTRL')) === JSON.stringify(net('CTRL', 'U1.5', 'C1.1')) && !ren.graph.nets.some(n => n.name === 'N$1')
-    && !/그대로/.test(ren.note)
+    && !/그대로/.test(ren.note) && !/바뀐 연결선/.test(ren.note)
   const open: NetGraph = { ...blinker, nets: blinker.nets.map(n => (n.name === 'GND' ? { ...n, nodes: n.nodes.filter(nd => nd.ref !== 'D1') } : n)) }
   const fl = chatEdit(open, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'D1', pin: '2' }] }], '끊긴 다리를 이어줘')
-  const floating = JSON.stringify(fl.graph.nets) === JSON.stringify(blinker.nets) && fl.note === ''
+  const floating = JSON.stringify(fl.graph.nets) === JSON.stringify(blinker.nets) && fl.note === netNote(1, '달라짐 1개')
   const mg = chatEdit(blinker, [{ type: 'remove_net', name: 'N$1' }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'U1', pin: '5' }, { ref: 'C1', pin: '1' }] }], 'GND를 정리해줘')
   const merge = JSON.stringify(mg.graph) === JSON.stringify(blinker) && mg.changed === false && /U1\(555 타이머\)/.test(mg.note) && /C1\(커패시터\)/.test(mg.note)
   const cs = chatEdit(blinker, [{ type: 'add_net', name: 'GND', nodes: [{ ref: 'C3', pin: '1' }, { ref: 'U1', pin: '5' }] }], 'c3을 GND로 옮기고 U10은 그대로 둬')
@@ -357,6 +359,23 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
     && cs.graph.nets.find(n => n.name === 'N$1')!.nodes.some(nd => nd.ref === 'U1' && nd.pin === '5') && /U1\(555 타이머\)/.test(cs.note)
   check('G10 named moves, renames and open pins go in; a guessed merge is held; U10 is not U1',
     moved && renamed && floating && merge && cased, JSON.stringify({ moved, renamed, floating, merge, cased, r1: r1.note, ren: ren.note, mg: mg.note, cs: cs.note }))
+}
+
+// G10c. how many connections an applied AI edit changed, counted by their pins (not their names): a new part on a new
+// connection and one more pin on GND, a merge, a part taken out, a rename (none), and no edit at all (no line)
+{
+  const c4 = chatEdit(blinker, [{ type: 'add_component', ref: 'C4', name: 'C', value: '100nF' },
+    { type: 'add_net', name: 'N$4', nodes: [{ ref: 'C4', pin: '1' }] }, { type: 'add_net', name: 'GND', nodes: [{ ref: 'C4', pin: '2' }] }], 'C4 100nF를 하나 추가해줘')
+  const merged = changedNets(blinker, { ...blinker, nets: [...blinker.nets.filter(n => n.name !== 'N$1' && n.name !== 'GND'),
+    { name: 'GND', nodes: [...blinker.nets.find(n => n.name === 'GND')!.nodes, { ref: 'U1', pin: '5' }, { ref: 'C1', pin: '1' }] }] })
+  const gone = changedNets(blinker, { ...blinker, nets: blinker.nets.filter(n => n.name !== 'OUT') })
+  const renamed = changedNets(blinker, { ...blinker, nets: blinker.nets.map(n => (n.name === 'N$1' ? { ...n, name: 'CTRL' } : n)) })
+  const none = chatEdit(blinker, [], '고마워')
+  check('G10c an applied AI edit says how many connections it changed (new, changed, gone), in words with no net name; a rename counts none',
+    c4.note.includes(netNote(2, '새로 생김 1개, 달라짐 1개')) && plain(c4.note)
+    && JSON.stringify(merged) === '{"added":0,"changed":1,"removed":0}' && JSON.stringify(gone) === '{"added":0,"changed":0,"removed":1}'
+    && JSON.stringify(renamed) === '{"added":0,"changed":0,"removed":0}' && !/바뀐 연결선/.test(none.note),
+    JSON.stringify({ c4: c4.note, merged, gone, renamed, none: none.note }))
 }
 
 // G11. removing a part or changing its value goes the same way: only a part the message names, by reference or by a
@@ -369,7 +388,7 @@ const plain = (s: string) => !/[A-Z]+\d+\.\d|N\$|VCC|GND|TRIG|\d번/.test(s)
   const removed = !rm.graph.components.some(c => c.ref === 'R3') && rm.graph.components.some(c => c.ref === 'D1')
     && JSON.stringify(rm.graph.nets.find(n => n.name === 'GND')) === JSON.stringify(blinker.nets.find(n => n.name === 'GND')) && /지우지 않았습니다: D1\(LED\)/.test(rm.note) && plain(rm.note)
   const hint = chatEdit(blinker, [{ type: 'remove_component', ref: 'D1' }], 'LED 빼줘')
-  const byKind = !hint.graph.components.some(c => c.ref === 'D1') && hint.note === ''
+  const byKind = !hint.graph.components.some(c => c.ref === 'D1') && hint.note === netNote(2, '달라짐 2개')
   const many = chatEdit(blinker, [{ type: 'modify_component', ref: 'C2', value: '1uF' }], '커패시터 값을 1uF로 바꿔줘')
   const notUnique = many.changed === false && /C2\(커패시터\)/.test(many.note)
   const one: NetGraph = { components: [{ ref: 'BT1', value: '9V', name: 'Battery' }, { ref: 'R1', value: '1k', name: 'R' }, { ref: 'C1', value: '10uF', name: 'C' }],
