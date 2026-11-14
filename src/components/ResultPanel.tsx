@@ -26,7 +26,7 @@ import { pinoutWarnings } from '../lib/humanReview'
 import { fromGraph, operatingChecks, operatingHeadline } from '../lib/operatingCheck'
 import { measurePlan, measurePlanCsv } from '../lib/measurePlan'
 import { STATE_TONE, TONE_COLOR, ercErrorCount } from '../lib/boardChecks'
-import { validateCircuit } from '../lib/circuitValidation'
+import { validateCircuit, type CircuitIssue } from '../lib/circuitValidation'
 import { getSavedResults } from '../lib/storage'
 import { boardNetlist, guideNote, netlistNote } from '../lib/drawerNotes'
 import { useNarrow } from '../lib/useNarrow'
@@ -163,6 +163,7 @@ export default function ResultPanel({
   const [codeRun, setCodeRun] = useState<CodeRunNote | null>(null)
   // the operating checks open from their chip in the tab bar, so they never sit over the schematic uninvited
   const [opOpen, setOpOpen] = useState(false)
+  const [cirOpen, setCirOpen] = useState(false)
   // the netlist check run again after every change of the circuit (a fix made by chat shows at once) or of the style
   const [aiErc, setAiErc] = useState<{ graph: NetGraph; style: 'smd' | 'tht'; findings: ErcFinding[] | null; error?: string } | null>(null)
   const [ercRetry, setErcRetry] = useState(0)       // 다시 점검: runs the check on the same circuit again
@@ -241,6 +242,12 @@ export default function ResultPanel({
   }, [authUser, sessionId])
   const circuitIssues = useMemo(() => validateCircuit(effectiveGraph), [effectiveGraph])
   const circuitErrors = circuitIssues.filter(issue => issue.severity === 'error')
+  // safety advice the circuit came with (a demo has no reverse-polarity diode) waits in a chip instead of covering the
+  // schematic; errors, warnings and advice an edit brought in open the box as before
+  const issueKey = (issue: CircuitIssue) => `${issue.code}|${issue.refs.join()}`
+  const baseAdvice = useMemo(() => new Set(validateCircuit(result?.graph).filter(issue => issue.advice).map(issueKey)), [result?.graph])
+  const loudIssues = circuitIssues.filter(issue => !issue.advice || !baseAdvice.has(issueKey(issue)))
+  const cirShown = viewMode === 'schematic' && circuitIssues.length > 0 && (loudIssues.length > 0 || cirOpen)
   // does it work: numeric checks on the part values, for the SMD/THT parts the PCB will use
   const opResults = useMemo(() => (effectiveGraph ? operatingChecks(fromGraph(effectiveGraph, pcbStyle)) : []), [effectiveGraph, pcbStyle])
   // a circuit error (a pin left on its own) makes a pass read as not judged
@@ -295,7 +302,7 @@ export default function ResultPanel({
     return null
   }, [result?.erc, result?.codeEdited, aiEdited, aiErcNow, handEdited, editWord])
   const sideBom = useMemo(() => buildBom(effectiveGraph?.components ?? [], bomBoard, bomStyle), [effectiveGraph, bomBoard, bomStyle])
-  const invalidRefs = useMemo(() => new Set(circuitIssues.flatMap(issue => issue.refs)), [circuitIssues])
+  const invalidRefs = useMemo(() => new Set((cirShown ? circuitIssues : []).flatMap(issue => issue.refs)), [circuitIssues, cirShown])
 
   function computeDiff(before: NetGraph | null, after: NetGraph | null) {
     const beforeRefs = new Set((before?.components || []).map((c: { ref: string }) => c.ref))
@@ -995,6 +1002,16 @@ export default function ResultPanel({
                   </StatusChip>
                 )
               })()}
+              {circuitIssues.length > 0 && loudIssues.length === 0 && (
+                <button type="button" data-testid="cir-toggle" aria-expanded={cirShown} aria-controls="circuit-diagnostics"
+                  onClick={() => { if (viewMode !== 'schematic') { setViewMode('schematic'); setCirOpen(true) } else setCirOpen(o => !o) }}
+                  title={`${circuitIssues.map(issue => issue.title).join('\n')}\n(눌러서 회로 검사 경고 ${cirShown ? '접기' : '보기'})`}
+                  style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', flexShrink: 0 }}>
+                  <StatusChip tone="warn" testId="cir-chip">
+                    안전 경고 {circuitIssues.length} {cirShown ? '▴' : '▾'}
+                  </StatusChip>
+                </button>
+              )}
               {opResults.length > 0 && (
                 <button type="button" data-testid="op-toggle" aria-expanded={opOpen && viewMode === 'schematic'} aria-controls="operating-panel"
                   onClick={() => { if (viewMode !== 'schematic') { setViewMode('schematic'); setOpOpen(true) } else setOpOpen(o => !o) }}
@@ -1177,9 +1194,9 @@ export default function ResultPanel({
                   </>}
             {viewMode === 'schematic' && opOpen && <OperatingPanel results={opResults} style={pcbStyle} circuitErrors={circuitErrors.length} fixes={opFixMap} onClose={() => setOpOpen(false)} onChat={chatFix}
               onDraft={canDraft ? (fix, note) => draftFix(fix, note) : undefined} />}
-            {circuitIssues.length > 0 && viewMode === 'schematic' && (
+            {cirShown && (
               // under the schematic's tool row (37 px): a hand edit that breaks the circuit brings this box, and that row has its undo
-              <div role="alert" data-testid="circuit-diagnostics" style={{
+              <div role="alert" id="circuit-diagnostics" data-testid="circuit-diagnostics" style={{
                 position: 'absolute', left: 14, top: 48, zIndex: 20, width: 440, maxWidth: 'calc(100% - 28px)', maxHeight: 230, overflowY: 'auto',
                 background: 'rgba(25,20,18,0.96)', border: '1px solid rgba(255,92,92,0.55)', borderRadius: 8,
                 boxShadow: '0 10px 30px rgba(0,0,0,0.28)', color: '#f6eee5', fontFamily: 'var(--sf-font-mono)',
@@ -1189,6 +1206,12 @@ export default function ResultPanel({
                     {circuitErrors.length ? `회로 검사 실패 · 오류 ${circuitErrors.length}` : `회로 검사 경고 ${circuitIssues.length}`}
                   </strong>
                   <span style={{ marginLeft: 'auto', opacity: 0.55, fontSize: 9 }}>PCB 생성 전 검사</span>
+                  {loudIssues.length === 0 && (
+                    <button type="button" data-testid="cir-fold" onClick={() => setCirOpen(false)} title="접어서 위의 안전 경고 표시로 둡니다"
+                      style={{ padding: '0 6px', border: 'none', background: 'transparent', color: '#f6eee5', cursor: 'pointer', fontSize: 12 }}>
+                      ✕
+                    </button>
+                  )}
                 </div>
                 {circuitIssues.map((issue, index) => (
                   <div key={`${issue.code}-${index}`} style={{ padding: '9px 11px', borderBottom: index < circuitIssues.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}>

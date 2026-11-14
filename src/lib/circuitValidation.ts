@@ -12,6 +12,9 @@ export interface CircuitIssue {
   chat: string
   refs: string[]
   nets: string[]
+  /** safety advice for the design (CIR202, CIR203), not a broken connection: the schematic folds the advice a circuit came
+   *  with into a chip, and opens the box only for advice an edit brought in */
+  advice?: true
 }
 
 /** Fast static checks for failures that can be inferred from the editable graph. */
@@ -88,6 +91,86 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
 
   const protectedLoad = components.filter(c => /MOTOR/i.test(c.value || '') || c.name === 'Relay')
   if (protectedLoad.length && !components.some(c => c.name === 'D')) add({ code: 'CIR201', severity: 'warning', title: '역기전력 보호가 없습니다', message: '모터 또는 릴레이는 꺼질 때 큰 역전압을 만들 수 있는데 보호 다이오드가 없습니다.', suggestion: '부하 양단에 방향을 확인한 플라이백 다이오드를 추가하세요.', chat: `${protectedLoad.map(c => c.ref).join(', ')} 양단에 보호 다이오드를 추가해줘. 다이오드의 K(캐소드)는 전원 쪽, A(애노드)는 트랜지스터 쪽에 연결해줘.`, refs: protectedLoad.map(c => c.ref), nets: [] })
+
+  // ── the supply side, for a beginner's board (2026-11-14, src-yt-capstone2026-robot-teams in the vault) ──
+  // pins read through the pin-name table, as above; nets by name with their nodes
+  const isGndName = (n: string) => /^(GND|AGND|DGND|PGND|0V|VSS)$/i.test(n)
+  const on = new Map(read.map(n => [n.name, n.nodes]))
+  const netOf = (ref: string, pin: string) => read.find(n => n.nodes.some(nd => nd.ref === ref && nd.pin === pin))?.name ?? null
+  // where the supply comes in: a battery's + and the non-ground pins of a header named as a supply (DC jack, PWR_IN, VIN)
+  const supplyIn = components.flatMap(c => {
+    if (c.name === 'Battery') { const n = netOf(c.ref, '1'); return n ? [{ ref: c.ref, net: n }] : [] }
+    if (/^Conn_/.test(c.name ?? '') && /PWR|POWER|전원|\bDC\b|DC_?IN|DC_?JACK|VIN|BAT|배터리|ADAPTER|어댑터/i.test(c.value || '') && !/MOTOR|모터/i.test(c.value || '')) {
+      return read.filter(n => !isGndName(n.name) && n.nodes.some(nd => nd.ref === c.ref)).map(n => ({ ref: c.ref, net: n.name }))
+    }
+    return []
+  })
+  const kindOfRef = (ref: string) => kinds.get(ref) ?? ''
+
+  // CIR202. no reverse-polarity protection: the supply's + goes straight on to the circuit. Protected when, past switches
+  // on the way, its net holds nothing but the supply, a series diode's anode or a bridge rectifier's AC pin. Said only where
+  // a reversed supply breaks something (an IC, a polarised capacitor, a transistor, a relay): an LED and its resistor alone
+  // only stay dark. The diode is 1N5819, whose datasheet figures the app already holds (partSpecs.ts)
+  const fragile = components.filter(c => ['NE555', 'REG', 'CP', 'Q_NPN', 'Q_NMOS', 'Relay', 'Buzzer'].includes(c.name ?? ''))
+  if (fragile.length) {
+    for (const s of supplyIn) {
+      const seen = new Set<string>(), queue = [s.net]
+      let bare = false
+      while (queue.length && !bare) {
+        const n = queue.shift()!
+        if (seen.has(n)) continue
+        seen.add(n)
+        for (const nd of on.get(n) ?? []) {
+          const k = kindOfRef(nd.ref)
+          if (nd.ref === s.ref || k === 'TestPoint' || (k === 'D' && nd.pin === '1') || (k === 'Bridge' && (nd.pin === '1' || nd.pin === '2'))) continue
+          if (k === 'SW') { const other = netOf(nd.ref, nd.pin === '1' ? '2' : '1'); if (other && !isGndName(other)) queue.push(other); continue }
+          bare = true
+          break
+        }
+      }
+      if (!bare) continue
+      add({ code: 'CIR202', severity: 'warning', advice: true, title: '전원 역접속 보호가 없습니다',
+        message: `${s.ref} 전원에 역접속 보호가 없습니다 (역접속: 전원의 +와 −를 거꾸로 꽂는 것). 거꾸로 꽂으면 IC와 전해 커패시터에 반대 전압이 걸려 바로 타거나 터질 수 있습니다.`,
+        suggestion: `${s.ref}의 + 바로 뒤에 쇼트키 다이오드 1N5819를 하나 직렬로 넣습니다(띠가 있는 쪽이 회로 쪽). 이 다이오드에서 최대 0.6 V가 줄어듭니다.`,
+        chat: `${s.ref}의 + 바로 뒤에 쇼트키 다이오드 1N5819를 직렬로 추가해줘. 다이오드의 A(애노드)는 ${s.ref}의 +에, K(캐소드)는 원래 ${s.ref}의 +에 이어져 있던 회로 쪽에 연결해줘.`,
+        refs: [s.ref], nets: [s.net] })
+    }
+  }
+
+  // CIR203. no emergency stop for a motor: from the motor, along the way its current takes (diodes, inductors, resistors, a
+  // regulator's input and output, a transistor's channel, a relay's contacts), the supply's + is reached without a switch a
+  // person works (SW). Ground nets end the walk. A motor whose supply cannot be traced is not judged
+  const supplyNets = new Set(supplyIn.map(s => s.net))
+  const through: Record<string, string[][]> = {
+    D: [['1', '2']], L: [['1', '2']], R: [['1', '2']], REG: [['3', '2']], Q_NPN: [['2', '3']], Q_NMOS: [['2', '3']],
+    Relay: [['3', '4'], ['3', '5']],
+  }
+  for (const m of components.filter(c => /MOTOR|모터/i.test(c.value || ''))) {
+    const seen = new Set<string>()
+    const queue = read.filter(n => !isGndName(n.name) && n.nodes.some(nd => nd.ref === m.ref)).map(n => n.name)
+    let reached: string | null = null
+    while (queue.length && !reached) {
+      const n = queue.shift()!
+      if (seen.has(n) || isGndName(n)) continue
+      seen.add(n)
+      if (supplyNets.has(n)) { reached = n; break }
+      for (const nd of on.get(n) ?? []) {
+        if (nd.ref === m.ref) continue
+        for (const [a, b] of through[kindOfRef(nd.ref)] ?? []) {
+          const other = nd.pin === a ? b : nd.pin === b ? a : null
+          const next = other && netOf(nd.ref, other)
+          if (next && !seen.has(next)) queue.push(next)
+        }
+      }
+    }
+    if (!reached) continue
+    const src = supplyIn.find(s => s.net === reached)!.ref
+    add({ code: 'CIR203', severity: 'warning', advice: true, title: '모터 비상정지 스위치가 없습니다',
+      message: `모터 ${m.ref}의 전원을 손으로 바로 끊을 스위치가 없습니다 (비상정지: 문제가 생겼을 때 사람이 전원을 끊는 장치). 프로그램이 멈추거나 트랜지스터가 고장 나 켜진 채로 붙으면 모터가 계속 돌아 손이나 물건이 끼일 수 있습니다.`,
+      suggestion: `${src}의 +와 모터 ${m.ref} 사이에 모터 전류를 견디는 스위치를 하나 넣습니다. 사람이 다칠 수 있는 로봇이면 누르면 끊기는 비상정지 버튼을 씁니다.`,
+      chat: `${src}의 +와 모터 ${m.ref} 전원 사이에 스위치(SW)를 직렬로 추가해줘. 스위치를 끄면 모터 전원이 끊기게 해줘.`,
+      refs: [m.ref], nets: [reached] })
+  }
 
   return issues
 }

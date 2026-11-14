@@ -78,11 +78,41 @@ const driver = (kind: string, b: string, c: string, e: string, base = ['BASE', '
 // the same pin twice in one net, or a name the table does not know, is no conflict
 const cir006 = (c: NetGraph) => validateCircuit(c).filter(i => i.code === 'CIR006').map(i => `${i.refs.join()} ${i.nets.join()}`)
 const ledWith = (...nets: string[][]) => g([bat('9V'), ['R1', 'R', '680'], ['D1', 'LED', 'RED']], ['VCC', 'BT1.1', 'R1.1'], ...nets)
+// CIR202 reverse-polarity protection and CIR203 a motor's emergency stop (2026-11-14). The demos have neither, and say so as
+// warnings: the motor both (J1 PWR_IN, J2 the motor), the 555 and the relay CIR202, the LED and its resistor alone nothing
+const said = (c: NetGraph) => validateCircuit(c).map(i => `${i.severity} ${i.code} ${i.refs.join()}`).sort().join(' | ')
+const cir = (code: string, c: NetGraph) => validateCircuit(c).filter(i => i.code === code).map(i => i.refs.join())
+// a 555 on a battery: the + straight on, through a series diode, a capacitor before that diode, a switch then the diode, a bridge
+const timer = (front: string[][], extra: Part[] = []) => g([bat('9V'), ['U1', 'NE555', 'NE555'], ['C1', 'CP', '10uF'], ['R1', 'R', '1k'], ...extra],
+  ...front, ['VCC', 'U1.8', 'U1.4', 'C1.1', 'R1.1'], ['DIS', 'R1.2', 'U1.7'], ['GND', 'U1.1', 'C1.2', 'BT1.2'])
+const bareTimer = timer([['VCC', 'BT1.1']])
+const diodeTimer = timer([['IN', 'BT1.1', 'D9.1'], ['VCC', 'D9.2']], [['D9', 'D', '1N5819']])
+const capFirst = timer([['IN', 'BT1.1', 'D9.1', 'C9.1'], ['VCC', 'D9.2'], ['GND', 'C9.2']], [['D9', 'D', '1N5819'], ['C9', 'CP', '100uF']])
+const switchThenDiode = timer([['IN', 'BT1.1', 'SW1.1'], ['SWD', 'SW1.2', 'D9.1'], ['VCC', 'D9.2']], [['SW1', 'SW', ''], ['D9', 'D', '1N5819']])
+const bridged = timer([['AC', 'BT1.1', 'B1.1'], ['VCC', 'B1.3'], ['GND', 'B1.4', 'B1.2']], [['B1', 'Bridge', 'MB6S']])
+// a motor on a battery, low-side N-MOSFET: straight, through a switch, through a relay contact, past a series diode, and
+// fed from a header that does not say it is a supply
+const motorOn = (high: string[][], extra: Part[] = [], supply: Part = bat('12V')) =>
+  g([supply, ['M1', 'Conn_01x02', 'MOTOR'], ['Q1', 'Q_NMOS', '2N7002'], ['R1', 'R', '10k'], ['D1', 'D', '1N4148'], ...extra],
+    ...high, ['MOT', 'M1.2', 'Q1.2', 'D1.1'], ['GATE', 'R1.2', 'Q1.1'], ['GND', 'Q1.3', `${supply[0]}.2`, 'R1.1'])
+const straightMotor = motorOn([['VM', 'BT1.1', 'M1.1', 'D1.2']])
+const switchedMotor = motorOn([['VBAT', 'BT1.1', 'SW1.1'], ['VM', 'SW1.2', 'M1.1', 'D1.2']], [['SW1', 'SW', '']])
+const relayMotor = motorOn([['VBAT', 'BT1.1', 'K1.3', 'K1.1'], ['VM', 'K1.4', 'M1.1', 'D1.2'], ['GND', 'K1.2']], [['K1', 'Relay', '12V']])
+const diodeMotor = motorOn([['VBAT', 'BT1.1', 'D9.1'], ['VM', 'D9.2', 'M1.1', 'D1.2']], [['D9', 'D', '1N5819']])
+const unknownSupply = motorOn([['VM', 'J9.1', 'M1.1', 'D1.2']], [], ['J9', 'Conn_01x02', 'J'])
 const checks: [string, boolean][] = [
-  ['normal motor passes', validateCircuit(motor).length === 0],
-  ['normal LED passes', validateCircuit(led).length === 0],
-  ['normal 555 blinker passes', validateCircuit(ne555).length === 0],
-  ['normal relay passes', validateCircuit(relay).length === 0],
+  ['the demos: motor warns CIR202 (J1) and CIR203 (J2), 555 and relay warn CIR202, the LED nothing; no error',
+    said(motor) === 'warning CIR202 J1 | warning CIR203 J2' && said(led) === '' && said(ne555) === 'warning CIR202 BT1' && said(relay) === 'warning CIR202 J1'],
+  ['CIR202: a 555 straight on its battery warns; a series diode or a bridge first, also past a switch, passes; a capacitor before the diode warns',
+    cir('CIR202', bareTimer).join() === 'BT1' && !cir('CIR202', diodeTimer).length && !cir('CIR202', switchThenDiode).length
+    && !cir('CIR202', bridged).length && cir('CIR202', capFirst).join() === 'BT1'],
+  ['CIR202 says what, why and the fix with the part (1N5819) and its drop, in Korean',
+    validateCircuit(bareTimer).some(i => i.code === 'CIR202' && /역접속:/.test(i.message) && /타거나 터질 수/.test(i.message) && /1N5819/.test(i.suggestion) && /0\.6 V/.test(i.suggestion) && /A\(애노드\)/.test(i.chat))],
+  ['CIR203: a motor straight on the battery, through a relay contact or past a series diode warns; through a switch passes; a supply it cannot trace is not judged',
+    cir('CIR203', straightMotor).join() === 'M1' && cir('CIR203', relayMotor).join() === 'M1' && cir('CIR203', diodeMotor).join() === 'M1'
+    && !cir('CIR203', switchedMotor).length && !cir('CIR203', unknownSupply).length],
+  ['CIR203 says what, why and the fix in Korean',
+    validateCircuit(straightMotor).some(i => i.code === 'CIR203' && /비상정지:/.test(i.message) && /끼일 수/.test(i.message) && /스위치/.test(i.suggestion))],
   ['removed motor R1 is an error', validateCircuit(remove(motor, 'R1')).some(i => i.severity === 'error')],
   ['removed flyback diode warns', validateCircuit(remove(motor, 'D1')).some(i => i.code === 'CIR201')],
   ['removed LED resistor catches limiter', noLimiter.length === 1 && noLimiter[0].severity === 'error' && noLimiter[0].refs.join() === 'D1'],
