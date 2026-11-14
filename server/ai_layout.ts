@@ -12,6 +12,7 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import type OpenAI from 'openai'
 import { MODEL_MINI, modelClient, modelExtra } from './model'
+import { childEnv } from './skidl_run'
 
 // SF_AI_MODEL picks another model than the server's SF_MODEL_MINI (the provider is OPENAI_BASE_URL, model.ts).
 // SF_AI_JSON=1 is for gateways that drop `tools`: the model answers with the same object as plain JSON.
@@ -595,7 +596,7 @@ export function runGenerator(netPath: string, pcbPath: string, style: string, ov
     const ovPath = join(tmpdir(), `sf_ov_${randomUUID().slice(0, 8)}.json`)
     writeFileSync(ovPath, JSON.stringify(ov), 'utf8')
     const proc = spawn('python', [join(cwd, 'pcb_generator.py'), netPath, pcbPath,
-      '--style', style, '--placer', 'fixed', '--overrides', ovPath])
+      '--style', style, '--placer', 'fixed', '--overrides', ovPath], { env: childEnv() })
     let stdout = '', stderr = ''
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })

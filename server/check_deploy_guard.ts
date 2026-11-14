@@ -7,6 +7,7 @@
 // D14 who may call the server from a browser (CORS), live in D9f (no FRONTEND_URL) and D12b (FRONTEND_URL set).
 // D15 the commit /health names, live in D9g (SF_COMMIT) and D12c (RENDER_GIT_COMMIT); D15b the Jetson image is given it.
 // D16 the file routes from a server under a dot folder (a worktree under .claude/), with names that leave outputs/ refused.
+// D17 every child process the server starts gets its environment without the keys (read as text).
 // D9h a visitor's circuit is at most 30 parts (board route and /netlist/restore).
 // No model, no KiCad; D9 needs python + skidl (the demo runs a checked-in circuit).
 // Usage (from server/): npx tsx check_deploy_guard.ts   → exit 0 only if all pass
@@ -122,6 +123,30 @@ check('D8 routes wired to the guard', guarded.length === 0 && !uncalled.length &
   const plain = sayings.filter(s => !/[가-힣]/.test(s.text) || !/재시도|주세요|확인/.test(s.text)).map(s => s.key)
   check('D8b the board stream says why in Korean, with what to do; no traceback or English reason', reasons.length >= 9 && sayings.length >= 9
     && !unsaid.length && !plain.length, `${reasons.length} reasons, ${sayings.length} sentences${unsaid.length ? `; not in words: ${unsaid.join(' | ')}` : ''}${plain.length ? `; no step to take: ${plain.join(', ')}` : ''}`)
+}
+
+// D17. every process the server starts gets the environment with its keys taken out (skidl_run.ts childEnv): kicad-cli,
+//      the board generator and the gerber export ran with them, and a Code-tab run beside one, as the same user, could
+//      read its /proc/<pid>/environ (2026-11-13). Read as text in each file that starts one
+{
+  const files = ['index.ts', 'ai_layout.ts', 'erc_repair.ts', 'skidl_run.ts']
+  const bare: string[] = []
+  let calls = 0
+  for (const f of files) {
+    const text = readFileSync(join(process.cwd(), f), 'utf8')
+    for (const m of text.matchAll(/\bspawn\((?!'taskkill')/g)) {
+      calls++
+      // the call's arguments: to the parenthesis that closes it
+      let depth = 0, end = m.index! + 'spawn'.length
+      for (; end < text.length; end++) {
+        if (text[end] === '(') depth++
+        else if (text[end] === ')' && --depth === 0) break
+      }
+      if (!/\bchildEnv\(/.test(text.slice(m.index!, end))) bare.push(`${f}:${text.slice(0, m.index!).split('\n').length}`)
+    }
+  }
+  check('D17 every child the server starts gets no key in its environment', calls >= 6 && !bare.length,
+    bare.length ? `without childEnv: ${bare.join(', ')}` : `${calls} spawn calls`)
 }
 
 // D10. render.yaml (the Render Blueprint, read as text): every secret is declared with sync: false and no value, the

@@ -14,7 +14,7 @@ import {
   splitEdit, readBoard, roundFeedback, runGenerator,
   type AiRound, type Metrics, type Overrides,
 } from './ai_layout'
-import { runSkidl as runSkidlIn } from './skidl_run'
+import { childEnv, runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
 import { corsOrigin, fileStem, guardFromEnv, localLoginRefusal, memberRefusal, runningCommit, safeName, type Refusal } from './deploy_guard'
 import { DEMOS, cachedDemo } from './demo_cache'
@@ -1692,7 +1692,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   streaming = true
 
   const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
-    '--style', pcbStyle(style), '--stream'])
+    '--style', pcbStyle(style), '--stream'], { env: childEnv() })
   abort.signal.addEventListener('abort', () => proc.kill())
   // the run ends when python has and the DRC and AI rounds after its done line have
   let checked: Promise<void> = Promise.resolve()
@@ -1865,7 +1865,8 @@ const KICAD_CLI = process.env.KICAD_CLI_PATH || (existsSync(WIN_KICAD_CLI) ? WIN
 function runKicadCli(args: string[], label: string, timeoutMs = 30000, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error(`${label} stopped`))
-    const proc = spawn(KICAD_CLI, args, env ? { env } : {})
+    // no key in its environment: a Code-tab run beside it, as the same user, read /proc/<pid>/environ (2026-11-13)
+    const proc = spawn(KICAD_CLI, args, { env: childEnv(env ?? process.env) })
     const onAbort = () => proc.kill('SIGKILL')
     signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''
@@ -1921,7 +1922,7 @@ const gerberJobs = new Map<string, Promise<{ status: number; body: Record<string
  *  non-plated drill files, one zip of them); the board checks call the same function. */
 function exportFab(pcbPath: string, gerberDir: string): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise(resolve => {
-    const proc = spawn('python', [join(process.cwd(), 'pcb', 'fab_export.py'), pcbPath, gerberDir, '--cli', KICAD_CLI])
+    const proc = spawn('python', [join(process.cwd(), 'pcb', 'fab_export.py'), pcbPath, gerberDir, '--cli', KICAD_CLI], { env: childEnv() })
     let out = ''
     proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
     proc.stderr.on('data', () => { /* drained; fab_export.py prints its own error as JSON */ })
@@ -1980,7 +1981,7 @@ app.get('/demo_result/:name', async (req: Request, res: Response) => {
 // and DRC need kicad-cli, so the health check says which one this server is.
 let kicadVersion: string | null = null
 {
-  const proc = spawn(KICAD_CLI, ['version'])
+  const proc = spawn(KICAD_CLI, ['version'], { env: childEnv() })
   let out = ''
   proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
   proc.on('error', () => { kicadVersion = null })
