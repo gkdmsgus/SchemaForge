@@ -10,6 +10,7 @@ import path from 'node:path'
 import {
   ERC_RULES, TONE_COLOR, checkRows, connectionCount, ercErrorCount, overall, stampText, summarize, type CheckRow,
 } from '../src/lib/boardChecks.ts'
+import { BOARD_RULES, FAB_SOURCE, ruleLines } from '../src/lib/boardRules.ts'
 import type { BoardModel, DrcResult } from '../src/types.ts'
 
 let failed = 0
@@ -157,6 +158,27 @@ const sample = clean0.b
   const worst = Object.entries(TONE_COLOR).map(([k, c]) => [k, Math.min(...surfaces.map(s => ratio(c, s)))] as const)
   check('8 tone contrast >= 4.5', worst.every(([, r]) => r >= 4.5),
     worst.map(([k, r]) => `${k} ${r.toFixed(2)}`).join(', '))
+}
+
+// 9. the DRC row says which rules draw and check the board and where each number comes from (2026-11-14): the app's
+// numbers are the router's and the copper pour's, read from the Python files, and none is below the maker's minimum
+{
+  const py = (file: string, re: RegExp) => { const m = re.exec(fs.readFileSync(path.join('server', 'pcb', file), 'utf-8')); return m ? Number(m[1]) : NaN }
+  const code = {
+    signal: py('router.py', /'signal_width':\s*([\d.]+)/), power: py('router.py', /'power_width':\s*([\d.]+)/),
+    clearance: py('router.py', /'clearance':\s*([\d.]+)/), edge: py('router.py', /'edge':\s*([\d.]+)/),
+    drill: py('router.py', /'via_drill':\s*([\d.]+)/), pour: py('board.py', /^POUR_CLEARANCE\s*=\s*([\d.]+)/m),
+  }
+  const app = BOARD_RULES.map(r => r.app.map(a => a.mm))
+  const same = JSON.stringify(app) === JSON.stringify([[code.signal, code.power], [code.clearance, code.pour], [code.edge], [code.drill]])
+  const aboveMin = BOARD_RULES.every(r => r.app.every(a => a.mm >= r.fabMin))
+  const rows = byId(checkRows(clean, sample)), skipped = byId(checkRows({ available: false, reason: 'kicad-cli를 찾지 못했습니다' }, sample))
+  const lines = rows.kicad_drc.detail
+  check('9 the DRC row names KiCad\'s default rules, the app\'s rules with the maker\'s minimum, the source and the day it was read; the numbers are the Python ones',
+    same && aboveMin && JSON.stringify(lines) === JSON.stringify(ruleLines()) && /KiCad 기본 규칙/.test(lines[0])
+    && lines.some(l => l.includes(FAB_SOURCE.read) && l.includes(FAB_SOURCE.url)) && lines.some(l => /^선 폭: 신호 0\.25 mm, 전원 0\.5 mm \(최소 0\.1 mm\)$/.test(l))
+    && skipped.kicad_drc.detail[0].includes('kicad-cli') && skipped.kicad_drc.detail.length === lines.length + 1 && rows.kicad_drc.note === '규칙·출처 보기',
+    `code ${JSON.stringify(code)} | ${lines.join(' / ')}`)
 }
 
 console.log(failed ? `${failed} CHECK(S) FAILED` : 'ALL PASS')

@@ -38,6 +38,7 @@ const HOSTS: Record<string, string | null> = {
   'api.mouser.com': 'Mouser', 'www.mouser.kr': 'Mouser',              // the price search, the BOM's search links
   'www.w3.org': null, 'localhost': null, '127.0.0.1': null,          // an SVG namespace, this machine
   'github.com': null,                                                 // the contact link, a page the visitor opens
+  'jlcpcb.com': null,                                                 // boardRules.ts: the rules' source, shown as text
 }
 
 /** the code without its comments: a comment may name a host nothing calls (model.ts names api.x.ai as an example) */

@@ -2,6 +2,7 @@ import type { BoardModel, DrcResult } from '../types'
 import { pinoutWarnings, type ReviewItem } from './humanReview'
 import { missingLegs } from './fixes'
 import { OP_RULES, type OpResult, type OpState } from './operatingCheck'
+import { ruleLines } from './boardRules'
 
 // Every check the board went through, one row per rule, so a passed rule is visible
 // too (not only the failures). Rows reference findings by the same ids BoardView uses
@@ -158,7 +159,9 @@ function checkRowsBase(
     id: 'kicad_drc', label: 'KiCad 설계 규칙',
     state: drcState(counts?.errors ?? 0, counts?.warnings ?? 0),
     count: counts ? (counts.errors || counts.warnings) : 0,
-    detail: why,
+    note: '규칙·출처 보기',
+    // the reason it did not run first, then which rules and where their numbers come from
+    detail: [...why, ...ruleLines()],
     findings: (drc?.violations || []).map((_, i) => `drc${i}`),
   })
   rows.push({
