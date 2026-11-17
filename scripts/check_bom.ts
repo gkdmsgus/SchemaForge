@@ -318,5 +318,18 @@ function parseCsv(text: string): string[][] {
     && /refused: data\?\.refused === true/.test(table) && /current\.refused/.test(table))
 }
 
+// B16. what an assembly house asks for (2026-11-17): BOM, gerbers and a pick-and-place file, saying the app makes no
+// pick-and-place file and where each one it does make is. The buttons and the tab it names are the screen's own words
+{
+  const html = renderToStaticMarkup(createElement(BomTable, { components: [comp('R1', '1k', 'R'), comp('D1', 'RED', 'LED')], board: null, style: 'smd', fileBase: 'x' }))
+  const box = html.slice(html.indexOf('data-testid="bom-outsource"'))
+  const panel = fs.readFileSync(path.join('src', 'components', 'ResultPanel.tsx'), 'utf-8')
+  check('B16 the BOM tab lists the files an assembly house needs, says the pick-and-place file is not made here, and names real buttons',
+    html.includes('data-testid="bom-outsource"') && /<details/.test(html) && box.includes('조립을 업체에 맡길 때 필요한 파일')
+    && ['부품표', '거버', '좌표 파일'].every(w => box.includes(`<strong>${w}</strong>`)) && box.includes('이 앱은 아직 만들지 않습니다')
+    && box.includes('부품표 CSV') && html.includes('>부품표 CSV<') && />\s*거버\s*</.test(panel) && /배치하기/.test(panel),
+    box.slice(0, 160))
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : `\nall BOM checks passed${skipped ? ` (${skipped} skipped: no saved boards in server/outputs)` : ''}`)
 process.exit(failed ? 1 : 0)

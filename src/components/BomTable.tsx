@@ -222,6 +222,16 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
       {bom.furniture.length > 0 && (
         <p className="sf-bom__note">구매 불필요 · 기판에 포함: {furnitureSummary(bom.furniture)}</p>
       )}
+      {/* what an assembly house asks for, and which of it this app makes (2026-11-17): a pick-and-place file it does not */}
+      <details className="sf-bom__note sf-bom__files" data-testid="bom-outsource">
+        <summary>조립을 업체에 맡길 때 필요한 파일</summary>
+        <ul>
+          <li><strong>부품표</strong>: 위의 &lsquo;부품표 CSV&rsquo;. 업체마다 열 이름과 형식이 달라 그 업체 안내에 맞춰 고쳐야 할 수 있습니다.</li>
+          <li><strong>거버</strong>: PCB 탭의 &lsquo;거버&rsquo;로 받는 zip. 기판을 만드는 파일입니다.</li>
+          <li><strong>좌표 파일</strong>(부품 위치표, 픽앤플레이스): 부품마다 기판 위 위치와 회전을 적은 표로, 기계가 부품을 올릴 때 씁니다. 이 앱은 아직 만들지 않습니다. KiCad에서 .kicad_pcb를 열어 부품 위치 파일(Component Placement, .pos)로 내보낼 수 있습니다.</li>
+          <li>직접 납땜한다면 부품표와 &lsquo;배치하기&rsquo; 탭이면 충분합니다.</li>
+        </ul>
+      </details>
       <p className="sf-bom__note" role="status">
         {current?.state === 'unavailable' && (current.refused
           ? 'Mouser 가격·재고 조회는 허용된 계정으로 로그인해야 쓸 수 있습니다. 각 줄의 검색 링크를 쓰세요.'

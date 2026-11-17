@@ -100,6 +100,12 @@
     &:empty { margin: 0; }
   }
 
+  &__files {
+    summary { cursor: pointer; }
+    ul { margin: var(--sf-s-2) 0 0; padding-left: 1.2em; }
+    li + li { margin-top: 2px; }
+  }
+
   .sr-only {
     position: absolute;
     width: 1px;
