@@ -737,6 +737,91 @@ def mech_check(parts, holes, frame):
     raise MechRefused('. '.join(said) + ('. 기판을 키우거나 구멍 자리를 옮겨 다시 만들어 주세요.' if holes else '. 기판을 키워 다시 만들어 주세요.'))
 
 
+MECH_SIDES = {'left': '왼쪽', 'right': '오른쪽', 'top': '위', 'bottom': '아래'}
+MECH_FIXED = 8          # parts an enclosure may pin to an edge
+
+
+def edge_pose(p, side, at, rot, frame):
+    """(x, y) that puts part p, turned rot, against the board's side (its keep-out BOARD_MARGIN in from the edge) with
+    its courtyard's middle `at` mm along that side (from the top on the left and right, from the left on top and bottom)."""
+    k, c = part_keepout(p, 0, 0, rot), part_bbox(p, 0, 0, rot)
+    mid = ((c[0] + c[2]) / 2, (c[1] + c[3]) / 2)
+    if side in ('left', 'right'):
+        x = frame[0] + BOARD_MARGIN - k[0] if side == 'left' else frame[2] - BOARD_MARGIN - k[2]
+        return round(x, 4), round(frame[1] + at - mid[1], 4)
+    y = frame[1] + BOARD_MARGIN - k[1] if side == 'top' else frame[3] - BOARD_MARGIN - k[3]
+    return round(frame[0] + at - mid[0], 4), round(y, 4)
+
+
+def _free_spans(p, side, rots, frame, blocks):
+    """The `at` values (mm along the side) where p fits at one of rots: inside the board and off every block."""
+    along = 1 if side in ('left', 'right') else 0
+    length = frame[2 + along] - frame[along]
+    inner = (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)
+    spans = []
+    for rot in rots:
+        x, y = edge_pose(p, side, 0, rot, frame)
+        k = part_keepout(p, x, y, rot)
+        across = 1 - along
+        if k[across] < inner[across] - 1e-6 or k[across + 2] > inner[across + 2] + 1e-6:
+            continue            # deeper than the board is wide
+        lo, hi = inner[along] - k[along], inner[along + 2] - k[along + 2]   # shifts that keep it inside
+        cut = []
+        for b in blocks:        # a block in the strip the part slides along rules out the shifts that touch it
+            if b[across] < k[across + 2] and k[across] < b[across + 2]:
+                cut.append((b[along] - k[along + 2], b[along + 2] - k[along]))
+        start = lo
+        for a, z in sorted(cut) + [(hi + 1e-6, hi + 1e-6)]:
+            if a > start + 1e-6 and start <= hi:
+                spans.append((start, min(a, hi + 1e-9)))
+            start = max(start, z)
+    merged = []             # one rotation's span may hold another's: said once
+    for a, z in sorted(spans):
+        if merged and a <= merged[-1][1] + 1e-6:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], z))
+        else:
+            merged.append((a, z))
+    return merged
+
+
+def mech_pins(mech, parts, frame, holes):
+    """Give each part the enclosure pins to an edge (mech['fixed'] = [{ref, side, at, rot?}]) its candidate poses
+    p['pin_poses'] = [(x, y, rot)]: one when rot is given, else every rotation that fits (the placer keeps the one with
+    the shortest wiring). A part not in the circuit, or one that does not fit there, is refused with where it would."""
+    by_ref = {p['ref']: p for p in parts}
+    blocks = [part_keepout(h) for h in holes]
+    for f in (mech or {}).get('fixed') or []:
+        ref, side, at, rot = f['ref'], f['side'], float(f['at']), f.get('rot')
+        p = by_ref.get(ref)
+        if p is None:
+            conns = [r for r in by_ref if r.rstrip('0123456789') in ('J', 'BT')]
+            raise MechRefused(f'회로에 {ref}가 없습니다. 고정할 부품 번호를 확인해 주세요'
+                              + (f' (회로의 커넥터: {", ".join(conns)}).' if conns else '.'))
+        if p.get('pin_poses'):
+            raise MechRefused(f'{ref}의 고정 자리가 두 번 적혀 있습니다.')
+        rots = [int(rot) % 360] if rot is not None else [0, 90, 180, 270]
+        c = 0 if side in ('left', 'right') else 1
+        poses = []
+        for r in rots:
+            x, y = edge_pose(p, side, at, r, frame)
+            k = part_keepout(p, x, y, r)
+            if _inside(k, (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)) \
+                    and not any(_boxes_touch(k, b) for b in blocks):
+                poses.append((x, y, r))
+        if not poses:
+            from_where = '위에서' if c == 0 else '왼쪽에서'
+            spans = _free_spans(p, side, rots, frame, blocks)
+            # said inward to 0.1 mm, so a value read off the message fits
+            where = ', '.join(f'{math.ceil(a * 10 - 1e-6) / 10:g}~{math.floor(z * 10 + 1e-6) / 10:g} mm' for a, z in spans
+                              if math.floor(z * 10 + 1e-6) >= math.ceil(a * 10 - 1e-6))
+            raise MechRefused(f'{ref}을 {MECH_SIDES[side]} 변 {from_where} {at:g} mm에 놓으면 기판 밖으로 나가거나 고정 구멍·다른 고정 부품과 겹칩니다. '
+                              + (f'{from_where} {where} 사이로 옮겨 주세요.' if where else f'이 변에는 {ref}이 들어갈 자리가 없습니다. 다른 변을 고르거나 기판을 키워 주세요.'))
+        p['pin_poses'] = poses
+        p['x'], p['y'], p['rot'] = poses[0]
+        # a pinned part is an obstacle for the next one, at every pose it may still take
+        blocks += [part_keepout(p, x, y, r) for x, y, r in poses]
+
+
 def _boxes_touch(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
@@ -887,6 +972,9 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
     router_mod.NET_WIDTH_OVERRIDE = dict((overrides or {}).get('net_width') or {})
 
     frame, mech_holes = mech_board((overrides or {}).get('mech'), style)
+    if frame:
+        mech_pins((overrides or {}).get('mech'), parts, frame, mech_holes)
+    pinned = [p for p in parts if p.get('pin_poses')]
     if placer == 'force':
         from placer import force_place
         force_place(parts, nets, on_event=on_event, frame=frame, fixed=mech_holes or ())
@@ -896,6 +984,10 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
             pose = fixed.get(p['ref'])
             if pose:
                 p['x'], p['y'], p['rot'] = float(pose[0]), float(pose[1]), int(pose[2]) % 360
+        for p in pinned:
+            # a reroute (the AI rounds) keeps a pinned part where the enclosure put it, or is refused
+            if not any(abs(p['x'] - x) < 1e-3 and abs(p['y'] - y) < 1e-3 and p['rot'] == r for x, y, r in p['pin_poses']):
+                raise MechRefused(f'{p["ref"]}은 기구 조건으로 고정한 자리라 옮기거나 돌릴 수 없습니다.')
         if on_event:
             on_event({'type': 'frame', 'iter': 0, 'phase': 'refine', 'hpwl': round(hpwl(parts), 2),
                       'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
@@ -949,7 +1041,8 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         'parts_box': {'x1': parts_box[0], 'y1': parts_box[1], 'x2': parts_box[2], 'y2': parts_box[3]},
         'test_points': test_points,
         'holes': [h['ref'] for h in holes],
-        **({'mech': {'width': round(box[2] - box[0], 3), 'height': round(box[3] - box[1], 3), 'holes': len(holes)}} if frame else {}),
+        **({'mech': {'width': round(box[2] - box[0], 3), 'height': round(box[3] - box[1], 3), 'holes': len(holes),
+                     'fixed': [p['ref'] for p in pinned]}} if frame else {}),
         'pour': {'net': POUR_NET, 'layers': sorted({r['layer'] for r in pour}), 'rects': len(pour),
                  'area_mm2': round(sum((r['x2'] - r['x1']) * (r['y2'] - r['y1']) for r in pour), 1)},
         'erc': findings,

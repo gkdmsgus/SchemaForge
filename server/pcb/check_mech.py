@@ -1,12 +1,16 @@
 """
-Checks M1-M9: the board an enclosure fixes (기구 조건 step 1, 2026-11-17). A width and height in mm and M3 holes at given
+Checks M1-M16: the board an enclosure fixes (기구 조건 step 1, 2026-11-17). A width and height in mm and M3 holes at given
 spots (overrides['mech']): the parts go inside that board and keep off the holes, the outline is that board, a circuit that
 does not fit and a hole too near the edge are refused in Korean, nothing is enlarged to make room, a reroute with the
 fixed placer (the AI rounds) keeps the board, and with no mech the board is what it was. KiCad's DRC checks one board.
+M11-M16 (step 2, 2026-11-17): a part pinned to an edge (mech['fixed'] = [{ref, side, at, rot?}]) sits there, its courtyard's
+middle `at` mm along the side, and the rest is placed around it; a spot on a hole is refused with the range that fits (and
+that range does fit), an unknown or twice-pinned part is refused, a reroute that moves a pinned part is refused, and KiCad's
+DRC passes on the pinned boards in both styles.
 
 Usage: python server/pcb/check_mech.py   → exit 0 only if every check passes
 """
-import json, os, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -97,20 +101,86 @@ s, _ = run('plain')
 check('M9 with no mech the board is sized from the parts and has its four corner holes', 'mech' not in s and len(s['holes']) == 4
       and s['board']['w'] < 40, f"{s['board']} {s['holes']}")
 
+# M11-M12: pinned parts stay where they were pinned, in both styles, and the board is otherwise as good
+def pinned_at(m, ref, side):
+    """(the keep-out's gap to that edge, the courtyard's middle along it, rot) for ref on the board model m"""
+    p = next(q for q in m['parts'] if q['ref'] == ref)
+    k, c = p['keepout'], p['courtyard']
+    gap = {'left': k[0] - ox, 'right': ox + 40 - k[2], 'top': k[1] - oy, 'bottom': oy + 30 - k[3]}[side]
+    mid = (c[1] + c[3]) / 2 - oy if side in ('left', 'right') else (c[0] + c[2]) / 2 - ox
+    return round(gap, 3), round(mid, 3), p['rot']
+
+
+LEFT = {'width': 40, 'height': 30, 'holes': FOUR, 'fixed': [{'ref': 'BT1', 'side': 'left', 'at': 15}]}
+for style in ('smd', 'tht'):
+    s, _ = run(f'pin_{style}', LEFT, style)
+    ok = 'refused' not in s
+    got = pinned_at(model(s), 'BT1', 'left') if ok else None
+    check(f'M11 {style}: BT1 pinned to the left edge 15 mm down stays there; nothing outside or overlapping, all routed',
+          ok and got[:2] == (board.BOARD_MARGIN, 15.0) and not s['outside'] and not s['overlaps'] and not s.get('unrouted')
+          and s['mech']['fixed'] == ['BT1'],
+          json.dumps({k: s.get(k) for k in ('outside', 'overlaps', 'unrouted', 'refused')}, ensure_ascii=False)[:200] + f' {got}')
+two = {'width': 40, 'height': 30, 'holes': FOUR,
+       'fixed': [{'ref': 'BT1', 'side': 'bottom', 'at': 20, 'rot': 90}, {'ref': 'D1', 'side': 'top', 'at': 12.5}]}
+s, _ = run('pin_two', two)
+ok = 'refused' not in s
+m = model(s) if ok else {}
+got = (pinned_at(m, 'BT1', 'bottom'), pinned_at(m, 'D1', 'top')) if ok else None
+check('M12 a given rotation is kept (BT1 at 90° on the bottom edge) and a part that is not a connector can be pinned (D1 on top)',
+      ok and got[0] == (board.BOARD_MARGIN, 20.0, 90) and got[1][:2] == (board.BOARD_MARGIN, 12.5) and not s['overlaps']
+      and not s['outside'] and not s.get('unrouted'), f'{got} {s.get("refused", "")[:120]}')
+
+# M13: pinned onto a hole is refused with the range that fits, and both ends of that range do fit
+s, _ = run('pin_hole', {**LEFT, 'fixed': [{'ref': 'BT1', 'side': 'left', 'at': 5}]})
+said = re.search(r'위에서 ([\d.]+)~([\d.]+) mm 사이로', s.get('refused', ''))
+ends = []
+for v in (said.groups() if said else ()):
+    e, _ = run(f'pin_end_{v}', {**LEFT, 'fixed': [{'ref': 'BT1', 'side': 'left', 'at': float(v)}]})
+    ends.append('refused' not in e and not e['overlaps'])
+check('M13 a pinned spot on a hole is refused with the range that fits, and both ends of it fit',
+      bool(said) and ends == [True, True], f"{s.get('refused', '')[:160]} ends {ends}")
+
+# M14: a part not in the circuit, or pinned twice, is refused
+s, _ = run('pin_none', {**LEFT, 'fixed': [{'ref': 'J9', 'side': 'left', 'at': 15}]})
+s2, _ = run('pin_twice', {**LEFT, 'fixed': LEFT['fixed'] * 2})
+check('M14 a part not in the circuit is refused naming its connectors; one pinned twice is refused',
+      '회로에 J9가 없습니다' in s.get('refused', '') and 'BT1' in s.get('refused', '') and '두 번' in s2.get('refused', ''),
+      f"{s.get('refused', '')[:100]} | {s2.get('refused', '')[:80]}")
+
+# M15: a reroute keeps a pinned part: the same pose is drawn, a move of it is refused
+s, _ = run('pin_again', LEFT)
+m = model(s)
+poses = {p['ref']: [p['x'], p['y'], p['rot']] for p in m['parts'] if p['part'] != 'MountingHole'}
+same, _ = run('pin_fixed', LEFT, placer='fixed', parts=poses)
+bt = poses['BT1']
+moved, _ = run('pin_moved', LEFT, placer='fixed', parts=dict(poses, BT1=[bt[0], bt[1] + 1, bt[2]]))
+check('M15 a fixed-placer reroute keeps the pinned BT1; moving it is refused',
+      'refused' not in same and pinned_at(model(same), 'BT1', 'left')[:2] == (board.BOARD_MARGIN, 15.0)
+      and '옮기거나 돌릴 수 없습니다' in moved.get('refused', ''), moved.get('refused', '')[:120])
+
 # M10: KiCad's DRC on the SMD enclosure board: no violation, nothing unconnected
 cli = os.environ.get('KICAD_CLI_PATH') or os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'KiCad', '10.0', 'bin', 'kicad-cli.exe')
 cli = cli if os.path.exists(cli) else 'kicad-cli'
-report = os.path.join(OUT, 'drc.json')
-try:
-    subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--severity-all', '-o', report, os.path.join(OUT, 'fit_smd.kicad_pcb')],
-                   capture_output=True, timeout=180)
-    with open(report, encoding='utf-8') as f:
-        d = json.load(f)
-    errors = [v for v in d.get('violations', []) if v.get('severity') == 'error']
-    check('M10 KiCad DRC on the 40 x 30 mm SMD board: no error, nothing unconnected', not errors and not d.get('unconnected_items'),
-          f"{len(errors)} errors {[v['type'] for v in errors][:5]}, {len(d.get('unconnected_items', []))} unconnected")
-except (OSError, subprocess.TimeoutExpired, ValueError) as e:
-    check('M10 KiCad DRC on the 40 x 30 mm SMD board', False, f'DRC did not run: {e}')
+
+
+def drc(name, board_name):
+    report = os.path.join(OUT, f'drc_{board_name}.json')
+    try:
+        subprocess.run([cli, 'pcb', 'drc', '--format', 'json', '--severity-all', '-o', report,
+                        os.path.join(OUT, f'{board_name}.kicad_pcb')], capture_output=True, timeout=180)
+        with open(report, encoding='utf-8') as f:
+            d = json.load(f)
+        errors = [v for v in d.get('violations', []) if v.get('severity') == 'error']
+        check(f'{name}: no error, nothing unconnected', not errors and not d.get('unconnected_items'),
+              f"{len(errors)} errors {[v['type'] for v in errors][:5]}, {len(d.get('unconnected_items', []))} unconnected")
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        check(name, False, f'DRC did not run: {e}')
+
+
+drc('M10 KiCad DRC on the 40 x 30 mm SMD board', 'fit_smd')
+for style in ('smd', 'tht'):
+    drc(f'M16 KiCad DRC on the {style.upper()} board with BT1 pinned', f'pin_{style}')
+drc('M16 KiCad DRC on the board with BT1 and D1 pinned', 'pin_two')
 
 print(f'\n{failed} check(s) failed' if failed else '\nALL PASS')
 sys.exit(1 if failed else 0)

@@ -74,7 +74,9 @@ def _snapshot(parts, it, phase, on_event):
 
 def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
     """frame: the board an enclosure fixes (x1, y1, x2, y2), else a square sized from the parts.
-    fixed: parts that do not move (the enclosure's mounting holes); the others are kept off them."""
+    fixed: parts that do not move (the enclosure's mounting holes); the others are kept off them.
+    A part with p['pin_poses'] (pinned to an edge by the enclosure, board.mech_pins) stays at one of them: the one with
+    the shortest wiring once the others have settled."""
     rng = random.Random(seed)
     n = len(parts)
     if n == 0:
@@ -93,6 +95,8 @@ def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
         cx0, cy0 = 100.0 + side / 2, 100.0 + side / 2
         frame = (cx0 - side / 2, cy0 - side / 2, cx0 + side / 2, cy0 + side / 2)
     fixed_boxes = [part_bbox(f) for f in fixed]
+    still = {p['ref'] for p in parts if p.get('pin_poses')}
+    frozen = {f['ref'] for f in fixed} | still
 
     # 1. scatter on a ring, in connectivity order so neighbours start near each other
     order = connectivity_order(parts, nets)
@@ -100,6 +104,9 @@ def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
     radius = side * 0.8   # just outside the target frame (half-side 0.5) — keeps the view tight
     for k, ref in enumerate(order):
         p = parts[idx[ref]]
+        if ref in still:
+            p['x'], p['y'], p['rot'] = p['pin_poses'][0]
+            continue
         a = 2 * math.pi * k / n + rng.uniform(-0.15, 0.15)
         p['rot'] = 0
         # place so the courtyard centre lands on the ring
@@ -197,6 +204,8 @@ def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
                 fy[i] -= (b[3] - frame[3]) * 0.5
 
         for i, p in enumerate(parts):
+            if p['ref'] in still:
+                continue
             dx, dy = fx[i], fy[i]
             d = math.hypot(dx, dy)
             if d > temp:
@@ -209,22 +218,28 @@ def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
 
     # 3. legalize
     it = ITERATIONS
-    _best_rotations(parts)
+    _best_rotations(parts, still)
+    for p in parts:
+        if p['ref'] in still:
+            p['x'], p['y'], p['rot'] = min(p['pin_poses'], key=lambda q: _hpwl_at(parts, p, q))
     it += 1
     _snapshot(parts, it, 'legalize', on_event)
     for p in parts:
-        p['x'] = round(p['x'] / GRID) * GRID
-        p['y'] = round(p['y'] / GRID) * GRID
-    _remove_overlaps(parts + fixed, pinned={f['ref'] for f in fixed}, frozen={f['ref'] for f in fixed})
+        if p['ref'] not in still:
+            p['x'] = round(p['x'] / GRID) * GRID
+            p['y'] = round(p['y'] / GRID) * GRID
+    _remove_overlaps(parts + fixed, pinned=frozen, frozen=frozen)
+    if frozen:
+        _unstick(parts + fixed, frozen, _inner(frame) if given else None)
     it += 1
     _snapshot(parts, it, 'legalize', on_event)
-    sides = _connectors_to_edge(parts, frame=frame if given else None, fixed=fixed)
+    sides = _connectors_to_edge(parts, frame=frame if given else None, fixed=fixed, still=still)
     if given:
-        _into_frame(parts, frame, fixed, set(sides))
+        _into_frame(parts, frame, fixed, set(sides), still)
     it += 1
     _snapshot(parts, it, 'legalize', on_event)
     for _ in range(LOCAL_ROUNDS):
-        if not _local_search_round(parts, sides):
+        if not _local_search_round(parts, sides, still, fixed_boxes, frame if given else None):
             break
         it += 1
         _snapshot(parts, it, 'refine', on_event)
@@ -278,13 +293,19 @@ def _part_costs(p, cands, other_boxes):
     return cost
 
 
-def _local_search_round(parts, conn_sides):
+def _local_search_round(parts, conn_sides, still=frozenset(), obstacles=(), frame=None):
     """One pass per part: try small moves, rotations and relocation to any free grid spot nearby;
-    keep the best move that lowers HPWL without overlaps. Connectors only slide along their edge."""
+    keep the best move that lowers HPWL without overlaps. Connectors only slide along their edge; parts in still
+    (pinned by the enclosure) do not move. With an enclosure's board (frame) nothing leaves it or lands on an obstacle
+    (its holes)."""
+    inner = _inner(frame) if frame else None
     improved = False
     for p in parts:
+        if p['ref'] in still:
+            continue
         others = [q for q in parts if q is not p]
         other_bbs = [part_bbox(q) for q in others]
+        walls = other_bbs + list(obstacles)
         other_boxes = _net_boxes(others)
 
         # a connector's outer edge is the board edge: nothing else may stick out past it
@@ -301,7 +322,9 @@ def _local_search_round(parts, conn_sides):
                 if (s == 'left' and b[0] < cb[0]) or (s == 'right' and b[2] > cb[2]) or \
                    (s == 'top' and b[1] < cb[1]) or (s == 'bottom' and b[3] > cb[3]):
                     return False
-            return not any(_overlap(b, o, GAP / 2) for o in other_bbs)
+            if inner and (b[0] < inner[0] - 1e-6 or b[1] < inner[1] - 1e-6 or b[2] > inner[2] + 1e-6 or b[3] > inner[3] + 1e-6):
+                return False
+            return not any(_overlap(b, o, GAP / 2) for o in walls)
 
         base = _part_costs(p, [(p['x'], p['y'], p['rot'])], other_boxes)[0]
         side = conn_sides.get(p['ref'])
@@ -329,15 +352,32 @@ def _local_search_round(parts, conn_sides):
     return improved
 
 
+def _inner(frame):
+    """The enclosure's board less BOARD_MARGIN on each side: where a keep-out may go."""
+    from board import BOARD_MARGIN
+    return (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)
+
+
 def _grid_range(a, b):
     start = math.floor(a / GRID) * GRID
     n = int((b - start) / GRID) + 1
     return [start + i * GRID for i in range(max(n, 1))]
 
 
-def _best_rotations(parts):
+def _hpwl_at(parts, p, pose):
+    """Total HPWL with p at pose (x, y, rot); p is put back."""
+    old = p['x'], p['y'], p['rot']
+    p['x'], p['y'], p['rot'] = pose
+    h = hpwl(parts)
+    p['x'], p['y'], p['rot'] = old
+    return h
+
+
+def _best_rotations(parts, still=frozenset()):
     """Greedy: for each part, keep the rotation that lowers total HPWL without new overlaps."""
     for p in sorted(parts, key=lambda q: -len(q['pads'])):
+        if p['ref'] in still:
+            continue
         best_rot, best = p['rot'], hpwl(parts)
         others = [part_bbox(q) for q in parts if q is not p]
         for rot in (0, 90, 180, 270):
@@ -387,16 +427,39 @@ def _remove_overlaps(parts, pinned, max_rounds=400, frozen=frozenset()):
             return
 
 
-def _into_frame(parts, frame, fixed, conns, rounds=20):
+def _unstick(parts, frozen, inner=None, reach=30.0):
+    """A part still on another after _remove_overlaps (caught between two that never move, a pinned connector and a hole,
+    and bounced between them) goes to the nearest free grid spot, inside inner when given. One that finds none stays,
+    and the board's own checks report it."""
+    for p in parts:
+        if p['ref'] in frozen:
+            continue
+        others = [part_bbox(q) for q in parts if q is not p]
+        def free(x, y):
+            b = part_bbox(p, x, y)
+            if inner and (b[0] < inner[0] - 1e-6 or b[1] < inner[1] - 1e-6 or b[2] > inner[2] + 1e-6 or b[3] > inner[3] + 1e-6):
+                return False
+            return not any(_overlap(b, o, GAP / 2) for o in others)
+        if free(p['x'], p['y']):
+            continue
+        steps = int(reach / GRID)
+        spots = sorted(((i * i + j * j, i, j) for i in range(-steps, steps + 1) for j in range(-steps, steps + 1)))
+        for _, i, j in spots:
+            if free(p['x'] + i * GRID, p['y'] + j * GRID):
+                p['x'] += i * GRID
+                p['y'] += j * GRID
+                break
+
+
+def _into_frame(parts, frame, fixed, conns, still=frozenset(), rounds=20):
     """With an enclosure's board: move a part that sticks out back inside (grid steps), then clear overlaps again
     without moving a hole or a connector, until nothing moves. What still does not fit is the caller's to refuse."""
-    from board import BOARD_MARGIN
-    inner = (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)
-    frozen = {f['ref'] for f in fixed}
+    inner = _inner(frame)
+    frozen = {f['ref'] for f in fixed} | set(still)
     for _ in range(rounds):
         moved = False
         for p in parts:
-            if p['ref'] in conns:
+            if p['ref'] in conns or p['ref'] in frozen:
                 continue
             b = part_bbox(p)
             dx = (inner[0] - b[0]) if b[0] < inner[0] else (inner[2] - b[2]) if b[2] > inner[2] else 0
@@ -408,13 +471,14 @@ def _into_frame(parts, frame, fixed, conns, rounds=20):
         if not moved:
             return
         _remove_overlaps(parts + list(fixed), pinned=frozen | set(conns), frozen=frozen)
+        _unstick(parts + list(fixed), frozen | set(conns), _inner(frame))
 
 
-def _connectors_to_edge(parts, frame=None, fixed=()):
+def _connectors_to_edge(parts, frame=None, fixed=(), still=frozenset()):
     """Slide each connector outward until its courtyard touches the layout's outer edge, or with an enclosure's
     board (frame) its edge less BOARD_MARGIN: there a cable reaches it from outside the case."""
     from board import BOARD_MARGIN
-    conns = [p for p in parts if _is_connector(p)]
+    conns = [p for p in parts if _is_connector(p) and p['ref'] not in still]
     sides = {}
     if not conns:
         return sides
@@ -459,5 +523,6 @@ def _connectors_to_edge(parts, frame=None, fixed=()):
                     best = (cost, side, rot, p['x'], p['y'])
         _, side, p['rot'], p['x'], p['y'] = best
         sides[p['ref']] = side
-    _remove_overlaps(parts + list(fixed), pinned={p['ref'] for p in conns} | {f['ref'] for f in fixed}, frozen={f['ref'] for f in fixed})
+    frozen = {f['ref'] for f in fixed} | set(still)
+    _remove_overlaps(parts + list(fixed), pinned={p['ref'] for p in conns} | frozen, frozen=frozen)
     return sides
