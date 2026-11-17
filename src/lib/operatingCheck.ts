@@ -1406,6 +1406,25 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
       sw.result = { rule: 'op_drive', ref: q.ref, state, summary, detail: [...notes, ...detail], ...(cause ? { cause } : {}) }
     }
     if (!sw.grounded) {
+      // an N-channel MOSFET above its load (high side, 2026-11-17, a brain session's idea): its source rises with the load,
+      // so the gate has to reach the drain's supply plus the gate voltage the datasheet guarantees RDS(on) at. A gate no
+      // higher than that (a microcontroller pin, the drain's own supply) never turns it fully on: the load gets less than
+      // the supply and the MOSFET drops the rest as heat
+      const vd = kind === 'mos' && mos ? x.voltOf(c) : null
+      if (vd && vd.v > 0.05 && mos) {
+        const ci = controlOf(x, q, kind, ctl, e)
+        const top = !ci.problem && ci.cands.length ? ci.cands.reduce((m, cd) => (cd.lv.hi > m.lv.hi ? cd : m)) : null
+        const need = vd.v + mos.spec.vgs_rated.v
+        if (top && top.lv.hi < need - 1e-9) {
+          verdict('error', `${ga(q.ref)} 부하 위쪽(전원 쪽)에 있어 소스가 부하와 함께 올라갑니다. 게이트가 ${V(top.lv.hi)}까지만 올라가 완전히 켜지려면 필요한 ${V(need)}에 못 미쳐, 부하에 전압이 덜 가고 ${ga(q.ref)} 뜨거워집니다`,
+            [`드레인 ${c} ${V(vd.v)}: ${vd.why}`, `게이트 최대 ${V(top.lv.hi)}: ${top.lv.why}`,
+              `켜짐 저항을 보장하는 게이트−소스 전압 ${V(mos.spec.vgs_rated.v)}: ${cite(mos.spec.vgs_rated)}`,
+              `소스가 드레인 ${V(vd.v)}까지 오르려면 게이트가 ${V(vd.v)} + ${V(mos.spec.vgs_rated.v)} = ${V(need)} 이상이어야 합니다`])
+          sw.result.fix = `${eul(q.ref)} 부하 아래(GND 쪽)로 옮겨 소스를 GND에 잇거나(로우사이드), 위쪽에 꼭 두어야 하면 P채널 MOSFET이나 하이사이드 게이트 드라이버(부트스트랩)를 씁니다.`
+          sw.offWhy = sw.result.summary
+          continue
+        }
+      }
       const why = x.blockedWhy(e)
       verdict('unknown', `${q.ref}: ${kind === 'bjt' ? '이미터' : '소스'}가 GND가 아닌 구성은 판단하지 않습니다`,
         [`${kind === 'bjt' ? '이미터' : '소스'} 넷 ${e}: ${x.voltOf(e)?.why ?? why?.why ?? '전압이 정해지지 않습니다'}`], why?.cause)

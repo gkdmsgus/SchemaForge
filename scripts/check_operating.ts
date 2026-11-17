@@ -321,6 +321,19 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(twoAms, 'op_reg', 'warn', 'U1', /셀당 3\.15 V\(2S 6\.3 V\) 아래로 닳으면/) && (pick(twoAms, 'op_reg', 'U1')?.detail ?? []).some(d => /2\.50 V cut-off.*2\.0 V cutoff/.test(d))
     && /3S/.test(pick(twoAms, 'op_reg', 'U1')?.fix ?? '') && is(lowOk, 'op_reg', 'pass', 'U1'),
     `${show(twoAms, 'op_reg')} | fix ${pick(twoAms, 'op_reg', 'U1')?.fix} | ${show(lowOk, 'op_reg')} | ${show(two5, 'op_reg')}`)
+  // O7i2: an N-channel MOSFET above its load (2026-11-17): an Uno pin (5 V) on IRLZ44N's gate with its drain on 12 V and
+  // the motor under its source needs 12 + 4 = 16 V: an error offering the low side; the same part below the load (its
+  // source on GND) is judged as before
+  const high = (lowSide: boolean) => run(circuit([['BT1', 'Battery', '12V'], ['J1', 'Conn_01x03', 'Arduino Uno'], ['Q1', 'Q_NMOS', 'IRLZ44N'],
+    ['R1', 'R', '100'], ['R2', 'R', '10k'], ['M1', 'Motor', 'MOTOR 0.5A'], ['D1', 'D', '1N4007']],
+    lowSide
+      ? [['+12V', 'BT1.1', 'M1.1', 'D1.2'], ['OUT', 'M1.2', 'D1.1', 'Q1.2'], ['GND', 'BT1.2', 'J1.2', 'Q1.3', 'R2.2'], ['D9', 'J1.1', 'R1.1'], ['GATE', 'R1.2', 'Q1.1', 'R2.1']]
+      : [['+12V', 'BT1.1', 'Q1.2'], ['OUT', 'Q1.3', 'M1.1', 'D1.2'], ['GND', 'BT1.2', 'J1.2', 'M1.2', 'D1.1', 'R2.2'], ['D9', 'J1.1', 'R1.1'], ['GATE', 'R1.2', 'Q1.1', 'R2.1']]))
+  const hs = high(false), ls = high(true), phs = pick(hs, 'op_drive', 'Q1')
+  check('O7i2 IRLZ44N above a motor on 12 V with an Uno pin (5 V at most) on its gate is an error (needs 16 V) offering the low side; below the motor it is judged as before',
+    is(hs, 'op_drive', 'error', 'Q1', /Q1이 부하 위쪽.*게이트가 5 V까지만.*16 V/) && /로우사이드/.test(phs?.fix ?? '')
+    && (phs?.detail ?? []).some(d => /12 V \+ 4 V = 16 V/.test(d)) && !/부하 위쪽/.test(pick(ls, 'op_drive', 'Q1')?.summary ?? 'x'),
+    `${show(hs, 'op_drive')} | fix ${phs?.fix} | ${show(ls, 'op_drive')}`)
   // O7h: a stepper driver on Pololu's A4988 carrier (2026-11-17): VMOT 8-35 V and VDD 3-5.5 V as Pololu's page gives them,
   // a lithium pack at full charge; VMOT on a battery, VDD on the Uno's 5 V
   const stepper = (vmot: string, vdd = '+5V') => circuit([['BT1', 'Battery', vmot], ['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'A4988', 'A4988'], ['C1', 'CP', '100uF']],
