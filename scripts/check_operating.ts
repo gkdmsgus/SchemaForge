@@ -312,6 +312,17 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const via = run(circuit([['BT1', 'Battery', '4S'], ['SW1', 'SW', ''], ['D1', 'D', '1N5819'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF']],
     [['VBAT', 'BT1.1', 'SW1.1'], ['VSW', 'SW1.2', 'D1.1'], ['VIN', 'D1.2', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2'], ['V3', 'U1.2', 'C1.1']]))
   check('O7g6 4S through a switch and a 1N5819 still reaches 16.8 V at the regulator', is(via, 'op_reg', 'error', 'U1', /16\.8 V/), show(via, 'op_reg'))
+  // O7h: a stepper driver on Pololu's A4988 carrier (2026-11-17): VMOT 8-35 V and VDD 3-5.5 V as Pololu's page gives them,
+  // a lithium pack at full charge; VMOT on a battery, VDD on the Uno's 5 V
+  const stepper = (vmot: string, vdd = '+5V') => circuit([['BT1', 'Battery', vmot], ['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'A4988', 'A4988'], ['C1', 'CP', '100uF']],
+    [['VMOT', 'BT1.1', 'U1.8', 'C1.1'], [vdd, 'J1.1', 'U1.2'], ['GND', 'BT1.2', 'J1.2', 'U1.1', 'U1.7', 'C1.2'], ['STEP', 'J1.3', 'U1.15'], ['DIR', 'J1.4', 'U1.16']])
+  const s12 = run(stepper('12V')), s36 = run(stepper('36V')), s7 = run(stepper('7V')), s9s = run(stepper('9S LiPo')), s3v3 = run(stepper('12V', '+3V3'))
+  const p12 = pick(s12, 'op_stepper', 'U1')
+  check('O7h A4988: 12 V VMOT and 5 V VDD pass citing Pololu; 36 V and 7 V VMOT are errors; 9S lithium (37.8 V charged) is an error; 3.3 V VDD passes',
+    is(s12, 'op_stepper', 'pass', 'U1', /모터 전원 VMOT 12 V \(8 V~35 V\), 로직 전원 VDD 5 V/) && (p12?.detail ?? []).some(d => /pololu\.com\/product\/1182/.test(d))
+    && is(s36, 'op_stepper', 'error', 'U1', /최대 35 V를 넘어/) && is(s7, 'op_stepper', 'error', 'U1', /최소 8 V보다 낮아/)
+    && is(s9s, 'op_stepper', 'error', 'U1', /완전히 충전하면 37\.8 V/) && is(s3v3, 'op_stepper', 'pass', 'U1'),
+    `${show(s12, 'op_stepper')} | ${show(s36, 'op_stepper')} | ${show(s7, 'op_stepper')} | ${show(s9s, 'op_stepper')} | ${show(s3v3, 'op_stepper')}`)
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
   // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package

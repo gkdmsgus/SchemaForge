@@ -63,7 +63,7 @@ export function normValue(v: string): string {
 const TYPE_BY_PART: Record<string, string> = {
   R: '저항', C: '커패시터', CP: '전해 커패시터', L: '인덕터', LED: 'LED', D: '다이오드', Bridge: '브리지 정류기',
   Q_NPN: 'NPN 트랜지스터', Q_NMOS: 'N-MOSFET', REG: '레귤레이터', NE555: '555 타이머', OpAmp: '연산 증폭기',
-  Relay: '릴레이', Buzzer: '버저', SW: '스위치', Battery: '배터리', Crystal: '크리스탈', Fuse: '퓨즈', RS485: 'RS-485 통신 칩', HX711: '로드셀 앰프',
+  Relay: '릴레이', Buzzer: '버저', SW: '스위치', Battery: '배터리', Crystal: '크리스탈', Fuse: '퓨즈', RS485: 'RS-485 통신 칩', HX711: '로드셀 앰프', A4988: '스테퍼 모터 드라이버',
 }
 const TYPE_BY_PREFIX: Record<string, string> = {
   R: '저항', C: '커패시터', L: '인덕터', D: '다이오드', Q: '트랜지스터', U: 'IC', SW: '스위치',
@@ -87,6 +87,8 @@ export function pkgLabel(footprint: string | null): string | null {
   const round = /^LED_D(\d+(?:\.\d+)?)mm/.exec(name)
   if (round) return `${Number(round[1])}mm`
   if (/SANYOU_SRD/.test(name)) return 'SRD'
+  if (/Fuseholder_TR5/.test(name)) return 'TR5 holder'
+  if (/Pololu_Breakout-16/.test(name)) return 'Pololu 16-pin'
   const tht = /(Axial)_(DIN\d+|L\d+(?:\.\d+)?mm)|(Disc|Radial)_D(\d+(?:\.\d+)?)mm|(Elec|Buzzer)_(\d+(?:\.\d+)?x\d+(?:\.\d+)?)/.exec(name)
   if (tht) return tht[1] ? `${tht[1]} ${tht[2]}` : tht[3] ? `${tht[3]} ${Number(tht[4])}mm` : `${tht[5]} ${tht[6]}`
   return name
@@ -201,7 +203,7 @@ export const SEARCH_WORD: Record<string, string> = {
   R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
   Bridge: 'bridge rectifier',
   Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
-  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal', Fuse: 'fuse', RS485: 'RS-485 transceiver', HX711: 'HX711',
+  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal', Fuse: 'fuse', RS485: 'RS-485 transceiver', HX711: 'HX711', A4988: 'A4988 stepper driver',
 }
 
 /** The package as a shop search knows it (0805, SOIC-8, 5mm), or ''; the battery is off-board, its header is not searched. */

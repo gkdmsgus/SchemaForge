@@ -20,6 +20,8 @@ maintainers take them from the datasheets) and the footprint pad layout:
   Timer:NE555D / NE555P        1..8 same on SOIC-8 and DIP-8
   HX711 (Avia)                 1..16 as its datasheet's table 1, one package: SOP-16L, body 3.9 x 9.9 mm (its
                                Package Dimensions page), so the narrow SOIC-16 on both styles
+  A4988 (Pololu carrier 1182)  1 GND 2 VDD 3 1B 4 1A 5 2A 6 2B 7 GND 8 VMOT 9 ~EN 10 MS1 11 MS2 12 MS3 13 ~RST 14 ~SLP
+                               15 STEP 16 DIR: KiCad's Driver_Motor:Pololu_Breakout_A4988 symbol, whose footprint is this one
   RS485 (TI SN75176B)          1=R 2=~RE 3=DE 4=D 5=GND 6=A 7=B 8=VCC, the same on its D (SOIC-8) and P (PDIP-8)
                                packages (datasheet SLLS101I, table 4-1)
   Relay:SANYOU_SRD_Form_C      1=COM 2,5=coil 3=NO 4=NC
@@ -88,6 +90,9 @@ TABLE = {
     # a load cell amplifier, Avia HX711: SOP-16L only (no through-hole package), on both styles
     ('HX711', 'smd'):  ('Package_SO', 'SOIC-16_3.9x9.9mm_P1.27mm', {i: str(i) for i in range(1, 17)}),
     ('HX711', 'tht'):  ('Package_SO', 'SOIC-16_3.9x9.9mm_P1.27mm', {i: str(i) for i in range(1, 17)}),
+    # a stepper motor driver on Pololu's A4988 carrier, plugged in on two 1x8 rows: the same on both styles
+    ('A4988', 'smd'):  ('Module', 'Pololu_Breakout-16_15.2x20.3mm', {i: str(i) for i in range(1, 17)}),
+    ('A4988', 'tht'):  ('Module', 'Pololu_Breakout-16_15.2x20.3mm', {i: str(i) for i in range(1, 17)}),
     # a fuse or a resettable PTC in series with a supply, no polarity: a 1206 chip, or a holder a TR5 fuse plugs into
     ('Fuse', 'smd'):   ('Fuse', 'Fuse_1206_3216Metric', IDENTITY2),
     ('Fuse', 'tht'):   ('Fuse', 'Fuseholder_TR5_Littelfuse_No560_No460', IDENTITY2),

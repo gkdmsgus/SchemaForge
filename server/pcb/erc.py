@@ -28,6 +28,7 @@ PIN_NAMES = {
     'Buzzer': ['+', '-'],
     'Battery': ['+', '-'],
     'RS485': ['R', 'RE', 'DE', 'D', 'GND', 'A', 'B', 'VCC'],
+    'A4988': ['GND', 'VDD', '1B', '1A', '2A', '2B', 'GND', 'VMOT', 'EN', 'MS1', 'MS2', 'MS3', 'RST', 'SLP', 'STEP', 'DIR'],
     'HX711': ['VSUP', 'BASE', 'AVDD', 'VFB', 'AGND', 'VBG', 'INA-', 'INA+', 'INB-', 'INB+', 'PD_SCK', 'DOUT', 'XO', 'XI', 'RATE', 'DVDD'],
 }
 # The pins a template marks PWROUT or OUTPUT, by symbol pin. A netlist written from a graph (an AI edit, a session reopened
@@ -51,6 +52,7 @@ SUPPLY_PINS = {
     'OpAmp': ['4', '5'],
     'RS485': ['8'],
     'HX711': ['1', '3', '16'],
+    'A4988': ['2', '8'],
 }
 
 

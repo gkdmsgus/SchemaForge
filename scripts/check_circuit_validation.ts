@@ -115,6 +115,15 @@ const hx711 = (skip: string[] = []) => {
   return g([['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'HX711', 'HX711'], ['J2', 'Conn_01x04', 'LOAD CELL'], ['C1', 'C', '100nF'], ['C2', 'C', '100nF']],
     ...Object.entries(nets).map(([n, ps]) => [n, ...ps]))
 }
+// an A4988 carrier U1 with its motor supply BT1 and a board's header J1: a capacitor across VMOT and GND as each case gives
+// it, and `skip` leaves those pins on nothing
+const stepperG = (cap: Part | null, skip: string[] = []) => {
+  const pins: Record<string, string> = { '8': 'VMOT', '2': '+5V', '1': 'GND', '7': 'GND', '15': 'STEP', '16': 'DIR', '13': 'SLP', '14': 'SLP' }
+  const nets: Record<string, string[]> = { VMOT: ['BT1.1'], '+5V': ['J1.1'], GND: ['BT1.2', 'J1.2'], STEP: ['J1.3'], DIR: ['J1.4'], SLP: [] }
+  for (const [pin, n] of Object.entries(pins)) if (!skip.includes(pin)) nets[n].push(`U1.${pin}`)
+  if (cap) { nets.VMOT.push(`${cap[0]}.1`); nets.GND.push(`${cap[0]}.2`) }
+  return g([['BT1', 'Battery', '12V'], ['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'A4988', 'A4988'], ...(cap ? [cap] : [])], ...Object.entries(nets).map(([n, ps]) => [n, ...ps]))
+}
 // a servo (J2, 3 pins: signal, +, −) on a board's header J1: its supply pin's net is what each case changes
 const servoOn = (power: string[][], extra: Part[] = [], board = 'Arduino Uno') =>
   g([['J1', 'Conn_01x04', board], ['J2', 'Conn_01x03', 'SERVO SG90'], ...extra],
@@ -157,6 +166,14 @@ const checks: [string, boolean][] = [
     !cir('CIR208', hx711()).length && cir('CIR208', hx711(['7', '8', '15'])).join() === 'U1'
     && validateCircuit(hx711(['7', '8', '15'])).some(i => i.code === 'CIR208' && !i.advice && /A\+·A−, RATE/.test(i.message) && /로드셀 앰프:/.test(i.message)
       && /10번, 전원에 이으면 80번/.test(i.message) && /A\+\(8번\)/.test(i.suggestion) && /RATE\(15번\)/.test(i.suggestion) && !/PD_SCK/.test(i.message))],
+  // CIR209-CIR210 (2026-11-17): an A4988 with 100 µF across VMOT passes, with 22 µF or none it is advised; STEP, DIR or RST on
+  // nothing warns (not as advice), RST saying to tie it to SLP as Pololu does
+  ['CIR209: an A4988 with 100 µF across VMOT and GND passes; 22 µF or no capacitor is advice citing Pololu, with the hot-plug warning',
+    !cir('CIR209', stepperG(['C1', 'CP', '100uF'])).length && cir('CIR209', stepperG(['C1', 'CP', '22uF'])).join() === 'U1' && cir('CIR209', stepperG(null)).join() === 'U1'
+    && validateCircuit(stepperG(null)).some(i => i.code === 'CIR209' && i.advice && /47 µF 이상/.test(i.message) && /벌크 커패시터:/.test(i.message) && /Pololu/.test(i.message) && /꽂거나 빼지/.test(i.suggestion))],
+  ['CIR210: STEP and DIR and RST joined pass; DIR on nothing, or RST on nothing (said with SLP), warns',
+    !cir('CIR210', stepperG(['C1', 'CP', '100uF'])).length && cir('CIR210', stepperG(['C1', 'CP', '100uF'], ['16'])).join() === 'U1'
+    && validateCircuit(stepperG(['C1', 'CP', '100uF'], ['13'])).some(i => i.code === 'CIR210' && !i.advice && /RST 핀/.test(i.message) && /SLP/.test(i.suggestion) && !/STEP은/.test(i.message))],
   // CIR204 (2026-11-17): a servo on an Uno's 5 V alone warns; with a battery, a regulator's output or a supply header on that
   // net, or on a net named as a signal, it does not; the warning names what, why and the fix with no figure of its own
   ['CIR204: a servo fed only by the Uno\'s 5 V (or USB) warns; a battery, a regulator or a supply header on it, or a bare signal net, does not',

@@ -16,6 +16,8 @@ from footprints_table import all_footprints
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEST = os.path.join(HERE, 'footprints')
 MODELS_DEST = os.path.join(HERE, '3dmodels')
+# models a footprint names that KiCad's own library does not ship: the 3D view draws those parts without one
+NO_MODEL = {'Module.3dshapes/Pololu_Breakout-16_15.2x20.3mm.step': 'KiCad 10.0 has no model for the Pololu carrier'}
 MODEL_RE = re.compile(r'\(model\s+"?\$\{KICAD\d*_3DMODEL_DIR\}/([^"\s)]+)"?')
 
 
@@ -41,6 +43,9 @@ def main():
             models.update(model_paths(f.read()))
     for rel in sorted(models):
         src = os.path.join(share, '3dmodels', rel)
+        if not os.path.exists(src) and rel in NO_MODEL:
+            print(f'no model: {rel} ({NO_MODEL[rel]})')
+            continue
         if not os.path.exists(src):
             missing.append(rel)
             continue

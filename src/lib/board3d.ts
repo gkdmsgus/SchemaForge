@@ -41,6 +41,7 @@ const HEIGHT_RULES: [RegExp, number][] = [
   // flat features: no body above the board, drawn as a top face only
   [/MountingHole|TestPoint/i, 0],
   [/Relay/i, 15.7],
+  [/Pololu_Breakout/i, 1.6],      // a flat stand-in for the carrier board: KiCad has no model of it, this is not its height
   [/Fuseholder_TR5/i, 5.6],      // the highest point of KiCad's STEP model of the footprint (read 2026-11-17)
   [/Buzzer|Speaker/i, 9.5],
   [/BatteryHolder|Battery/i, 6.0],
@@ -73,6 +74,7 @@ export function partHeight(footprint: string, part = ''): number {
 const COLOR_RULES: [RegExp, string][] = [
   [/Relay/i, '#3a4a6b'],
   [/Buzzer|Speaker/i, '#23262b'],
+  [/Pololu_Breakout/i, '#2f6b3a'],
   [/Fuseholder/i, '#2a2c31'],
   [/Fuse_\d{4}/i, '#d8d2c4'],
   [/BatteryHolder|Battery/i, '#8a8f96'],

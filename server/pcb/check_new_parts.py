@@ -95,5 +95,12 @@ part_case('P3', 'U1', 'HX711', 'HX711', {'1': '+5V', '3': '+5V', '16': '+5V', '4
           {'+5V': ['J1.1', 'C1.1', 'J2.1'], 'GND': ['J1.2', 'C1.2', 'C2.2', 'J2.2'], 'VBG': ['C2.1'], 'LC_AN': ['J2.3'], 'LC_AP': ['J2.4'],
            'SCK': ['J1.3'], 'DOUT': ['J1.4']})
 
+# P4 an A4988 carrier with its motor supply, a 100 µF capacitor across VMOT, a stepper header and a board's header
+part_case('P4', 'U1', 'A4988', 'A4988', {'1': 'GND', '2': '+5V', '3': 'M1B', '4': 'M1A', '5': 'M2A', '6': 'M2B', '7': 'GND', '8': 'VMOT',
+                                        '13': 'SLP', '14': 'SLP', '15': 'STEP', '16': 'DIR'},
+          [('BT1', 'Battery', '12V'), ('C1', 'CP', '100uF'), ('J1', 'Conn_01x04', 'Arduino Uno'), ('J2', 'Conn_01x04', 'STEPPER')],
+          {'VMOT': ['BT1.1', 'C1.1'], 'GND': ['BT1.2', 'C1.2', 'J1.2'], '+5V': ['J1.1'], 'STEP': ['J1.3'], 'DIR': ['J1.4'],
+           'M1A': ['J2.1'], 'M1B': ['J2.2'], 'M2A': ['J2.3'], 'M2B': ['J2.4']})
+
 print(f'\n{failed} check(s) failed' if failed else '\nALL PASS')
 sys.exit(1 if failed else 0)

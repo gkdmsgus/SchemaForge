@@ -16,7 +16,7 @@ import { SPECS, assumedBjt, assumedMos, ledOf, type BjtSpec, type LedColor, type
 export type OpState = 'pass' | 'warn' | 'error' | 'unknown'
 export type OpRule =
   | 'op_data' | 'op_power' | 'op_short' | 'op_led' | 'op_flyback' | 'op_relay'
-  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg'
+  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper'
 
 /** Rules in display order, with their Korean names. */
 export const OP_RULES: [OpRule, string][] = [
@@ -32,6 +32,7 @@ export const OP_RULES: [OpRule, string][] = [
   ['op_cap', '극성 커패시터 방향'],
   ['op_555', '555 타이머'],
   ['op_reg', '레귤레이터 전압'],
+  ['op_stepper', '스테퍼 드라이버 전원'],
 ]
 
 export interface OpResult {
@@ -2544,6 +2545,37 @@ function check555(x: Ctx, reversedCaps: Set<string>): OpResult[] {
   return out
 }
 
+/**
+ * A stepper driver on Pololu's A4988 carrier (2026-11-17): its motor supply (VMOT, pin 8) and its logic supply (VDD,
+ * pin 2) inside the ranges Pololu's product page gives, a lithium-ion pack judged at full charge as for a regulator.
+ */
+function checkSteppers(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const spec = SPECS.stepper.A4988
+  for (const u of x.of('A4988')) {
+    const res = (state: OpState, summary: string, detail: string[], cause?: string) =>
+      out.push({ rule: 'op_stepper', ref: u.ref, state, summary, detail, ...(cause && state !== 'pass' ? { cause } : {}) })
+    const g = x.net(u.ref, 1)
+    if (x.gndState(g) !== 'gnd') { res('unknown', `${u.ref} GND 핀(1번)이 GND에 이어지지 않아 전원을 판단할 수 없습니다`, [g ? `${g}: GND가 아닙니다` : '1번 핀이 어디에도 연결되지 않았습니다']); continue }
+    const supply = (pin: number, word: string, lo: Num, hi: Num) => {
+      const n = x.net(u.ref, pin), v = x.voltOf(n)
+      if (!v) { const ns = x.noSource(n); return { state: 'unknown' as OpState, line: `${word}(${pin}번 핀) 전압을 모릅니다${ns ? `: ${ns.why}` : ''}`, cause: ns?.cause } }
+      const top = v.full ?? v.v
+      const at = `${word} ${V(v.v)}${v.full != null ? ` (완전히 충전하면 ${V(v.full)})` : ''}`
+      const why = [`${at}: ${v.why}`, `범위 ${V(lo.v)}~${V(hi.v)}: ${cite(lo)}`]
+      if (top > hi.v + 1e-9) return { state: 'error' as OpState, line: `${at}가 최대 ${V(hi.v)}를 넘어 드라이버가 망가질 수 있습니다`, why, cause: v.cause }
+      if (v.v < lo.v - 1e-9) return { state: 'error' as OpState, line: `${at}가 최소 ${V(lo.v)}보다 낮아 드라이버가 동작하지 않습니다`, why, cause: v.cause }
+      return { state: 'pass' as OpState, line: at, why }
+    }
+    const m = supply(8, '모터 전원 VMOT', spec.vmot_min, spec.vmot_max), d = supply(2, '로직 전원 VDD', spec.vdd_min, spec.vdd_max)
+    const all = [m, d], detail = all.flatMap(r => r.why ?? [r.line])
+    const bad = all.find(r => r.state === 'error') ?? all.find(r => r.state === 'unknown')
+    if (bad) res(bad.state, `${u.ref} ${bad.line}`, detail, bad.cause)
+    else res('pass', `${u.ref} ${m.line} (${V(spec.vmot_min.v)}~${V(spec.vmot_max.v)}), ${d.line} (${V(spec.vdd_min.v)}~${V(spec.vdd_max.v)})`, detail)
+  }
+  return out
+}
+
 function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
   const out: OpResult[] = []
   for (const r of x.of('REG')) {
@@ -2876,6 +2908,7 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   run('op_rpower', () => checkResistorPower(x, switches, heats, ledFailed))
   run('op_555', () => check555(x, reversedCaps))
   run('op_reg', () => checkRegs(x, reversedCaps))
+  run('op_stepper', () => checkSteppers(x))
   return { out, pulled, noPull }
 }
 

@@ -570,6 +570,7 @@ Part templates — copy verbatim, changing only name, ref, value and the pin lis
 - Buzzer: Part(tool=SKIDL, name='Buzzer', ref_prefix='LS', pins=[Pin(num=1,name='+',func=Pin.types.PASSIVE), Pin(num=2,name='-',func=Pin.types.PASSIVE)])
 - RS-485 transceiver (TI SN75176B, 5 V; RE is active low, DE active high, A and B are the bus pair): Part(tool=SKIDL, name='RS485', ref_prefix='U', pins=[Pin(num=1,name='R',func=Pin.types.OUTPUT), Pin(num=2,name='RE',func=Pin.types.INPUT), Pin(num=3,name='DE',func=Pin.types.INPUT), Pin(num=4,name='D',func=Pin.types.INPUT), Pin(num=5,name='GND',func=Pin.types.PWRIN), Pin(num=6,name='A',func=Pin.types.BIDIR), Pin(num=7,name='B',func=Pin.types.BIDIR), Pin(num=8,name='VCC',func=Pin.types.PWRIN)])
 - Load cell amplifier (Avia HX711, 24-bit ADC; RATE low 10 Hz or high 80 Hz, XI to GND for its own oscillator, AGND is the analog ground): Part(tool=SKIDL, name='HX711', ref_prefix='U', pins=[Pin(num=1,name='VSUP',func=Pin.types.PWRIN), Pin(num=2,name='BASE',func=Pin.types.PASSIVE), Pin(num=3,name='AVDD',func=Pin.types.PWRIN), Pin(num=4,name='VFB',func=Pin.types.PASSIVE), Pin(num=5,name='AGND',func=Pin.types.PASSIVE), Pin(num=6,name='VBG',func=Pin.types.PASSIVE), Pin(num=7,name='INA-',func=Pin.types.INPUT), Pin(num=8,name='INA+',func=Pin.types.INPUT), Pin(num=9,name='INB-',func=Pin.types.INPUT), Pin(num=10,name='INB+',func=Pin.types.INPUT), Pin(num=11,name='PD_SCK',func=Pin.types.INPUT), Pin(num=12,name='DOUT',func=Pin.types.OUTPUT), Pin(num=13,name='XO',func=Pin.types.PASSIVE), Pin(num=14,name='XI',func=Pin.types.INPUT), Pin(num=15,name='RATE',func=Pin.types.INPUT), Pin(num=16,name='DVDD',func=Pin.types.PWRIN)])
+- Stepper motor driver (Pololu A4988 carrier; VMOT 8-35 V with a 47 uF or larger electrolytic capacitor across VMOT and GND close to it, VDD 3-5.5 V logic, 1A/1B one coil and 2A/2B the other, RST tied to SLP when unused): Part(tool=SKIDL, name='A4988', ref_prefix='U', pins=[Pin(num=1,name='GND',func=Pin.types.PWRIN), Pin(num=2,name='VDD',func=Pin.types.PWRIN), Pin(num=3,name='1B',func=Pin.types.PASSIVE), Pin(num=4,name='1A',func=Pin.types.PASSIVE), Pin(num=5,name='2A',func=Pin.types.PASSIVE), Pin(num=6,name='2B',func=Pin.types.PASSIVE), Pin(num=7,name='GND',func=Pin.types.PWRIN), Pin(num=8,name='VMOT',func=Pin.types.PWRIN), Pin(num=9,name='EN',func=Pin.types.INPUT), Pin(num=10,name='MS1',func=Pin.types.INPUT), Pin(num=11,name='MS2',func=Pin.types.INPUT), Pin(num=12,name='MS3',func=Pin.types.INPUT), Pin(num=13,name='RST',func=Pin.types.INPUT), Pin(num=14,name='SLP',func=Pin.types.INPUT), Pin(num=15,name='STEP',func=Pin.types.INPUT), Pin(num=16,name='DIR',func=Pin.types.INPUT)])
 - Fuse or resettable fuse (PTC), in series right after a supply's +: Part(tool=SKIDL, name='Fuse', ref_prefix='F', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Battery: Part(tool=SKIDL, name='Battery', ref_prefix='BT', pins=[Pin(num=1,name='+',func=Pin.types.PWROUT), Pin(num=2,name='-',func=Pin.types.PWROUT)])
 - Connector / power inlet: Part(tool=SKIDL, name='Conn_01x02', ref_prefix='J', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
@@ -863,7 +864,7 @@ Rules:
 - add_component: the new part takes the free ref for its prefix listed above (R, C, L, D, Q, U, SW, K,
   LS, BT, J, Y, F only), never a ref already in the component list, and a real value with units. Set "name" to the part type
   exactly as one of: R, C, CP (electrolytic, 1uF and above), L, LED, D, Q_NPN, Q_NMOS,
-  NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Fuse, RS485, HX711, Conn_01x02 … Conn_01x10 — the PCB
+  NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Fuse, RS485, HX711, A4988, Conn_01x02 … Conn_01x10 — the PCB
   footprint is chosen from this name, and pins are numbered as in those parts
   (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
 - add_net / remove_net: always set "name" to the net's name. To connect a pin to an existing
@@ -1809,7 +1810,7 @@ const MOUSER_WORD: Record<string, string> = {
   R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
   Bridge: 'bridge rectifier',
   Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
-  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal', Fuse: 'fuse', RS485: 'RS-485 transceiver', HX711: 'HX711',
+  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal', Fuse: 'fuse', RS485: 'RS-485 transceiver', HX711: 'HX711', A4988: 'A4988 stepper driver',
 }
 
 /** name = part template, pkg = the board's package as a shop knows it (src/lib/bom.ts searchPkg) */

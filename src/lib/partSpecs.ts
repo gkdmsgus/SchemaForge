@@ -65,6 +65,8 @@ const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
 // -40 to 85 °C part's absolute maximum; the DC table with the pin current notes is printed once, in 30.2, with an 85 °C
 // column (the automotive sheet 7810D read first says the same 40 mA and 20 mA)
 const ATMEGA_328P = 'Microchip ATmega48A/PA/88A/PA/168A/PA/328/P 데이터시트 DS40002061B'
+// Pololu's A4988 stepper motor driver carrier, read 2026-11-17 from its product page
+const POLOLU_A4988 = 'Pololu A4988 Stepper Motor Driver Carrier 제품 페이지 (pololu.com/product/1182)'
 // two 18650 lithium-ion cells, read 2026-11-14: Panasonic's sheet (batteryspace.com copy) and Murata's (murata.com)
 const PANA_NCR = 'Panasonic NCR18650B 데이터시트 VERSION 13.11 R1'
 const MURATA_VTC6 = 'Murata US18650VTC6 데이터시트 Version 001'
@@ -264,6 +266,17 @@ export const SPECS = {
       pin_rated: { v: 0.02, src: `${ATMEGA_328P}, 30.2 DC 특성 주석 3: VCC 5 V에서 시험 조건 20 mA보다 큰 전류는 보장하지 않음 (20 mA에서 출력 최소 4.2 V, 85 °C)` },
     },
   } satisfies Record<'ATmega328P', Record<'pin_abs_max' | 'pin_rated', Num>>,
+
+  // a stepper driver carrier: the supplies it runs from and the capacitor its motor supply wants beside it
+  stepper: {
+    A4988: {
+      vmot_min: { v: 8, src: `${POLOLU_A4988}: 모터 전원 VMOT 8 – 35 V` },
+      vmot_max: { v: 35, src: `${POLOLU_A4988}: 모터 전원 VMOT 8 – 35 V` },
+      vdd_min: { v: 3, src: `${POLOLU_A4988}: 로직 전원 VDD 3 V – 5.5 V` },
+      vdd_max: { v: 5.5, src: `${POLOLU_A4988}: 로직 전원 VDD 3 V – 5.5 V` },
+      cap_min: { v: 47e-6, src: `${POLOLU_A4988}: VMOT와 GND 사이, 보드 가까이에 47 µF 이상 전해 커패시터` },
+    },
+  } satisfies Record<'A4988', Record<'vmot_min' | 'vmot_max' | 'vdd_min' | 'vdd_max' | 'cap_min', Num>>,
 
   // a lithium-ion cell: charged to this voltage, named by this one. A pack of n cells in series is n times these.
   // LiFePO4 and high-voltage (LiHV) cells charge to other voltages and are not read as lithium-ion

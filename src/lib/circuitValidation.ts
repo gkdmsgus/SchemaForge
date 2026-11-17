@@ -1,6 +1,7 @@
 import type { NetGraph } from '../types'
 import { pinNumber } from './graphEdit'
-import { fromGraph, ledsWithoutResistor, lithiumPack } from './operatingCheck'
+import { fromGraph, ledsWithoutResistor, lithiumPack, parseFarads } from './operatingCheck'
+import { SPECS } from './partSpecs'
 
 export interface CircuitIssue {
   code: string
@@ -248,6 +249,34 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
           : nm === 'RATE' ? 'RATE(15번)를 GND(10 Hz)나 전원(80 Hz)에 잇습니다.' : 'XI(14번)를 GND에 이어 내장 발진기를 씁니다.').join(' '),
       chat: `${u.ref}(HX711)의 ${hit.map(([, nm]) => nm).join(', ')} 핀을 데이터시트대로 연결해줘. RATE와 XI는 GND에 이어줘.`,
       refs: [u.ref], nets: [] })
+  }
+
+  // CIR209-CIR210. a stepper driver on Pololu's A4988 carrier (2026-11-17, its product page). 209 (advice): no electrolytic
+  // capacitor of 47 µF or more straight across VMOT and ground (the carrier's ceramic capacitors and long leads make voltage
+  // spikes past its 35 V). 210: STEP or DIR on nothing (it never moves), or RST on nothing (Pololu: RST floats; tie it to SLP)
+  const capMin = SPECS.stepper.A4988.cap_min
+  for (const u of components.filter(c => c.name === 'A4988')) {
+    const vm = netOf(u.ref, '8')
+    const grounds = new Set([netOf(u.ref, '1'), netOf(u.ref, '7')].filter((n): n is string => !!n && isGndName(n)))
+    const bulk = vm && components.some(c => (c.name === 'CP' || c.name === 'C') && (parseFarads(c.value || '') ?? 0) >= capMin.v * (1 - 1e-9)
+      && [netOf(c.ref, '1'), netOf(c.ref, '2')].some(n => n === vm) && [netOf(c.ref, '1'), netOf(c.ref, '2')].some(n => !!n && (grounds.has(n) || isGndName(n))))
+    if (vm && !bulk) {
+      add({ code: 'CIR209', severity: 'warning', advice: true, title: '스테퍼 드라이버 모터 전원에 큰 커패시터가 없습니다',
+        message: `${u.ref}(A4988 스테퍼 드라이버)의 모터 전원(VMOT)과 GND 사이에 47 µF 이상의 전해 커패시터가 없습니다 (벌크 커패시터: 전원이 순간적으로 흔들릴 때 전기를 대 주는 큰 커패시터). 이 드라이버 보드는 작은 세라믹 커패시터만 있어서, 전원선이 길면 전원을 꽂는 순간 전압이 튀어 35 V를 넘고 드라이버가 망가질 수 있습니다 (Pololu 설명).`,
+        suggestion: `VMOT와 GND 사이, 드라이버 바로 옆에 47 µF 이상이고 모터 전압보다 내압이 높은 전해 커패시터를 답니다. 전원이 켜진 채로 모터 선을 꽂거나 빼지 않습니다(드라이버가 망가질 수 있습니다).`,
+        chat: `${u.ref}의 VMOT(8번)와 GND 사이에 100uF 전해 커패시터(CP)를 하나 추가해줘. +는 VMOT 쪽에 연결해줘.`,
+        refs: [u.ref], nets: [vm] })
+    }
+    // RST tied to the carrier's own SLP is the tie Pololu asks for: not free
+    const free = (pin: string) => { const n = netOf(u.ref, pin); return !n || (on.get(n) ?? []).every(nd => nd.ref === u.ref && !(pin === '13' && nd.pin === '14')) }
+    const loose = [['15', 'STEP'], ['16', 'DIR'], ['13', 'RST']].filter(([pin]) => free(pin))
+    if (loose.length) {
+      add({ code: 'CIR210', severity: 'warning', title: '스테퍼 드라이버에 빈 핀이 있습니다',
+        message: `${u.ref}(A4988)의 ${loose.map(([, nm]) => nm).join('·')} 핀이 아무 데도 연결되지 않았습니다.${loose.some(([, nm]) => nm !== 'RST') ? ' STEP은 한 칸 돌리라는 신호, DIR은 도는 방향이라, 비어 있으면 모터가 움직이지 않습니다.' : ''}${loose.some(([, nm]) => nm === 'RST') ? ' RST는 보드 안에서 떠 있어서, 쓰지 않을 때는 바로 옆 SLP 핀과 이어야 합니다 (Pololu 설명).' : ''}`,
+        suggestion: [loose.some(([, nm]) => nm !== 'RST') ? 'STEP(15번)과 DIR(16번)을 마이크로컨트롤러의 핀 두 개에 잇습니다.' : '', loose.some(([, nm]) => nm === 'RST') ? 'RST(13번)를 SLP(14번)와 잇습니다.' : ''].filter(Boolean).join(' '),
+        chat: `${u.ref}의 ${loose.map(([, nm]) => nm).join(', ')} 핀을 연결해줘.${loose.some(([, nm]) => nm === 'RST') ? ' RST(13번)는 SLP(14번)와 같은 넷으로 묶어줘.' : ''}`,
+        refs: [u.ref], nets: [] })
+    }
   }
 
   // CIR204. a servo powered from the microcontroller board alone (2026-11-17): a header whose value says SERVO, its supply
