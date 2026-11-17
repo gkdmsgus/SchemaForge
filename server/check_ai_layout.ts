@@ -54,6 +54,20 @@ check('27c rejected-move note in Korean', shown.every(s => /^배치 사전 검�
   && /자리와 겹침/.test(shown[0]) && /기판 밖/.test(shown[1]) && shown[2] === '배치 사전 검사 불합격: C3 자리가 R2 자리와 겹침, C3 자리가 기판 밖으로 나감'
   && clashText(both[0]) === 'C3 would overlap R2' && clashText(both[2]) === 'C3 would leave the board outline', shown.join(' | '))
 
+// 27e. a part the enclosure pins (기구 조건 step 2) is refused before routing when moved or turned, said in Korean on the
+//      screen and in English to the model, and the prompt names it; untouched, it is no problem
+const pinMech = { width: 40, height: 30, holes: [] as [number, number][], fixed: [{ ref: cap, side: 'left' as const, at: 15 }] }
+const pinMoved = { ...base(), mech: pinMech }; pinMoved.parts[cap] = [part(cap).x + 0.5, part(cap).y, part(cap).rot]
+const pinTurned = { ...base(), mech: pinMech }; pinTurned.parts[cap] = [part(cap).x, part(cap).y, (part(cap).rot + 90) % 360]
+const q1 = precheck(board, pinMoved), q2 = precheck(board, pinTurned), q3 = precheck(board, { ...base(), mech: pinMech })
+const pinPrompt = describeBoard(board, metricsOf({}, 0, board), [], [cap])
+check('27e a pinned part moved or turned is refused before routing; the prompt names it',
+  q1.some(c => c.pinned && c.ref === cap) && q2.some(c => c.pinned && c.ref === cap) && q3.length === 0
+  && precheckNote('배치', q1).includes(`기구 조건으로 고정한 부품(${cap})이라 옮길 수 없음`)
+  && clashText(q1.find(c => c.pinned)!) === `${cap} is pinned by the enclosure and cannot move or rotate`
+  && pinPrompt.includes(`Pinned by the enclosure (never move or rotate these): ${cap}`) && !prompt.includes('Pinned by the enclosure'),
+  `${precheckNote('배치', q1)} | turned ${q2.length} | untouched ${q3.length}`)
+
 // 27b. the failure mode from the 2026-09-15 runs: the model slides a capacitor toward its IC and lands on a
 //      neighbour (then C3 +5.5, -2.5 mm hit R3). Pinning the offset broke when the board grew, so aim at the
 //      nearest part instead and require the move to be caught.

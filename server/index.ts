@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto'
 import {
   MAX_ROUNDS, applyEdit, askModel, backup, better, clashText, describeBoard, describeOutcome, metricsOf, precheck, precheckNote,
   splitEdit, readBoard, roundFeedback, runGenerator,
-  type AiRound, type Mech, type Metrics, type Overrides,
+  type AiRound, type Mech, type MechPin, type Metrics, type Overrides,
 } from './ai_layout'
 import { childEnv, runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
@@ -1323,13 +1323,14 @@ const netName = (v: unknown) => String(v ?? '').replace(/["\\\r\n\t]/g, '').trim
 
 /** a graph from a request as graphToNetlist can write it, or null when it is not one or is too big */
 /**
- * The board an enclosure fixes, as a request sends it: {width, height} in mm (5 to 500, the generator's own bounds) and up to
- * 12 holes [x, y] on the board. Null for anything else; the generator says when a hole is too near the edge or the circuit
- * does not fit (2026-11-17, enclosure input step 1).
+ * The board an enclosure fixes, as a request sends it: {width, height} in mm (5 to 500, the generator's own bounds), up to
+ * 12 holes [x, y] on the board and up to 8 parts pinned to an edge {ref, side, at: mm along that side, rot?: 0/90/180/270}.
+ * Null for anything else; the generator says when a hole is too near the edge, a pinned part has no room there or is not
+ * in the circuit, or the circuit does not fit (2026-11-17, enclosure input steps 1 and 2).
  */
 export function cleanMech(m: unknown): Mech | null {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return null
-  const { width, height, holes } = m as Record<string, unknown>
+  const { width, height, holes, fixed } = m as Record<string, unknown>
   const mm = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
   if (!mm(width, 5, 500) || !mm(height, 5, 500)) return null
   const list = holes == null ? [] : holes
@@ -1339,7 +1340,18 @@ export function cleanMech(m: unknown): Mech | null {
     if (!Array.isArray(h) || h.length !== 2 || !mm(h[0], 0, width as number) || !mm(h[1], 0, height as number)) return null
     out.push([h[0] as number, h[1] as number])
   }
-  return { width: width as number, height: height as number, holes: out }
+  const pins: MechPin[] = []
+  const pinList = fixed == null ? [] : fixed
+  if (!Array.isArray(pinList) || pinList.length > 8) return null
+  for (const f of pinList) {
+    if (!f || typeof f !== 'object') return null
+    const { ref, side, at, rot } = f as Record<string, unknown>
+    const along = side === 'left' || side === 'right' ? height as number : side === 'top' || side === 'bottom' ? width as number : -1
+    if (typeof ref !== 'string' || !/^[A-Za-z]{1,4}\d{1,4}$/.test(ref) || along < 0 || !mm(at, 0, along)
+      || (rot != null && rot !== 0 && rot !== 90 && rot !== 180 && rot !== 270)) return null
+    pins.push({ ref, side: side as MechPin['side'], at: at as number, ...(rot != null ? { rot: rot as number } : {}) })
+  }
+  return { width: width as number, height: height as number, holes: out, ...(pins.length ? { fixed: pins } : {}) }
 }
 
 function cleanGraph(g: NetGraph | undefined): NetGraph | null {
@@ -1517,7 +1529,8 @@ async function runAiLoop(
     while (round < MAX_ROUNDS && !signal.aborted && !busy) {
       round++
       const drcTypes = (bestDrc.violations || []).map(v => v.type)
-      const edit = await askModel(describeBoard(board, best, drcTypes) + roundFeedback(feedback), history, signal)
+      const pinned = (mech?.fixed || []).map(f => f.ref)
+      const edit = await askModel(describeBoard(board, best, drcTypes, pinned) + roundFeedback(feedback), history, signal)
       history.push(JSON.stringify(edit))
       if (edit.stop) {
         // no note: the list's 중단 chip says it (a note "stop" showed under it in English)
@@ -1654,7 +1667,7 @@ const PCB_SAYS = {
   noPython: '서버에서 기판을 만드는 프로그램을 실행하지 못했습니다. 운영자가 서버 설치(python)를 확인해야 합니다.',
   checkFailed: '완성된 기판을 검사하다가 서버 오류가 나서 멈췄습니다. 재시도를 눌러 다시 만들어 주세요.',
   busy: '지금 서버에서 기판을 만드는 사람이 많아 시작하지 못했습니다. 잠시 뒤에 다시 눌러 주세요.',
-  badMech: '기판 크기와 고정 구멍 자리를 읽지 못했습니다. 가로·세로는 5~500 mm 사이 숫자로, 구멍은 기판 안의 x, y(mm)로 12개까지 적어 주세요.',
+  badMech: '기판 크기와 고정 구멍·고정 부품 자리를 읽지 못했습니다. 가로·세로는 5~500 mm 사이 숫자로, 구멍은 기판 안의 x, y(mm)로 12개까지, 고정 부품은 부품 번호·변·변을 따라 잰 자리(mm)로 8개까지 적어 주세요.',
 }
 
 app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {

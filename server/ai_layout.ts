@@ -68,8 +68,11 @@ export function splitEdit(edit: BoardEdit): [EditPart, BoardEdit][] {
   return out
 }
 
-/** the board an enclosure fixes (기구 조건): size and mounting holes in mm from the board's top-left corner */
-export interface Mech { width: number; height: number; holes: [number, number][] }
+/** a part the enclosure pins to an edge: its courtyard's middle `at` mm along that side; rot, if given, is kept */
+export interface MechPin { ref: string; side: 'left' | 'right' | 'top' | 'bottom'; at: number; rot?: number }
+
+/** the board an enclosure fixes (기구 조건): size, mounting holes and pinned parts in mm from the board's top-left corner */
+export interface Mech { width: number; height: number; holes: [number, number][]; fixed?: MechPin[] }
 
 export interface Overrides {
   parts: Record<string, [number, number, number]>
@@ -341,11 +344,13 @@ function movedArea(p: BoardPart, x: number, y: number, rot: number): Box | null 
 }
 
 /** A precheck problem: ref's keep-out box would overlap part `hit`, or leave the board outline (hit null). */
-export interface Clash { ref: string; hit: string | null }
+/** pinned: a part the enclosure fixes was moved or turned (the generator would refuse it too) */
+export interface Clash { ref: string; hit: string | null; pinned?: boolean }
 
 /** A problem as the model reads it in the next round's feedback. */
 export const clashText = (c: Clash): string =>
-  c.hit ? `${c.ref} would overlap ${c.hit}` : `${c.ref} would leave the board outline`
+  c.pinned ? `${c.ref} is pinned by the enclosure and cannot move or rotate`
+    : c.hit ? `${c.ref} would overlap ${c.hit}` : `${c.ref} would leave the board outline`
 
 /**
  * The rejected proposal's line on the screen, in Korean (the 2026-11-01 tour showed "C3 would overlap R2"):
@@ -354,9 +359,10 @@ export const clashText = (c: Clash): string =>
 export function precheckNote(label: string, clashes: Clash[]): string {
   const pairs = new Set<string>()
   const said = clashes.filter(c => {
-    const key = c.hit ? [c.ref, c.hit].sort().join('|') : c.ref
+    const key = c.pinned ? `pin|${c.ref}` : c.hit ? [c.ref, c.hit].sort().join('|') : c.ref
     return !pairs.has(key) && !!pairs.add(key)
-  }).map(c => (c.hit ? `${c.ref} 자리가 ${c.hit} 자리와 겹침` : `${c.ref} 자리가 기판 밖으로 나감`))
+  }).map(c => (c.pinned ? `기구 조건으로 고정한 부품(${c.ref})이라 옮길 수 없음`
+    : c.hit ? `${c.ref} 자리가 ${c.hit} 자리와 겹침` : `${c.ref} 자리가 기판 밖으로 나감`))
   return `${label} 사전 검사 불합격: ${said.join(', ')}`
 }
 
@@ -375,8 +381,10 @@ export function precheck(board: BoardJson, ov: Overrides): Clash[] {
     if (moved) changed.add(p.ref)
   }
   const problems: Clash[] = []
+  const pinned = new Set((ov.mech?.fixed || []).map(f => f.ref))
   const [bx1, by1, bx2, by2] = board.outline
   for (const ref of changed) {
+    if (pinned.has(ref)) problems.push({ ref, hit: null, pinned: true })
     const a = boxes.get(ref)
     if (!a) continue
     for (const [other, b] of boxes) {
@@ -388,7 +396,7 @@ export function precheck(board: BoardJson, ov: Overrides): Clash[] {
 }
 
 /** What the model sees: parts with keep-out box and nearest neighbour, nets, decoupling distances and the current numbers. */
-export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]): string {
+export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[], pinned: string[] = []): string {
   const netPins: Record<string, number> = {}
   board.parts.forEach(p => p.pads.forEach(pd => { if (pd.net) netPins[pd.net] = (netPins[pd.net] || 0) + 1 }))
   const parts = board.parts
@@ -414,6 +422,7 @@ export function describeBoard(board: BoardJson, m: Metrics, drcTypes: string[]):
   return [
     `Board outline: ${x1.toFixed(1)},${y1.toFixed(1)} to ${x2.toFixed(1)},${y2.toFixed(1)} mm`,
     `Parts:\n${parts}`,
+    ...(pinned.length ? [`Pinned by the enclosure (never move or rotate these): ${pinned.join(', ')}`] : []),
     `Nets: ${nets}`,
     decap.length
       ? `Decoupling capacitors (distance from the cap's supply pad to the nearest IC pin on that net):\n` +

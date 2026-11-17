@@ -144,7 +144,7 @@ check('M13 a pinned spot on a hole is refused with the range that fits, and both
 s, _ = run('pin_none', {**LEFT, 'fixed': [{'ref': 'J9', 'side': 'left', 'at': 15}]})
 s2, _ = run('pin_twice', {**LEFT, 'fixed': LEFT['fixed'] * 2})
 check('M14 a part not in the circuit is refused naming its connectors; one pinned twice is refused',
-      '회로에 J9가 없습니다' in s.get('refused', '') and 'BT1' in s.get('refused', '') and '두 번' in s2.get('refused', ''),
+      '고정할 부품(J9)이 회로에 없습니다' in s.get('refused', '') and 'BT1' in s.get('refused', '') and '두 번' in s2.get('refused', ''),
       f"{s.get('refused', '')[:100]} | {s2.get('refused', '')[:80]}")
 
 # M15: a reroute keeps a pinned part: the same pose is drawn, a move of it is refused

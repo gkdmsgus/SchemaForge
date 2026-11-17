@@ -795,10 +795,10 @@ def mech_pins(mech, parts, frame, holes):
         p = by_ref.get(ref)
         if p is None:
             conns = [r for r in by_ref if r.rstrip('0123456789') in ('J', 'BT')]
-            raise MechRefused(f'회로에 {ref}가 없습니다. 고정할 부품 번호를 확인해 주세요'
+            raise MechRefused(f'고정할 부품({ref})이 회로에 없습니다. 부품 번호를 확인해 주세요'
                               + (f' (회로의 커넥터: {", ".join(conns)}).' if conns else '.'))
         if p.get('pin_poses'):
-            raise MechRefused(f'{ref}의 고정 자리가 두 번 적혀 있습니다.')
+            raise MechRefused(f'고정 부품({ref})의 자리가 두 번 적혀 있습니다.')
         rots = [int(rot) % 360] if rot is not None else [0, 90, 180, 270]
         c = 0 if side in ('left', 'right') else 1
         poses = []
@@ -814,8 +814,8 @@ def mech_pins(mech, parts, frame, holes):
             # said inward to 0.1 mm, so a value read off the message fits
             where = ', '.join(f'{math.ceil(a * 10 - 1e-6) / 10:g}~{math.floor(z * 10 + 1e-6) / 10:g} mm' for a, z in spans
                               if math.floor(z * 10 + 1e-6) >= math.ceil(a * 10 - 1e-6))
-            raise MechRefused(f'{ref}을 {MECH_SIDES[side]} 변 {from_where} {at:g} mm에 놓으면 기판 밖으로 나가거나 고정 구멍·다른 고정 부품과 겹칩니다. '
-                              + (f'{from_where} {where} 사이로 옮겨 주세요.' if where else f'이 변에는 {ref}이 들어갈 자리가 없습니다. 다른 변을 고르거나 기판을 키워 주세요.'))
+            raise MechRefused(f'고정 부품({ref})을 {MECH_SIDES[side]} 변 {from_where} {at:g} mm에 놓으면 기판 밖으로 나가거나 고정 구멍·다른 고정 부품과 겹칩니다. '
+                              + (f'{from_where} {where} 사이로 옮겨 주세요.' if where else '이 변에는 들어갈 자리가 없습니다. 다른 변을 고르거나 기판을 키워 주세요.'))
         p['pin_poses'] = poses
         p['x'], p['y'], p['rot'] = poses[0]
         # a pinned part is an obstacle for the next one, at every pose it may still take
@@ -987,7 +987,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         for p in pinned:
             # a reroute (the AI rounds) keeps a pinned part where the enclosure put it, or is refused
             if not any(abs(p['x'] - x) < 1e-3 and abs(p['y'] - y) < 1e-3 and p['rot'] == r for x, y, r in p['pin_poses']):
-                raise MechRefused(f'{p["ref"]}은 기구 조건으로 고정한 자리라 옮기거나 돌릴 수 없습니다.')
+                raise MechRefused(f'기구 조건으로 고정한 부품({p["ref"]})은 옮기거나 돌릴 수 없습니다.')
         if on_event:
             on_event({'type': 'frame', 'iter': 0, 'phase': 'refine', 'hpwl': round(hpwl(parts), 2),
                       'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
