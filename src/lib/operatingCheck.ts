@@ -16,7 +16,7 @@ import { SPECS, assumedBjt, assumedMos, ledOf, type BjtSpec, type LedColor, type
 export type OpState = 'pass' | 'warn' | 'error' | 'unknown'
 export type OpRule =
   | 'op_data' | 'op_power' | 'op_short' | 'op_led' | 'op_flyback' | 'op_relay'
-  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper' | 'op_rs485'
+  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper' | 'op_rs485' | 'op_feed'
 
 /** Rules in display order, with their Korean names. */
 export const OP_RULES: [OpRule, string][] = [
@@ -34,6 +34,7 @@ export const OP_RULES: [OpRule, string][] = [
   ['op_reg', '레귤레이터 전압'],
   ['op_stepper', '스테퍼 드라이버 전원'],
   ['op_rs485', 'RS-485 대기 전압'],
+  ['op_feed', '칩 전원 연결'],
 ]
 
 export interface OpResult {
@@ -2649,6 +2650,52 @@ function checkRs485(x: Ctx): OpResult[] {
   return out
 }
 
+/** The supply pins of the part templates (humanReview.ts PIN_NAMES): what the chip runs on. HX711's AVDD is its own
+ *  regulator's output, not a supply, and is left out */
+const SUPPLY_PINS: Record<string, [number, string][]> = {
+  NE555: [[8, 'VCC']], RS485: [[8, 'VCC']], A4988: [[2, 'VDD'], [8, 'VMOT']], HX711: [[1, 'VSUP'], [16, 'DVDD']], REG: [[3, 'IN']],
+}
+
+/**
+ * A chip's supply pin fed from two resistors' middle (2026-11-17, a brain session's idea from groundembedded's circuit
+ * notes): the divider gives its voltage only while nothing draws from the middle, and every milliamp the chip takes
+ * drops it by the two resistors in parallel times that current (Thevenin), so the chip browns out or never starts. A
+ * net that also has a real source on it (a battery, a regulator's output, a connector) is a supply, not a divider.
+ */
+function checkDividerFeeds(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const ohmsOf = (ref: string) => parseOhms(x.part(ref)?.value ?? '')
+  for (const u of x.parts()) {
+    for (const [pin, name] of SUPPLY_PINS[u.part] ?? []) {
+      const n = x.net(u.ref, pin)
+      if (!n || x.isGnd(n)) continue
+      const fed = x.on(n).some(nd => { const p = x.part(nd.ref); return !!p && (p.part === 'Battery' || /^Conn_/.test(p.part) || (p.part === 'REG' && nd.pin === 2)) })
+      if (fed) continue
+      const ends = x.of('R').map(r => ({ r, o: x.net(r.ref, 1) === n ? x.net(r.ref, 2) : x.net(r.ref, 2) === n ? x.net(r.ref, 1) : null }))
+        .filter((t): t is { r: OpPart; o: string } => !!t.o && t.o !== n)
+      const tops = ends.filter(t => !x.isGnd(t.o) && (x.voltOf(t.o)?.v ?? 0) > 0.05), bots = ends.filter(t => x.isGnd(t.o))
+      if (!tops.length || !bots.length) continue
+      const rt = par(tops.map(t => ohmsOf(t.r.ref) ?? NaN)), rb = par(bots.map(t => ohmsOf(t.r.ref) ?? NaN))
+      const names = `${tops.map(t => t.r.ref).join('·')}·${bots.map(t => t.r.ref).join('·')}`
+      const res = (state: OpState, summary: string, detail: string[], fix: string) =>
+        out.push({ rule: 'op_feed', ref: u.ref, state, summary, detail, fix })
+      const fix = `${u.ref}의 ${name}(${pin}번 핀)을 저항 나누기 대신 전원 넷에 바로 잇거나, 다른 전압이 필요하면 레귤레이터(예: AMS1117-3.3)로 만듭니다. 저항 두 개로 나눈 전압은 ADC 입력처럼 전류를 거의 쓰지 않는 신호에만 씁니다.`
+      if (!Number.isFinite(rt) || !Number.isFinite(rb)) {
+        res('error', `${u.ref} ${name} 전원(${pin}번 핀)을 저항 ${names}로 나눈 전압에서 받습니다. 칩이 전류를 쓰면 이 전압이 무너집니다`,
+          [`저항 값을 읽지 못해 얼마나 떨어지는지는 계산하지 않았습니다: ${[...tops, ...bots].map(t => `${t.r.ref} ${x.part(t.r.ref)?.value || '값 없음'}`).join(', ')}`], fix)
+        continue
+      }
+      const v = tops.map(t => x.voltOf(t.o)!).reduce((m, a) => (a.v > m.v ? a : m))
+      const open = v.v * rb / (rt + rb), rth = rt * rb / (rt + rb)
+      res('error', `${u.ref} ${name} 전원(${pin}번 핀)을 저항 ${names}로 나눈 전압에서 받습니다. 칩이 1 mA만 써도 ${V(rth * 1e-3)} 떨어져 칩이 꺼지거나 켜지지 않습니다`, [
+        `칩이 전류를 쓰지 않을 때: ${V(v.v)} × ${ohm(rb)} ÷ (${ohm(rt)} + ${ohm(rb)}) = ${V(open)} (${tops.map(t => t.o).join(', ')} ${V(v.v)}: ${v.why})`,
+        `전류를 쓰면: 두 저항을 나란히 본 ${ohm(rth)} × 칩 전류만큼 떨어짐 (1 mA에 ${V(rth * 1e-3)})`,
+      ], fix)
+    }
+  }
+  return out
+}
+
 function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
   const out: OpResult[] = []
   for (const r of x.of('REG')) {
@@ -2983,6 +3030,7 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   run('op_reg', () => checkRegs(x, reversedCaps))
   run('op_stepper', () => checkSteppers(x))
   run('op_rs485', () => checkRs485(x))
+  run('op_feed', () => checkDividerFeeds(x))
   return { out, pulled, noPull }
 }
 

@@ -350,6 +350,25 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     && is(bOne, 'op_rs485', 'warn', 'U1', /한쪽만/) && is(bFlip, 'op_rs485', 'error', 'U1', /거꾸로/)
     && is(bFar, 'op_rs485', 'pass', 'U1', /254 mV/) && (pick(bFar, 'op_rs485', 'U1')?.detail ?? []).some(d => /양 끝에 120 Ω씩/.test(d)),
     [b5, b33, bEnd, bMid, bOne, bFlip, bFar].map(r => show(r, 'op_rs485')).join(' | ') + ` | fix ${p33?.fix}`)
+  // O7j: a chip's supply pin on two resistors' middle (2026-11-17): a 555 on 12 V through 10 kΩ / 10 kΩ is an error that
+  // says 6 V unloaded and 5 V lost at 1 mA (5 kΩ in parallel); an AMS1117 input from 12 V through 1 kΩ / 1 kΩ too; the
+  // same 555 straight on +5V, or a supply net that also has a battery on it, says nothing
+  const feed = (vccNet: string, extra: [string, string, string][] = [], more: [string, ...string[]][] = []) => run(circuit(
+    [['BT1', 'Battery', '12V'], ['U1', 'NE555', 'NE555'], ['R3', 'R', '1k'], ['R4', 'R', '10k'], ['C1', 'C', '10uF'], ...extra],
+    [['+12V', 'BT1.1', ...(vccNet === 'VDIV' ? ['R1.1'] : [])], ['GND', 'BT1.2', 'U1.1', 'C1.2', ...(vccNet === 'VDIV' ? ['R2.2'] : [])],
+      [vccNet, 'U1.8', 'U1.4', 'R3.1', ...(vccNet === 'VDIV' ? ['R1.2', 'R2.1'] : vccNet === '+12V' ? [] : [])],
+      ['DIS', 'U1.7', 'R3.2', 'R4.1'], ['THR', 'U1.6', 'U1.2', 'R4.2', 'C1.1'], ...more]))
+  const fDiv = feed('VDIV', [['R1', 'R', '10k'], ['R2', 'R', '10k']])
+  const pDiv = pick(fDiv, 'op_feed', 'U1')
+  const regDiv = run(circuit([['BT1', 'Battery', '12V'], ['R1', 'R', '1k'], ['R2', 'R', '1k'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'C', '10uF']],
+    [['+12V', 'BT1.1', 'R1.1'], ['VIN', 'R1.2', 'R2.1', 'U1.3'], ['GND', 'BT1.2', 'R2.2', 'U1.1', 'C1.2'], ['+3V3', 'U1.2', 'C1.1']]))
+  const direct = run(circuit([['BT1', 'Battery', '9V'], ['U1', 'NE555', 'NE555'], ['R1', 'R', '1k'], ['R2', 'R', '10k'], ['R3', 'R', '10k'], ['C1', 'C', '10uF']],
+    [['+9V', 'BT1.1', 'U1.8', 'U1.4', 'R1.1', 'R3.1'], ['GND', 'BT1.2', 'U1.1', 'C1.2', 'R3.2'], ['DIS', 'U1.7', 'R1.2', 'R2.1'], ['THR', 'U1.6', 'U1.2', 'R2.2', 'C1.1']]))
+  check('O7j a supply pin on a divider: 555 VCC on 10k/10k from 12 V is an error (6 V unloaded, 5 V lost at 1 mA); AMS1117 IN on 1k/1k too; VCC on the battery net with a resistor to GND says nothing',
+    is(fDiv, 'op_feed', 'error', 'U1', /VCC 전원\(8번 핀\)을 저항 R1·R2로 나눈 전압.*1 mA만 써도 5 V 떨어져/) && (pDiv?.detail ?? []).some(d => /= 6 V/.test(d))
+    && /레귤레이터/.test(pDiv?.fix ?? '') && is(regDiv, 'op_feed', 'error', 'U1', /IN 전원\(3번 핀\).*0\.5 V 떨어져/)
+    && !direct.some(r => r.rule === 'op_feed'),
+    `${show(fDiv, 'op_feed')} | ${show(regDiv, 'op_feed')} | ${show(direct, 'op_feed')}`)
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
   // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package
