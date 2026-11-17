@@ -100,6 +100,10 @@ const switchedMotor = motorOn([['VBAT', 'BT1.1', 'SW1.1'], ['VM', 'SW1.2', 'M1.1
 const relayMotor = motorOn([['VBAT', 'BT1.1', 'K1.3', 'K1.1'], ['VM', 'K1.4', 'M1.1', 'D1.2'], ['GND', 'K1.2']], [['K1', 'Relay', '12V']])
 const diodeMotor = motorOn([['VBAT', 'BT1.1', 'D9.1'], ['VM', 'D9.2', 'M1.1', 'D1.2']], [['D9', 'D', '1N5819']])
 const unknownSupply = motorOn([['VM', 'J9.1', 'M1.1', 'D1.2']], [], ['J9', 'Conn_01x02', 'J'])
+// a servo (J2, 3 pins: signal, +, −) on a board's header J1: its supply pin's net is what each case changes
+const servoOn = (power: string[][], extra: Part[] = [], board = 'Arduino Uno') =>
+  g([['J1', 'Conn_01x04', board], ['J2', 'Conn_01x03', 'SERVO SG90'], ...extra],
+    ...power, ['D9', 'J1.3', 'J2.1'], ['GND', 'J1.2', 'J2.3', ...extra.filter(p => p[1] === 'Battery').map(p => `${p[0]}.2`)])
 const checks: [string, boolean][] = [
   ['the demos: motor warns CIR202 (J1) and CIR203 (J2), 555 and relay warn CIR202, the LED nothing; no error',
     said(motor) === 'warning CIR202 J1 | warning CIR203 J2' && said(led) === '' && said(ne555) === 'warning CIR202 BT1' && said(relay) === 'warning CIR202 J1'],
@@ -113,6 +117,17 @@ const checks: [string, boolean][] = [
     && !cir('CIR203', switchedMotor).length && !cir('CIR203', unknownSupply).length],
   ['CIR203 says what, why and the fix in Korean',
     validateCircuit(straightMotor).some(i => i.code === 'CIR203' && /비상정지:/.test(i.message) && /끼일 수/.test(i.message) && /스위치/.test(i.suggestion))],
+  // CIR204 (2026-11-17): a servo on an Uno's 5 V alone warns; with a battery, a regulator's output or a supply header on that
+  // net, or on a net named as a signal, it does not; the warning names what, why and the fix with no figure of its own
+  ['CIR204: a servo fed only by the Uno\'s 5 V (or USB) warns; a battery, a regulator or a supply header on it, or a bare signal net, does not',
+    cir('CIR204', servoOn([['+5V', 'J1.1', 'J2.2']])).join() === 'J2' && cir('CIR204', servoOn([['VBUS', 'J1.1', 'J2.2']], [], 'USB 5V')).join() === 'J2'
+    && !cir('CIR204', servoOn([['+5V', 'J1.1', 'J2.2', 'BT1.1']], [bat('6V')])).length
+    && !cir('CIR204', servoOn([['+5V', 'J2.2', 'U1.2'], ['VIN', 'U1.3', 'BT1.1'], ['GND', 'U1.1']], [bat('9V'), ['U1', 'REG', 'AMS1117-5.0']])).length
+    && !cir('CIR204', servoOn([['+5V', 'J1.1', 'J2.2', 'J3.1'], ['GND', 'J3.2']], [['J3', 'Conn_01x02', 'PWR_IN']])).length
+    && !cir('CIR204', servoOn([['SERVO_SIG', 'J1.1', 'J2.2']])).length],
+  ['CIR204 says what, why (brownout) and the fix (separate supply, common ground, a capacitor) with no number of its own',
+    validateCircuit(servoOn([['+5V', 'J1.1', 'J2.2']])).some(i => i.code === 'CIR204' && i.advice && /브라운아웃:/.test(i.message) && /다시 켜질 수/.test(i.message)
+      && /GND 공통/.test(i.suggestion) && /전해 커패시터/.test(i.suggestion) && !/\d+\s*(µF|uF|mA|A\b)/.test(i.message + i.suggestion))],
   ['removed motor R1 is an error', validateCircuit(remove(motor, 'R1')).some(i => i.severity === 'error')],
   ['removed flyback diode warns', validateCircuit(remove(motor, 'D1')).some(i => i.code === 'CIR201')],
   ['removed LED resistor catches limiter', noLimiter.length === 1 && noLimiter[0].severity === 'error' && noLimiter[0].refs.join() === 'D1'],

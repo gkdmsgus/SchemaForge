@@ -172,5 +172,30 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
       refs: [m.ref], nets: [reached] })
   }
 
+  // CIR204. a servo powered from the microcontroller board alone (2026-11-17): a header whose value says SERVO, its supply
+  // pin's net (named as a supply: 5V, VCC, VIN, VBUS…) fed by a board's header (Arduino, ESP32, Pico…) or USB and by
+  // nothing else that supplies (a battery, a regulator's output, a supply header). No figure is given: the stall current
+  // and the capacitor are the servo's own datasheet's
+  const BOARD_WORDS = /ARDUINO|\bUNO\b|\bNANO\b|\bMEGA\b|ESP-?32|ESP-?8266|PICO|RASPBERRY|STM32|\bUSB\b/i
+  const SUPPLY_NET = /(^|[^A-Z])(\d+V\d*|VCC|VDD|VIN|VBUS|V\+|PWR|POWER|USB)([^A-Z]|$)/i
+  const supplies = (nd: { ref: string; pin: string }) => {
+    const c = components.find(x => x.ref === nd.ref)
+    const k = c?.name ?? ''
+    if (k === 'Battery') return nd.pin === '1'
+    if (k === 'REG') return nd.pin === '2'
+    return /^Conn_/.test(k) && !/SERVO|서보|MOTOR|모터/i.test(c?.value || '') && !BOARD_WORDS.test(c?.value || '')
+  }
+  for (const sv of components.filter(c => /^Conn_/.test(c.name ?? '') && /SERVO|서보/i.test(c.value || ''))) {
+    for (const n of read.filter(x => !isGndName(x.name) && SUPPLY_NET.test(x.name) && x.nodes.some(nd => nd.ref === sv.ref))) {
+      const boards = [...new Set(n.nodes.filter(nd => nd.ref !== sv.ref && BOARD_WORDS.test(components.find(c => c.ref === nd.ref)?.value || '')).map(nd => nd.ref))]
+      if (!boards.length || n.nodes.some(nd => nd.ref !== sv.ref && supplies(nd))) continue
+      add({ code: 'CIR204', severity: 'warning', advice: true, title: '서보 전원이 보드에서만 나옵니다',
+        message: `서보 ${sv.ref}의 전원을 ${boards.join(', ')} 보드(또는 USB)에서만 받습니다. 서보는 움직이기 시작하는 순간 전류를 크게 당겨서, 보드의 5 V가 순간 떨어지고 보드가 다시 켜질 수 있습니다 (브라운아웃: 전압이 잠깐 떨어져 칩이 리셋되는 것).`,
+        suggestion: `서보 전원은 배터리나 별도 5 V 전원에서 따로 받고, 그 전원의 GND를 보드 GND와 이어 줍니다(GND 공통). 서보 전원 바로 옆에 큰 전해 커패시터를 하나 답니다(용량은 서보 설명서를 봅니다).`,
+        chat: `서보 ${sv.ref}의 전원 핀을 별도 전원 커넥터(값 PWR_IN)의 +에 연결하고, 그 커넥터의 −는 GND에 이어줘. 서보 전원과 GND 사이에 전해 커패시터(CP)를 하나 추가해줘.`,
+        refs: [sv.ref], nets: [n.name] })
+    }
+  }
+
   return issues
 }
