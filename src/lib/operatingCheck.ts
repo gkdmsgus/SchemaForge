@@ -2759,6 +2759,21 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     }
     if (atLeast(vin.v, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 입력 ${V(vin.v)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
     if (vin.full != null && atLeast(vin.full, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 배터리를 완전히 충전하면 입력 ${V(vin.full)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
+    // a lithium-ion pack runs down: past the cell voltage where input − output falls under the dropout, the output sags.
+    // When that is above the datasheets' discharge end (2.5 V a cell), part of the rated capacity cannot be used
+    // (2026-11-17, a brain session's idea: the other side of the full-charge check)
+    if (vin.full != null) {
+      const cells = Math.round(vin.full / SPECS.liIon.charge_v.v), lost = vin.v - inLv.lo
+      const need = reg.vout + spec.dropout_max.v + lost, perCell = need / cells, end = SPECS.liIon.cutoff_v
+      if (cells >= 1 && perCell > end.v + 1e-9) {
+        const more = Math.floor(need / end.v) + 1
+        res('warn', `${r.ref} 배터리가 셀당 ${V(perCell)}(${cells}S ${V(need)}) 아래로 닳으면 입력−출력이 최소 ${V(spec.dropout_max.v)}보다 작아져 출력 ${V(reg.vout)}가 떨어집니다`,
+          [...detail, `출력 ${V(reg.vout)} + 최소 전압 차 ${V(spec.dropout_max.v)}${lost ? ` + 다이오드 강하 ${V(lost)}` : ''} = ${V(need)} ÷ ${cells}셀 = 셀당 ${V(perCell)}`,
+            `셀당 ${V(end.v)}까지 써야 데이터시트의 용량이 나옵니다: ${cite(end)}`])
+        out[out.length - 1].fix = `배터리를 ${more}S(셀 ${more}개 직렬)로 늘리거나, 최소 전압 차가 더 작은 레귤레이터를 씁니다. 이대로 쓰면 배터리가 셀당 ${V(perCell)}까지 닳았을 때 충전합니다.`
+        continue
+      }
+    }
     res('pass', `${r.ref} 입력 ${rangeV(inLv)} → ${V(reg.vout)} (여유 ${inLv.lo < inLv.hi ? '최소 ' : ''}${V(head)})`, detail)
   }
   return out

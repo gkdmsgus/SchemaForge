@@ -312,6 +312,15 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
   const via = run(circuit([['BT1', 'Battery', '4S'], ['SW1', 'SW', ''], ['D1', 'D', '1N5819'], ['U1', 'REG', 'AMS1117-3.3'], ['C1', 'CP', '22uF']],
     [['VBAT', 'BT1.1', 'SW1.1'], ['VSW', 'SW1.2', 'D1.1'], ['VIN', 'D1.2', 'U1.3'], ['GND', 'BT1.2', 'U1.1', 'C1.2'], ['V3', 'U1.2', 'C1.1']]))
   check('O7g6 4S through a switch and a 1N5819 still reaches 16.8 V at the regulator', is(via, 'op_reg', 'error', 'U1', /16\.8 V/), show(via, 'op_reg'))
+  // O7g7: a lithium pack run down (2026-11-17): 2S into AMS1117-5.0 needs 6.3 V, 3.15 V a cell, above the datasheets'
+  // 2.5 V discharge end: a warning offering 3S; 3S into AMS1117-3.3 (1.53 V a cell) still passes, as does 3S into 7805
+  // (7.5 V, 2.5 V a cell: not above)
+  const two5 = run(variant(reg, setValue('BT1', '2S LiPo'))), lowOk = run(variant(variant(reg, setValue('BT1', '2S LiPo')), setValue('U1', 'AMS1117-3.3')))
+  const twoAms = run(variant(variant(reg, setValue('BT1', '2S LiPo')), setValue('U1', 'AMS1117-5.0')))
+  check('O7g7 2S into AMS1117-5.0 warns below 3.15 V a cell, citing both cut-offs and offering 3S; 2S into AMS1117-3.3 passes',
+    is(twoAms, 'op_reg', 'warn', 'U1', /셀당 3\.15 V\(2S 6\.3 V\) 아래로 닳으면/) && (pick(twoAms, 'op_reg', 'U1')?.detail ?? []).some(d => /2\.50 V cut-off.*2\.0 V cutoff/.test(d))
+    && /3S/.test(pick(twoAms, 'op_reg', 'U1')?.fix ?? '') && is(lowOk, 'op_reg', 'pass', 'U1'),
+    `${show(twoAms, 'op_reg')} | fix ${pick(twoAms, 'op_reg', 'U1')?.fix} | ${show(lowOk, 'op_reg')} | ${show(two5, 'op_reg')}`)
   // O7h: a stepper driver on Pololu's A4988 carrier (2026-11-17): VMOT 8-35 V and VDD 3-5.5 V as Pololu's page gives them,
   // a lithium pack at full charge; VMOT on a battery, VDD on the Uno's 5 V
   const stepper = (vmot: string, vdd = '+5V') => circuit([['BT1', 'Battery', vmot], ['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'A4988', 'A4988'], ['C1', 'CP', '100uF']],

@@ -294,7 +294,10 @@ export const SPECS = {
   liIon: {
     charge_v: { v: 4.2, src: `${PANA_NCR}: 충전 CC-CV 4.20 V / ${MURATA_VTC6}: 충전 CCCV 4.2 V` },
     nominal_v: { v: 3.6, src: `${PANA_NCR}, ${MURATA_VTC6}: 공칭 전압 3.6 V` },
-  } satisfies Record<'charge_v' | 'nominal_v', Num>,
+    // where the datasheets end the discharge their capacity is measured to (read 2026-11-17): the higher of the two, so a
+    // regulator that gives up above it leaves part of the rated capacity unused
+    cutoff_v: { v: 2.5, src: `${PANA_NCR}: 방전 CC 1C, 2.50 V cut-off (용량을 잰 조건) / ${MURATA_VTC6}: 방전 0.2 ItA, 2.0 V cutoff` },
+  } satisfies Record<'charge_v' | 'nominal_v' | 'cutoff_v', Num>,
 }
 
 /** The transistor the footprint's pinout was taken from (server/pcb/footprints_table.py). */
