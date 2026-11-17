@@ -118,3 +118,61 @@
     border: 0;
   }
 }
+
+// A phone's width (useNarrow's 720 px): ten columns do not fit, and a table that scrolls sideways hid 패키지 and the
+// links past the edge (2026-11-17). Each line is a card there, every cell with its column's name, and the drawer scrolls.
+@media (max-width: 720px) {
+  .sf-bom {
+    padding: var(--sf-s-3);
+
+    &__summary { margin-left: 0; }
+
+    &__scroll {
+      max-height: none;
+      overflow: visible;
+      border: none;
+      background: transparent;
+    }
+
+    table, tbody, tfoot, tr, td { display: block; width: auto; }
+    thead { display: none; }
+
+    tbody tr {
+      margin-bottom: var(--sf-s-2);
+      padding: 6px 10px;
+      border: 1px solid var(--sf-line);
+      border-radius: var(--sf-r-md);
+      background: var(--sf-bg-2);
+    }
+    tbody tr:hover td { background: transparent; }
+
+    td {
+      display: flex;
+      gap: 10px;
+      min-width: 0;
+      padding: 2px 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-align: left;
+      border: none;
+
+      &::before {
+        content: attr(data-label);
+        flex: 0 0 72px;
+        color: var(--sf-fg-dim);
+        font: 600 10px/1.8 var(--sf-font-mono);
+      }
+      &:empty { display: none; }
+    }
+    .ref, .val, .note { min-width: 0; }
+    .num { text-align: left; }
+
+    tfoot td {
+      position: static;
+      padding: 6px 10px;
+      border: 1px solid var(--sf-line);
+      border-radius: var(--sf-r-md);
+      &::before { content: none; }
+    }
+  }
+}

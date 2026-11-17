@@ -7,7 +7,12 @@
 // M5 SCHEMATIC, PCB and 배치하기 switch the view, and 배치하기's board is drawn at least half the screen wide too, M6
 // nothing of the result screen sticks out past the right edge in any of those states (a box that scrolls sideways, like
 // the netlist text, may hold wider lines, and the drawings pan), M7 a saved result opened again from the side menu starts
-// with both panels closed and the parts on the screen. (Before M1-M7 the side panels opened at 260 px and 240 px beside
+// with both panels closed and the parts on the screen, M8 the PCB button row is two lines at most before and after the
+// board, and '⋯' (옵션) shows SMD/THT, AI 다듬기, 기판 크기 (and 측정표 with test points) on the screen and hides them again,
+// M9 the BOM drawer opens over the board without changing the drawing's size, and its lines are cards that need no
+// sideways scroll, every 패키지 on the screen, M10 the title and the 3D hint are not cut with "…". (M8-M10: 2026-11-17,
+// the row was four lines, the open drawer left the 3D view a strip, the table hid 패키지 past the edge and the title
+// read "Demo: mo…".) (Before M1-M7 the side panels opened at 260 px and 240 px beside
 // the schematic, which had no width left, and the toggles, 'PCB 생성' and the parts sat past the right edge: review of
 // 2026-11-07. The board was 159 px wide beside its 3D view, and 배치하기's 19 px beside its list.)
 // Needs the vite dev server (npm run dev), its API and KiCad (M4 makes a real board).
@@ -181,6 +186,91 @@ const run = async () => {
       check(`M4 ${demo}: PCB 생성 makes the board; the drawing, the downloads and the checks list are on the screen`, !pcbBad.length,
         pcbBad.length ? pcbBad.join('; ') : `${board.box}`)
 
+      // M8: the PCB row, its lines counted by the tops of what is in it
+      const rowLines = () => page.evaluate(() => {
+        const row = document.querySelector('[data-testid=pcb-options]')?.parentElement
+        if (!row) return { n: 99, info: 'no 옵션 button' }
+        const tops = new Set([...row.children].filter(c => c.getBoundingClientRect().height)
+          .map(c => Math.round(c.getBoundingClientRect().top / 8)))
+        return { n: tops.size, info: `${tops.size} lines` }
+      })
+      const rowBad = []
+      const madeRow = await rowLines()
+      if (madeRow.n > 2) rowBad.push(`with the board: ${madeRow.info}`)
+      if (await page.getByTestId('mech-toggle').count() || await page.getByTestId('measure-plan').count()) rowBad.push('기판 크기 or 측정표 shown with 옵션 closed')
+      const opt = page.getByTestId('pcb-options')
+      if (!await press(opt, rowBad)) rowBad[rowBad.length - 1] = `옵션 off the screen ${rowBad.at(-1)}`
+      // the test points are the generator's, so 측정표 is looked for only where the board has them
+      const hasTp = await page.getByTestId('measure-plan').count() > 0
+      const hidden = [['SMD', page.getByRole('button', { name: 'SMD', exact: true })], ['THT', page.getByRole('button', { name: 'THT', exact: true })],
+        ['AI 다듬기', page.getByRole('button', { name: /AI 다듬기/ })], ['기판 크기', page.getByTestId('mech-toggle')],
+        ...(hasTp ? [['측정표', page.getByTestId('measure-plan')]] : [])]
+      for (const [what, loc] of hidden) {
+        const r = await reach(loc)
+        if (!r.ok) rowBad.push(`${what} not on the screen with 옵션 open ${r.box}`)
+      }
+      await overflow('옵션 open')
+      await press(opt, rowBad)
+      if (await shown(page.getByTestId('mech-toggle'))) rowBad.push('옵션 did not fold')
+      // before the board: the same demo opened again in a second page
+      const fresh = await ctx.newPage()
+      await fresh.goto(`${BASE}/?demo=${demo}`, { waitUntil: 'networkidle' })
+      await fresh.locator('g[data-comp]').first().waitFor({ timeout: 15000 }).catch(() => {})
+      await fresh.waitForTimeout(500)
+      const firstRow = await fresh.evaluate(() => {
+        const row = document.querySelector('[data-testid=pcb-options]')?.parentElement
+        if (!row) return 99
+        return new Set([...row.children].filter(c => c.getBoundingClientRect().height).map(c => Math.round(c.getBoundingClientRect().top / 8))).size
+      })
+      await fresh.close()
+      if (firstRow > 2) rowBad.push(`before the board: ${firstRow} lines`)
+      check(`M8 ${demo}: the PCB row is two lines at most, and 옵션 shows and hides the rest`, !rowBad.length,
+        rowBad.length ? rowBad.join('; ') : `${madeRow.info} with the board, ${firstRow} before`)
+
+      // M9: the BOM drawer over the board
+      const bomBad = []
+      const boxOf = () => page.evaluate(() => {
+        const el = document.querySelector('[data-testid=board-view]')
+        const b = el?.getBoundingClientRect()
+        return b ? `${Math.round(b.width)}×${Math.round(b.height)}` : 'none'
+      })
+      const boardBefore = await boxOf()
+      if (!await press(page.locator('.sf-drawer-tab', { hasText: 'BOM' }), bomBad)) bomBad[bomBad.length - 1] = `BOM tab off the screen ${bomBad.at(-1)}`
+      await page.getByTestId('bom-table').waitFor({ timeout: 5000 }).catch(() => bomBad.push('no BOM table'))
+      await page.waitForTimeout(400)
+      const boardOpen = await boxOf()
+      if (boardOpen !== boardBefore) bomBad.push(`the board went from ${boardBefore} to ${boardOpen} with the drawer open`)
+      const cards = await page.evaluate(vw => {
+        const sc = document.querySelector('.sf-bom__scroll')
+        const lines = [...document.querySelectorAll('[data-testid=bom-line]')]
+        const off = lines.filter(tr => {
+          const pk = tr.querySelector('td[data-label=패키지]')?.getBoundingClientRect()
+          return !pk || pk.left < -0.5 || pk.right > vw + 0.5 || !pk.height
+        }).map(tr => tr.dataset.refs)
+        return { side: sc ? sc.scrollWidth - sc.clientWidth : -1, n: lines.length, off }
+      }, VW)
+      if (cards.side !== 0) bomBad.push(`the table scrolls sideways by ${cards.side} px`)
+      if (!cards.n || cards.off.length) bomBad.push(`패키지 not on the screen: ${cards.off.join(' ') || 'no lines'}`)
+      await overflow('BOM over the board')
+      await press(page.locator('.sf-drawer-tab', { hasText: 'BOM' }), bomBad)
+      check(`M9 ${demo}: the BOM drawer opens over the board, its size kept, and its lines need no sideways scroll`, !bomBad.length,
+        bomBad.length ? bomBad.join('; ') : `board ${boardBefore}, ${cards.n} lines`)
+
+      // M10: nothing cut with "…": the title, and the 3D hint once the 3D view is up
+      const cutBad = []
+      const cut = id => page.evaluate(id => {
+        const el = document.querySelector(`[data-testid=${id}]`)
+        return el ? (el.scrollWidth > el.clientWidth + 1 ? `${id} cut (${el.scrollWidth} > ${el.clientWidth} px)` : '') : `no ${id}`
+      }, id)
+      const t = await cut('result-title')
+      if (t) cutBad.push(t)
+      await press(page.getByRole('button', { name: '3D', exact: true }), cutBad)
+      const hintUp = await page.getByTestId('hint-3d').waitFor({ timeout: 30000 }).then(() => true, () => false)
+      if (!hintUp) cutBad.push('no 3D hint within 30 s')
+      else { const h = await cut('hint-3d'); if (h) cutBad.push(h) }
+      await press(page.getByRole('button', { name: '2D', exact: true }), cutBad)
+      check(`M10 ${demo}: the title and the 3D hint are whole`, !cutBad.length, cutBad.join('; '))
+
       // M5
       const viewBad = []
       const views = [
@@ -205,7 +295,7 @@ const run = async () => {
       check(`M5 ${demo}: SCHEMATIC, PCB and 배치하기 switch the view`, !viewBad.length && back.ok, viewBad.length ? viewBad.join('; ') : `back on the schematic: ${back.info}`)
 
       // M6
-      check(`M6 ${demo}: nothing sticks out past the right edge`, !wide.length, wide.length ? wide.join(' | ') : 'opened, 2 panels, 4 drawer tabs, board, 3 views')
+      check(`M6 ${demo}: nothing sticks out past the right edge`, !wide.length, wide.length ? wide.join(' | ') : 'opened, 2 panels, 4 drawer tabs, board, 옵션, BOM over the board, 3 views')
 
       // M7: the panels as a wide window leaves them (open), and the result opened again from this browser's records
       const prompt = `휴대폰 폭 검사 ${demo}`

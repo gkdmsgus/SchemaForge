@@ -173,13 +173,13 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
               const notes = [l.pinout ? `핀 배열 기준 ${l.pinout}` : '', ...l.notes].filter(Boolean).join(' · ')
               return (
                 <tr key={l.key} data-testid="bom-line" data-refs={l.refs.join(',')}>
-                  <td className="num">{l.qty}</td>
-                  <td className="ref">{refs}</td>
-                  <td className="val">{l.value || '—'}</td>
-                  <td>{l.type}</td>
-                  <td><PackageCell line={l} /></td>
-                  <td className="note">{notes}</td>
-                  <td>
+                  <td className="num" data-label="수량">{l.qty}</td>
+                  <td className="ref" data-label="부품 번호">{refs}</td>
+                  <td className="val" data-label="값">{l.value || '—'}</td>
+                  <td data-label="종류">{l.type}</td>
+                  <td data-label="패키지"><PackageCell line={l} /></td>
+                  <td className="note" data-label="비고">{notes}</td>
+                  <td data-label="링크">
                     {product ? (
                       <a href={product} target="_blank" rel="noopener noreferrer" aria-label={`${refs} Mouser 제품 페이지 (새 창)`}>제품</a>
                     ) : keyword ? (
@@ -187,10 +187,10 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
                         aria-label={`${refs} Mouser에서 ${keyword} 검색 (새 창)`}>검색</a>
                     ) : <span className="dim">—</span>}
                   </td>
-                  {shop && <td className="mono">{m?.mouserPart ?? (MATCHES.has(l.key) ? <span className="dim">찾지 못함</span> : '')}</td>}
-                  {shop && <td className="num">{m?.price || ''}{m?.price && (m.priceQty ?? 1) > 1 ? <span className="dim"> ({m.priceQty}개부터)</span> : null}</td>}
+                  {shop && <td className="mono" data-label="Mouser 부품 번호">{m?.mouserPart ?? (MATCHES.has(l.key) ? <span className="dim">찾지 못함</span> : '')}</td>}
+                  {shop && <td className="num" data-label="단가">{m?.price || ''}{m?.price && (m.priceQty ?? 1) > 1 ? <span className="dim"> ({m.priceQty}개부터)</span> : null}</td>}
                   {shop && (
-                    <td className="num" style={m?.stockNum != null && m.stockNum < l.qty ? { color: TONE_COLOR.bad } : undefined}>
+                    <td className="num" data-label="재고" style={m?.stockNum != null && m.stockNum < l.qty ? { color: TONE_COLOR.bad } : undefined}>
                       {m?.stockNum != null ? m.stockNum.toLocaleString() : ''}
                     </td>
                   )}

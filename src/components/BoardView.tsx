@@ -562,8 +562,10 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
     ro.observe(el)
     return () => ro.disconnect()
   }, [view3d, assembly, asm3d, placed, pcbFilename])
-  const hint3d = assembly ? '드래그 회전 · 오른쪽 드래그 이동 · 휠 확대 · 부품을 누르면 배치 체크'
-    : real3d && placed ? '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인' : '배치 애니메이션 · 부품 높이는 표시용 근사값'
+  // a phone has no wheel or right button: one finger turns it, two zoom
+  const hint3d = assembly ? (narrow ? '끌어서 회전 · 두 손가락으로 확대 · 부품을 누르면 배치 체크' : '드래그 회전 · 오른쪽 드래그 이동 · 휠 확대 · 부품을 누르면 배치 체크')
+    : real3d && placed ? (narrow ? '실제 KiCad 3D · 끌어서 회전 · 두 손가락으로 확대 · 부품을 누르면 방향 확인' : '실제 KiCad 3D · 드래그 회전 · 휠 확대 · 부품을 누르면 방향 확인')
+    : '배치 애니메이션 · 부품 높이는 표시용 근사값'
   // a part picked in 3D scrolls its review item into view
   useEffect(() => {
     if (!pickRef) return
@@ -957,11 +959,12 @@ export default function BoardView({ parts, frames, routes, target, final, drc, a
             : <Board3D parts={parts} poses={poses} tracks={tracks3d} vias={copper.vias}
                 outline={fit > 0 ? (final?.outline ?? null) : target} cam={cam3d} zoom={zoom3d}
                 showLayer={show} hoverNet={hoverNet} />}
-          {/* one line (cut with … on a narrow pane, the whole of it in the title), an ⓘ chip on a low pane (LOW_3D) */}
+          {/* one line (cut with … on a narrow pane, the whole of it in the title), an ⓘ chip on a low pane (LOW_3D); a phone
+              has no hover for the title, so there it wraps */}
           {low3d ? <HintChip text={hint3d} /> : (
-            <div title={hint3d} style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
+            <div title={hint3d} data-testid="hint-3d" style={{ position: 'absolute', right: 8, bottom: 8, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box',
               padding: '4px 8px', borderRadius: 6, background: UI_BG, color: UI_DIM, border: `1px solid ${UI_LINE}`,
-              fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              fontFamily: 'var(--sf-font-mono)', fontSize: 10, whiteSpace: narrow ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {hint3d}
             </div>
           )}

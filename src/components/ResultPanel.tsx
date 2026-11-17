@@ -114,6 +114,8 @@ export default function ResultPanel({
   const [pcbFilename, setPcbFilename] = useState<string | null>(null)
   const [pcbStyle, setPcbStyle] = useState<'smd' | 'tht'>('smd')
   const [useAi, setUseAi] = useState(false)
+  // a phone's width: SMD/THT, AI 다듬기, 기판 크기 and the measure files wait behind '⋯' so the PCB row is two lines, not four
+  const [moreOpen, setMoreOpen] = useState(false)
   const [pcbSummary, setPcbSummary] = useState<PcbSummary | null>(null)
   const [board, setBoard] = useState<{
     parts: BoardPart[]; frames: BoardFrame[]; routes: RouteEvent[]; target: [number, number, number, number] | null
@@ -713,9 +715,13 @@ export default function ResultPanel({
 
   const TOPBAR_H = 44
   // the Code tab is taller so the editor fits without its buttons scrolling away
+  // on a phone's width the drawer is a sheet over the drawing (the board and its 3D view keep their size; beside a 280 px
+  // drawer the 3D view was a strip), and a taller one
   const DRAWER_H = !drawerOpen ? 0
+    : narrow ? Math.max(280, Math.round(window.innerHeight * 0.6))
     : activeTab === 'Code' ? Math.max(280, Math.min(440, Math.round(window.innerHeight * 0.5))) : 280
   const BOTTOMBAR_H = 38
+  const opts = !narrow || moreOpen
 
   return (
     <div ref={resultRef} style={{
@@ -739,7 +745,7 @@ export default function ResultPanel({
           color: 'var(--sf-fg)', fontWeight: 600,
           maxWidth: narrow ? undefined : 320, flex: narrow ? '1 1 0' : undefined, minWidth: narrow ? 0 : undefined,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{title}</span>
+        }} data-testid="result-title" title={title}>{title}</span>
         {!narrow && <span style={{
           fontFamily: 'var(--sf-font-mono)', fontSize: 10,
           color: 'var(--sf-fg-dim)', letterSpacing: '0.04em',
@@ -800,18 +806,18 @@ export default function ResultPanel({
         )}
         <button onClick={handleCopyPrompt} title="프롬프트 복사" style={iconBtn}><IconCopy size={14} /></button>
         <button onClick={() => onRegenerate(lastPrompt)} title="재생성 (저장된 결과 대신 새로 생성)" style={{...iconBtn, fontSize:16}}>↺</button>
-        <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding:'5px 10px'}}>PDF</button>
+        <button onClick={exportPDF} title="PDF" style={{...iconBtn, fontSize:11, letterSpacing:'0.04em', padding: narrow ? '5px 6px' : '5px 10px'}}>PDF</button>
         <button
           onClick={() => window.location.href = `${API}/download/${netFile}`}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            padding: narrow ? '5px 8px' : '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
             background: 'var(--sf-amber)', color: 'var(--sf-fg-inverse)',
             fontFamily: 'var(--sf-font-mono)', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
           }}
         ><IconDownload size={13} /> .net</button>
         </div>
-        <div style={{ width: 1, height: 20, flexShrink: 0, background: 'var(--sf-line)', margin: '0 4px' }} />
+        {!narrow && <div style={{ width: 1, height: 20, flexShrink: 0, background: 'var(--sf-line)', margin: '0 4px' }} />}
         <button onClick={() => showEditor(!editorOpen)} data-testid="toggle-left-panel" aria-pressed={editorOpen}
           title={editorOpen ? 'AI 편집 패널 접기' : 'AI 편집 패널 펼치기'} style={{...iconBtn, opacity: editorOpen ? 1 : 0.5}}>
           <PanelIcon side="left" />
@@ -984,7 +990,7 @@ export default function ResultPanel({
               minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin',
               ...(narrow ? { flexBasis: '100%', flexWrap: 'wrap', marginLeft: 0, padding: '5px 8px', overflowX: 'visible',
                 borderTop: '1px solid var(--sf-line)' } : {}) }}>
-              {pcbStatus !== 'loading' && (['smd', 'tht'] as const).map(s => (
+              {pcbStatus !== 'loading' && opts && (['smd', 'tht'] as const).map(s => (
                 <button key={s}
                   title={s === 'smd' ? '표면실장 부품 (커넥터·릴레이는 구멍 끼움)' : '전부 구멍 끼움 부품 (손납땜 쉬움)'}
                   onClick={() => { if (s !== pcbStyle) { setPcbStyle(s); if (pcbStatus === 'done') setPcbStatus(null) } }}
@@ -1027,7 +1033,7 @@ export default function ResultPanel({
                   </StatusChip>
                 </button>
               )}
-              {pcbStatus !== 'loading' && (
+              {pcbStatus !== 'loading' && opts && (
                 <button onClick={() => { setUseAi(v => !v); setAiNote(null); if (pcbStatus === 'done') setPcbStatus(null) }}
                   title="AI가 배치·선 굵기에서 고칠 점을 제안합니다. 검사 지표가 좋아질 때만 반영해요 (OpenAI 호출 비용이 듭니다)"
                   style={{ ...ghostBtn, padding: '2px 6px', fontFamily: 'var(--sf-font-mono)', fontSize: 10,
@@ -1038,14 +1044,14 @@ export default function ResultPanel({
               {aiNote && !useAi && <StatusChip tone="warn" title={aiNote.text} testId="ai-note">
                 {aiNote.login ? 'AI 다듬기는 로그인 후' : 'AI 다듬기는 허용된 계정만'}
               </StatusChip>}
-              {pcbStatus !== 'loading' && <MechInput mech={mech} onChange={setMech} buttonStyle={ghostBtn} />}
+              {pcbStatus !== 'loading' && opts && <MechInput mech={mech} onChange={setMech} buttonStyle={ghostBtn} />}
               {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={() => generatePCB()} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {/* a board built from a previous circuit: no downloads of files that no longer match */}
               {pcbStatus === 'done' && pcbFilename && !pcbStale && <>
                 <button onClick={() => window.location.href = `${API}/download_pcb/${pcbFilename}`} style={ghostBtn}>↓ .kicad_pcb</button>
                 {/* where to probe and what each test point should read (measurePlan.ts): a table for a multimeter, JSON for a prober */}
-                {board?.final?.parts.some(p => p.part === 'TestPoint') && <>
+                {opts && board?.final?.parts.some(p => p.part === 'TestPoint') && <>
                   <button data-testid="measure-plan" onClick={() => saveText(`${planBase}_measure_plan.csv`, measurePlanCsv(measurePlan(board.final!)), 'text/csv;charset=utf-8')}
                     title="테스트 포인트마다 기판 위 위치와 켰을 때 나와야 하는 전압을 표로 받습니다 (멀티미터로 잴 때)" style={ghostBtn}>↓ 측정표</button>
                   <button data-testid="measure-plan-json" onClick={() => saveText(`${planBase}_measure_plan.json`, JSON.stringify(measurePlan(board.final!), null, 2), 'application/json')}
@@ -1071,6 +1077,15 @@ export default function ResultPanel({
               </>}
               {pcbStatus === 'error' && <button onClick={() => generatePCB()} data-testid="pcb-retry"
                 title={pcbError ? `${pcbError}\n눌러서 다시 만듭니다` : undefined} style={{...ghostBtn, color:'var(--sf-danger)'}}>재시도</button>}
+              {narrow && pcbStatus !== 'loading' && (
+                // "⋯", not "옵션 ▾": the word did not fit after the relay demo's chips and took a third line of its own
+                <button type="button" data-testid="pcb-options" aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)}
+                  aria-label={moreOpen ? '옵션 접기' : '옵션 더 보기: SMD·THT, AI 다듬기, 기판 크기, 측정표'} title="SMD·THT, AI 다듬기, 기판 크기, 측정표"
+                  style={{ ...ghostBtn, padding: '2px 8px', fontWeight: 700, letterSpacing: '0.1em',
+                    color: moreOpen || mech || pcbStyle === 'tht' || useAi ? 'var(--sf-cyan-deep)' : ghostBtn.color }}>
+                  ⋯
+                </button>
+              )}
             </div>
           </div>
 
@@ -1285,6 +1300,7 @@ export default function ResultPanel({
         flexShrink: 0,
         borderTop: '1px solid var(--sf-line)',
         background: 'var(--sf-bg-1)',
+        position: narrow ? 'relative' : undefined,
       }}>
         {/* tab handle bar */}
         <div style={{ height: BOTTOMBAR_H, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 2 }}>
@@ -1313,7 +1329,9 @@ export default function ResultPanel({
 
         {/* drawer content */}
         {drawerOpen && (
-          <div style={{ height: DRAWER_H, overflowY: activeTab === 'Code' ? 'hidden' : 'auto', borderTop: '1px solid var(--sf-line)' }}>
+          <div data-testid="drawer-body" style={{ height: DRAWER_H, overflowY: activeTab === 'Code' ? 'hidden' : 'auto', borderTop: '1px solid var(--sf-line)',
+            ...(narrow ? { position: 'absolute', left: 0, right: 0, bottom: '100%', zIndex: 30, background: 'var(--sf-bg-1)',
+              borderBottom: '1px solid var(--sf-line)', boxShadow: 'var(--sf-shadow-md)' } : {}) }}>
             {activeTab === 'Netlist' && (
               <>
                 <KicadGuide />
