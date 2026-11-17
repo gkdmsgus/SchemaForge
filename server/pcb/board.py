@@ -641,18 +641,11 @@ def mounting_holes(box, style, parts=(), count=4):
     Starting from the corners of the parts box they are pushed outwards in small steps until no
     hole keep-out touches a part, so a small circuit does not get a wide empty ring around it.
     """
-    entry = lookup('MountingHole', style)
-    if not entry:
+    if not lookup('MountingHole', style):
         return []
-    lib, name, _ = entry
 
     def hole(ref, x, y):
-        fp = load_footprint(lib, name)
-        return {'ref': ref, 'value': 'M3', 'part': 'MountingHole', 'footprint': f'{lib}:{name}',
-                'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': {}, 'pad_pin': {},
-                'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
-                'pads': local_pads(fp, {}), 'silk': local_silk(fp),
-                'x': round(x, 4), 'y': round(y, 4), 'rot': 0}
+        return make_hole(ref, x, y, style)
 
     corners = [(box[0], box[1], -1, -1), (box[2], box[1], 1, -1),
                (box[2], box[3], 1, 1), (box[0], box[3], -1, 1)][:count]
@@ -669,6 +662,79 @@ def mounting_holes(box, style, parts=(), count=4):
                 break
         out.append(placed or hole(f'H{i}', cx + sx * 10, cy + sy * 10))
     return out
+
+
+def make_hole(ref, x, y, style):
+    """One M3 mounting hole (the footprint table's MountingHole) with its centre at x, y."""
+    entry = lookup('MountingHole', style)
+    if not entry:
+        return None
+    lib, name, _ = entry
+    fp = load_footprint(lib, name)
+    return {'ref': ref, 'value': 'M3', 'part': 'MountingHole', 'footprint': f'{lib}:{name}',
+            'tree': fp, 'bbox': courtyard_bbox(fp), 'pad_net': {}, 'pad_pin': {},
+            'silk_bbox': silk_bbox(fp), 'ref_text': ref_text(fp, ref),
+            'pads': local_pads(fp, {}), 'silk': local_silk(fp),
+            'x': round(x, 4), 'y': round(y, 4), 'rot': 0}
+
+
+# ── the enclosure's board (기구 조건) ────────────────────────────────────────────
+# A board size and mounting holes the case already fixes, in mm from the board's top-left corner. The board is that
+# rectangle at MECH_ORIGIN; the holes are placed first and the parts are placed around them. Nothing is enlarged to
+# make room: a circuit that does not fit is refused with the size it would need (2026-11-17, enclosure input step 1).
+MECH_ORIGIN = (100.0, 100.0)
+MECH_MIN, MECH_MAX = 5.0, 500.0     # mm, a side
+
+
+class MechRefused(Exception):
+    """The board the enclosure fixes cannot take this circuit; the message says why, in Korean."""
+
+
+def mech_board(mech, style):
+    """(frame, holes) for overrides['mech'] = {'width': mm, 'height': mm, 'holes': [[x, y], ...]}, or (None, None)."""
+    if not mech:
+        return None, None
+    w, h = float(mech['width']), float(mech['height'])
+    if not (MECH_MIN <= w <= MECH_MAX and MECH_MIN <= h <= MECH_MAX):
+        raise MechRefused(f'기판 크기는 가로·세로 {MECH_MIN:g}~{MECH_MAX:g} mm 사이로 적어야 합니다.')
+    ox, oy = MECH_ORIGIN
+    frame = (ox, oy, ox + w, oy + h)
+    holes = []
+    for i, (x, y) in enumerate(mech.get('holes') or [], 1):
+        hole = make_hole(f'H{i}', ox + float(x), oy + float(y), style)
+        if hole is None:
+            break
+        k = part_keepout(hole)
+        if not _inside(k, frame):
+            # the hole's keep-out reaches further one way (its label above it): each side's distance from the centre
+            cx, cy = hole['x'], hole['y']
+            near = lambda v: math.ceil(round(v * 100, 6)) / 100
+            raise MechRefused(f'고정 구멍 H{i}({float(x):g}, {float(y):g} mm)가 기판 가장자리에 너무 가깝거나 밖에 있습니다. '
+                              f'M3 구멍 중심은 왼쪽 가장자리에서 {near(cx - k[0]):g} mm, 오른쪽 {near(k[2] - cx):g} mm, '
+                              f'위 {near(cy - k[1]):g} mm, 아래 {near(k[3] - cy):g} mm 이상 안쪽에 둡니다.')
+        for other in holes:
+            if _boxes_touch(part_keepout(hole), part_keepout(other)):
+                raise MechRefused(f'고정 구멍 {other["ref"]}과 H{i}가 서로 겹칩니다.')
+        holes.append(hole)
+    return frame, holes
+
+
+def mech_check(parts, holes, frame):
+    """The refusal for parts that do not fit the enclosure's board: outside it, or on a hole."""
+    inner = (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)
+    out = [p['ref'] for p in parts if not _inside(part_keepout(p), inner)]
+    hit = sorted({f'{p["ref"]}–{h["ref"]}' for p in parts for h in holes if _boxes_touch(part_keepout(p), part_keepout(h))})
+    if not out and not hit:
+        return
+    need = outline(parts)
+    w, h = frame[2] - frame[0], frame[3] - frame[1]
+    said = []
+    if out:
+        said.append(f'부품이 {w:g} × {h:g} mm 기판 안에 들어가지 않습니다({", ".join(out[:6])}{" 등" if len(out) > 6 else ""}). '
+                    f'지금 배치로는 대략 {need[2] - need[0]:.0f} × {need[3] - need[1]:.0f} mm가 필요합니다')
+    if hit:
+        said.append(f'부품이 고정 구멍 자리와 겹칩니다({", ".join(hit[:6])})')
+    raise MechRefused('. '.join(said) + ('. 기판을 키우거나 구멍 자리를 옮겨 다시 만들어 주세요.' if holes else '. 기판을 키워 다시 만들어 주세요.'))
 
 
 def _boxes_touch(a, b):
@@ -820,9 +886,10 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
     import router as router_mod
     router_mod.NET_WIDTH_OVERRIDE = dict((overrides or {}).get('net_width') or {})
 
+    frame, mech_holes = mech_board((overrides or {}).get('mech'), style)
     if placer == 'force':
         from placer import force_place
-        force_place(parts, nets, on_event=on_event)
+        force_place(parts, nets, on_event=on_event, frame=frame, fixed=mech_holes or ())
     elif placer == 'fixed':
         fixed = (overrides or {}).get('parts') or {}
         for p in parts:
@@ -838,9 +905,16 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         on_event({'type': 'erc', 'findings': findings})
 
     parts_box = outline(parts)                      # what the circuit itself needs
-    holes = mounting_holes(parts_box, style, parts)  # furniture: tucked into the corners
-    parts = parts + holes
-    box = outline(parts)
+    if frame:
+        # the enclosure's board: its own holes, its own outline, nothing moved to make room
+        mech_check(parts, mech_holes, frame)
+        holes = mech_holes
+        parts = parts + holes
+        box = frame
+    else:
+        holes = mounting_holes(parts_box, style, parts)  # furniture: tucked into the corners
+        parts = parts + holes
+        box = outline(parts)
     routing = None
     if route:
         from router import route as run_router
@@ -875,6 +949,7 @@ def generate(net_path, pcb_path, style='smd', placer='force', on_event=None, rou
         'parts_box': {'x1': parts_box[0], 'y1': parts_box[1], 'x2': parts_box[2], 'y2': parts_box[3]},
         'test_points': test_points,
         'holes': [h['ref'] for h in holes],
+        **({'mech': {'width': round(box[2] - box[0], 3), 'height': round(box[3] - box[1], 3), 'holes': len(holes)}} if frame else {}),
         'pour': {'net': POUR_NET, 'layers': sorted({r['layer'] for r in pour}), 'rects': len(pour),
                  'area_mm2': round(sum((r['x2'] - r['x1']) * (r['y2'] - r['y1']) for r in pour), 1)},
         'erc': findings,

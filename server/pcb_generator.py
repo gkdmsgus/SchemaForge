@@ -59,8 +59,16 @@ def main():
         with open(args.overrides, encoding='utf-8') as f:
             overrides = json.load(f)
 
-    summary = board.generate(args.net, args.pcb, args.style, args.placer,
-                             on_event=emit if args.stream else None, overrides=overrides)
+    try:
+        summary = board.generate(args.net, args.pcb, args.style, args.placer,
+                                 on_event=emit if args.stream else None, overrides=overrides)
+    except board.MechRefused as e:
+        # the enclosure's board cannot take this circuit: said in Korean, exit 3 (the server tells it from a crash)
+        if args.stream:
+            emit({'type': 'refused', 'error': str(e)})
+        else:
+            print(json.dumps({'refused': str(e)}, ensure_ascii=False))
+        sys.exit(3)
     if args.stream:
         json_path = os.path.join(os.path.dirname(os.path.abspath(args.pcb)), summary['boardJson'])
         with open(json_path, encoding='utf-8') as f:

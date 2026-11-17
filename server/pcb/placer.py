@@ -72,17 +72,27 @@ def _snapshot(parts, it, phase, on_event):
                   'parts': {p['ref']: [round(p['x'], 3), round(p['y'], 3), p['rot'] % 360] for p in parts}})
 
 
-def force_place(parts, nets, on_event=None, seed=42):
+def force_place(parts, nets, on_event=None, seed=42, frame=None, fixed=()):
+    """frame: the board an enclosure fixes (x1, y1, x2, y2), else a square sized from the parts.
+    fixed: parts that do not move (the enclosure's mounting holes); the others are kept off them."""
     rng = random.Random(seed)
     n = len(parts)
     if n == 0:
         return
+    fixed = list(fixed)
+    given = frame is not None
 
-    areas = [(p['bbox'][2] - p['bbox'][0] + GAP) * (p['bbox'][3] - p['bbox'][1] + GAP) for p in parts]
-    side = math.sqrt(sum(areas) * 1.6)
-    side = max(side, max(max(p['bbox'][2] - p['bbox'][0], p['bbox'][3] - p['bbox'][1]) for p in parts) + 2 * GAP)
-    cx0, cy0 = 100.0 + side / 2, 100.0 + side / 2
-    frame = (cx0 - side / 2, cy0 - side / 2, cx0 + side / 2, cy0 + side / 2)
+    if frame:
+        frame = tuple(frame)
+        side = max(frame[2] - frame[0], frame[3] - frame[1])
+        cx0, cy0 = (frame[0] + frame[2]) / 2, (frame[1] + frame[3]) / 2
+    else:
+        areas = [(p['bbox'][2] - p['bbox'][0] + GAP) * (p['bbox'][3] - p['bbox'][1] + GAP) for p in parts]
+        side = math.sqrt(sum(areas) * 1.6)
+        side = max(side, max(max(p['bbox'][2] - p['bbox'][0], p['bbox'][3] - p['bbox'][1]) for p in parts) + 2 * GAP)
+        cx0, cy0 = 100.0 + side / 2, 100.0 + side / 2
+        frame = (cx0 - side / 2, cy0 - side / 2, cx0 + side / 2, cy0 + side / 2)
+    fixed_boxes = [part_bbox(f) for f in fixed]
 
     # 1. scatter on a ring, in connectivity order so neighbours start near each other
     order = connectivity_order(parts, nets)
@@ -162,6 +172,19 @@ def force_place(parts, nets, on_event=None, seed=42):
                     fy[i] += d
                     fy[j] -= d
 
+        # fixed holes: push a part off a hole along the shorter way out
+        for i, b in enumerate(boxes):
+            for fb in fixed_boxes:
+                ov = _overlap(b, fb, GAP)
+                if not ov:
+                    continue
+                c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+                cf = ((fb[0] + fb[2]) / 2, (fb[1] + fb[3]) / 2)
+                if ov[0] < ov[1]:
+                    fx[i] += ov[0] * push * (1 if c[0] >= cf[0] else -1)
+                else:
+                    fy[i] += ov[1] * push * (1 if c[1] >= cf[1] else -1)
+
         # frame: pull parts that stick out back inside
         for i, b in enumerate(boxes):
             if b[0] < frame[0]:
@@ -192,10 +215,12 @@ def force_place(parts, nets, on_event=None, seed=42):
     for p in parts:
         p['x'] = round(p['x'] / GRID) * GRID
         p['y'] = round(p['y'] / GRID) * GRID
-    _remove_overlaps(parts, pinned=set())
+    _remove_overlaps(parts + fixed, pinned={f['ref'] for f in fixed}, frozen={f['ref'] for f in fixed})
     it += 1
     _snapshot(parts, it, 'legalize', on_event)
-    sides = _connectors_to_edge(parts)
+    sides = _connectors_to_edge(parts, frame=frame if given else None, fixed=fixed)
+    if given:
+        _into_frame(parts, frame, fixed, set(sides))
     it += 1
     _snapshot(parts, it, 'legalize', on_event)
     for _ in range(LOCAL_ROUNDS):
@@ -331,8 +356,9 @@ def _best_rotations(parts):
         p['rot'] = best_rot
 
 
-def _remove_overlaps(parts, pinned, max_rounds=400):
-    """Push overlapping courtyards apart along the shorter axis until none overlap (grid-aligned steps)."""
+def _remove_overlaps(parts, pinned, max_rounds=400, frozen=frozenset()):
+    """Push overlapping courtyards apart along the shorter axis until none overlap (grid-aligned steps).
+    pinned parts move only when both of a pair are pinned; frozen ones (an enclosure's holes) never do."""
     for _ in range(max_rounds):
         moved = False
         boxes = [part_bbox(p) for p in parts]
@@ -344,7 +370,9 @@ def _remove_overlaps(parts, pinned, max_rounds=400):
                 a, b = parts[i], parts[j]
                 ca = ((boxes[i][0] + boxes[i][2]) / 2, (boxes[i][1] + boxes[i][3]) / 2)
                 cb = ((boxes[j][0] + boxes[j][2]) / 2, (boxes[j][1] + boxes[j][3]) / 2)
-                movers = [q for q in (a, b) if q['ref'] not in pinned] or [b]
+                movers = [q for q in (a, b) if q['ref'] not in pinned] or [q for q in (b, a) if q['ref'] not in frozen][:1]
+                if not movers:
+                    continue
                 axis = 0 if ov[0] < ov[1] else 1
                 step = math.ceil((ov[axis] / len(movers)) / GRID) * GRID
                 for q in movers:
@@ -359,8 +387,33 @@ def _remove_overlaps(parts, pinned, max_rounds=400):
             return
 
 
-def _connectors_to_edge(parts):
-    """Slide each connector outward until its courtyard touches the layout's outer edge."""
+def _into_frame(parts, frame, fixed, conns, rounds=20):
+    """With an enclosure's board: move a part that sticks out back inside (grid steps), then clear overlaps again
+    without moving a hole or a connector, until nothing moves. What still does not fit is the caller's to refuse."""
+    from board import BOARD_MARGIN
+    inner = (frame[0] + BOARD_MARGIN, frame[1] + BOARD_MARGIN, frame[2] - BOARD_MARGIN, frame[3] - BOARD_MARGIN)
+    frozen = {f['ref'] for f in fixed}
+    for _ in range(rounds):
+        moved = False
+        for p in parts:
+            if p['ref'] in conns:
+                continue
+            b = part_bbox(p)
+            dx = (inner[0] - b[0]) if b[0] < inner[0] else (inner[2] - b[2]) if b[2] > inner[2] else 0
+            dy = (inner[1] - b[1]) if b[1] < inner[1] else (inner[3] - b[3]) if b[3] > inner[3] else 0
+            if dx or dy:
+                p['x'] += math.copysign(math.ceil(abs(dx) / GRID) * GRID, dx) if dx else 0
+                p['y'] += math.copysign(math.ceil(abs(dy) / GRID) * GRID, dy) if dy else 0
+                moved = True
+        if not moved:
+            return
+        _remove_overlaps(parts + list(fixed), pinned=frozen | set(conns), frozen=frozen)
+
+
+def _connectors_to_edge(parts, frame=None, fixed=()):
+    """Slide each connector outward until its courtyard touches the layout's outer edge, or with an enclosure's
+    board (frame) its edge less BOARD_MARGIN: there a cable reaches it from outside the case."""
+    from board import BOARD_MARGIN
     conns = [p for p in parts if _is_connector(p)]
     sides = {}
     if not conns:
@@ -381,7 +434,17 @@ def _connectors_to_edge(parts):
             w, h = b[2] - b[0], b[3] - b[1]
             for side in ('left', 'right', 'top', 'bottom'):
                 p['x'], p['y'] = x0, y0
-                if side == 'left':
+                if frame:
+                    # an enclosure's board: the courtyard's outer side on the board's edge less BOARD_MARGIN
+                    if side == 'left':
+                        p['x'] += (frame[0] + BOARD_MARGIN) - b[0]
+                    elif side == 'right':
+                        p['x'] += (frame[2] - BOARD_MARGIN) - b[2]
+                    elif side == 'top':
+                        p['y'] += (frame[1] + BOARD_MARGIN) - b[1]
+                    else:
+                        p['y'] += (frame[3] - BOARD_MARGIN) - b[3]
+                elif side == 'left':
                     p['x'] += (ex[0] - w - GAP) - b[0]
                 elif side == 'right':
                     p['x'] += (ex[2] + GAP) - b[0]
@@ -396,5 +459,5 @@ def _connectors_to_edge(parts):
                     best = (cost, side, rot, p['x'], p['y'])
         _, side, p['rot'], p['x'], p['y'] = best
         sides[p['ref']] = side
-    _remove_overlaps(parts, pinned={p['ref'] for p in conns})
+    _remove_overlaps(parts + list(fixed), pinned={p['ref'] for p in conns} | {f['ref'] for f in fixed}, frozen={f['ref'] for f in fixed})
     return sides
