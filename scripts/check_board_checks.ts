@@ -25,7 +25,9 @@ const outDir = path.join('server', 'outputs')
 const boards = fs.readdirSync(outDir).filter(f => f.endsWith('.board.json'))
   .map(f => ({ f, b: JSON.parse(fs.readFileSync(path.join(outDir, f), 'utf-8')) as BoardModel }))
 const routed = boards.filter(x => x.b.tracks && x.b.erc)
-const clean0 = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted || []).length)
+// a board with a pinout the generator assumed (an SMD relay demo's 2N3904) asks for a look, so it is not the clean one: a
+// local relay board made at 19:02 on 2026-11-17 came first by name and failed 3 with 11/12
+const clean0 = routed.find(x => (x.b.erc || []).length === 0 && !(x.b.unrouted || []).length && !(x.b.warnings || []).length)
 if (!clean0) {
   console.log(`FAIL a clean routed board in ${outDir}  none of ${boards.length} boards (npx tsx scripts/make_check_boards.ts makes them)`)
   process.exit(1)
