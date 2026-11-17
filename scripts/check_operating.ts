@@ -1735,7 +1735,7 @@ function verdictProblems(rs: OpResult[]): string[] {
     is(npnUno, 'op_drive', 'pass', 'Q1') && !!drive(npnEsp) && drive(npnEsp)!.state !== 'pass' && has(npnEsp, /^구동 전압: J1 값 ESP32 → 3\.3 V 신호로 계산$/)
     && !drive(npnEsp)!.detail.some(d => /^5 V: IB/.test(d)) && is(npnNone, 'op_drive', 'warn', 'Q1', /5 V 신호에서만/),
     `${said(npnUno)} | ${said(npnEsp)} | ${said(npnNone)}`)
-  // the Uno's pin gives the base resistor's whole current (ATmega328P sheet 7810D: 40 mA a pin at most, 20 mA rated):
+  // the Uno's pin gives the base resistor's whole current (ATmega328P sheet DS40002061B: 40 mA a pin at most, 20 mA rated):
   // 1.5 kΩ is a few mA and passes, 150 Ω is past 20 mA and warns, 68 Ω is past 40 mA and is an error whatever the load;
   // a Mega (ATmega2560) or an ESP32 with the same 68 Ω gets no pin verdict, its limits not looked up (2026-11-17)
   const pinAt = (header: string, r: string) => run(variant(variant(relay, setValue('R1', r)), setValue('J1', header)))
@@ -1744,7 +1744,7 @@ function verdictProblems(rs: OpResult[]): string[] {
   const pinOf = (rs: OpResult[]) => drive(rs)?.detail.find(d => /^아두이노 핀 전류/.test(d)) ?? ''
   add('an Uno pin through the base resistor: 1.5 kΩ passes, 150 Ω (past 20 mA) warns, 68 Ω (past 40 mA) is an error with a fix; a Nano the same; a Mega or an ESP32 not judged on it',
     is(npnUno, 'op_drive', 'pass', 'Q1') && !pinOf(npnUno)
-    && is(p150, 'op_drive', 'warn', 'Q1', /아두이노 핀에서 .* 20 mA를 넘습니다/) && /7810D/.test(pinOf(p150)) && /Ω 이상으로 키우면/.test(drive(p150)?.fix ?? '')
+    && is(p150, 'op_drive', 'warn', 'Q1', /아두이노 핀에서 .* 20 mA를 넘습니다/) && /DS40002061B/.test(pinOf(p150)) && /Ω 이상으로 키우면/.test(drive(p150)?.fix ?? '')
     && is(p68, 'op_drive', 'error', 'Q1', /절대 최대 40 mA를 넘어 핀이 망가질 수/) && /R1을 \d+ Ω 이상으로 키우면 핀 전류가 20 mA 아래로/.test(drive(p68)?.fix ?? '')
     && is(nano68, 'op_drive', 'error', 'Q1', /절대 최대 40 mA/)
     && !/아두이노 핀/.test(drive(mega68)?.summary ?? '') && !pinOf(mega68) && !/아두이노 핀/.test(drive(esp68)?.summary ?? '') && !pinOf(esp68),
