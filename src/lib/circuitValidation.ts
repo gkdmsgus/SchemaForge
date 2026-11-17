@@ -201,6 +201,33 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
       refs: [s.ref], nets: [s.net] })
   }
 
+  // CIR206-CIR207. an RS-485 transceiver (TI SN75176B, 2026-11-17). 206: its direction pins (2 ~RE, 3 DE) joined to nothing
+  // else: the chip neither knows when to talk nor when to listen. 207 (advice): a resistor straight across A and B is the
+  // bus's termination, right only on the two boards at the bus's ends (SN75176B datasheet SLLS101I, 7.2: "terminate the
+  // line at both ends in its characteristic impedance", its CAT-5E example 120 Ω)
+  for (const u of components.filter(c => c.name === 'RS485')) {
+    const loose = [['2', 'RE'], ['3', 'DE']].filter(([pin]) => {
+      const n = netOf(u.ref, pin)
+      return !n || (on.get(n) ?? []).every(nd => nd.ref === u.ref)
+    })
+    if (loose.length) {
+      add({ code: 'CIR206', severity: 'warning', title: 'RS-485 방향 핀이 연결되지 않았습니다',
+        message: `${u.ref}의 ${loose.map(([, nm]) => nm).join('·')} 핀이 아무 데도 연결되지 않았습니다 (방향 핀: 지금 말할지 들을지 정하는 핀). RS-485는 선 한 쌍을 여러 기기가 나눠 써서 한 번에 한 기기만 말해야 하는데, 이 핀이 떠 있으면 칩이 언제 보내고 받을지 정해지지 않아 통신이 되지 않습니다.`,
+        suggestion: `${u.ref}의 RE(2번)와 DE(3번)를 서로 잇고, 마이크로컨트롤러의 출력 핀 하나에 연결합니다. 그 핀을 높게 하면 보내고, 낮게 하면 받습니다.`,
+        chat: `${u.ref}의 2번(RE)과 3번(DE) 핀을 같은 넷 RS485_DIR로 묶어줘.`,
+        refs: [u.ref], nets: [] })
+    }
+    const a = netOf(u.ref, '6'), b = netOf(u.ref, '7')
+    const term = a && b && a !== b ? components.find(c => c.name === 'R' && [netOf(c.ref, '1'), netOf(c.ref, '2')].sort().join() === [a, b].sort().join()) : undefined
+    if (term) {
+      add({ code: 'CIR207', severity: 'warning', advice: true, title: 'RS-485 종단 저항은 버스 양 끝에만 둡니다',
+        message: `${u.ref}의 A와 B 사이에 종단 저항(${term.ref})이 있습니다 (종단 저항: 선 끝에서 신호가 튕겨 돌아오지 않게 막는 저항). 종단 저항은 버스의 물리적인 양 끝 두 기기에만 둡니다. 가운데 기기에도 달면 신호가 약해져 통신이 불안정해집니다.`,
+        suggestion: `이 보드가 버스의 맨 끝이 아니면 이 저항을 빼거나, 스위치나 점퍼로 켜고 끌 수 있게 합니다. 값은 선의 특성 임피던스와 같게 합니다 (TI SN75176B 데이터시트의 예: CAT-5E 선에 120 Ω).`,
+        chat: `종단 저항 ${term.ref}에 스위치(SW)를 직렬로 추가해, 이 보드가 버스 끝일 때만 종단 저항이 이어지게 해줘.`,
+        refs: [term.ref, u.ref], nets: [a!, b!] })
+    }
+  }
+
   // CIR204. a servo powered from the microcontroller board alone (2026-11-17): a header whose value says SERVO, its supply
   // pin's net (named as a supply: 5V, VCC, VIN, VBUS…) fed by a board's header (Arduino, ESP32, Pico…) or USB and by
   // nothing else that supplies (a battery, a regulator's output, a supply header). No figure is given: the stall current

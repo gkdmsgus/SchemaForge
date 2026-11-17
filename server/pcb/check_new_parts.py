@@ -83,5 +83,10 @@ part_case('P1', 'F1', 'Fuse', '500mA', {'1': 'VBAT', '2': 'VCC'},
           [('BT1', 'Battery', '9V'), ('R1', 'R', '680'), ('D1', 'LED', 'RED')],
           {'VBAT': ['BT1.1'], 'VCC': ['R1.1'], 'LA': ['R1.2', 'D1.1'], 'GND': ['D1.2', 'BT1.2']})
 
+# P2 an RS-485 transceiver (TI SN75176B) between a board's header and a two-wire bus header, its direction pins tied
+part_case('P2', 'U1', 'RS485', 'SN75176B', {'1': 'RX', '2': 'DIR', '3': 'DIR', '4': 'TX', '5': 'GND', '6': 'BUS_A', '7': 'BUS_B', '8': '+5V'},
+          [('J1', 'Conn_01x05', 'Arduino Uno'), ('J2', 'Conn_01x02', 'RS485 BUS'), ('C1', 'C', '100nF')],
+          {'+5V': ['J1.1', 'C1.1'], 'GND': ['J1.2', 'C1.2'], 'RX': ['J1.3'], 'TX': ['J1.4'], 'DIR': ['J1.5'], 'BUS_A': ['J2.1'], 'BUS_B': ['J2.2']})
+
 print(f'\n{failed} check(s) failed' if failed else '\nALL PASS')
 sys.exit(1 if failed else 0)

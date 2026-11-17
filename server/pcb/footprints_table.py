@@ -18,6 +18,8 @@ maintainers take them from the datasheets) and the footprint pad layout:
   Regulator_Linear:AMS1117-3.3 SOT-223 1=GND 2=VO 3=VI (tab = 2)
   Regulator_Linear:L7805       TO-220  1=IN 2=GND 3=OUT
   Timer:NE555D / NE555P        1..8 same on SOIC-8 and DIP-8
+  RS485 (TI SN75176B)          1=R 2=~RE 3=DE 4=D 5=GND 6=A 7=B 8=VCC, the same on its D (SOIC-8) and P (PDIP-8)
+                               packages (datasheet SLLS101I, table 4-1)
   Relay:SANYOU_SRD_Form_C      1=COM 2,5=coil 3=NO 4=NC
     (NO/NC read from the symbol drawing: the arm rests on pin 4's contact;
      footprint drills match the Sanyou SRD datasheet: COM offset 2 mm,
@@ -78,6 +80,9 @@ TABLE = {
     ('Battery', 'tht'): ('Connector_PinHeader_2.54mm', 'PinHeader_1x02_P2.54mm_Vertical', IDENTITY2),
     ('Crystal', 'smd'): ('Crystal', 'Crystal_SMD_HC49-SD', IDENTITY2),
     ('Crystal', 'tht'): ('Crystal', 'Crystal_HC49-U_Vertical', IDENTITY2),
+    # an RS-485 transceiver, TI SN75176B: SOIC-8 (D, 4.90 x 3.91 mm) or PDIP-8 (P)
+    ('RS485', 'smd'):  ('Package_SO', 'SOIC-8_3.9x4.9mm_P1.27mm', {i: str(i) for i in range(1, 9)}),
+    ('RS485', 'tht'):  ('Package_DIP', 'DIP-8_W7.62mm', {i: str(i) for i in range(1, 9)}),
     # a fuse or a resettable PTC in series with a supply, no polarity: a 1206 chip, or a holder a TR5 fuse plugs into
     ('Fuse', 'smd'):   ('Fuse', 'Fuse_1206_3216Metric', IDENTITY2),
     ('Fuse', 'tht'):   ('Fuse', 'Fuseholder_TR5_Littelfuse_No560_No460', IDENTITY2),
@@ -101,6 +106,7 @@ ASSUMED_PART = {
     ('Q_NMOS', 'smd'): '2N7002', ('Q_NMOS', 'tht'): '2N7000',
     ('REG', 'smd'): 'AMS1117', ('REG', 'tht'): 'L78xx',
     ('Bridge', 'smd'): 'MB6S', ('Bridge', 'tht'): 'DF06M',
+    ('RS485', 'smd'): 'SN75176B', ('RS485', 'tht'): 'SN75176B',
 }
 
 

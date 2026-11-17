@@ -102,6 +102,11 @@ const switchedMotor = motorOn([['VBAT', 'BT1.1', 'SW1.1'], ['VM', 'SW1.2', 'M1.1
 const relayMotor = motorOn([['VBAT', 'BT1.1', 'K1.3', 'K1.1'], ['VM', 'K1.4', 'M1.1', 'D1.2'], ['GND', 'K1.2']], [['K1', 'Relay', '12V']])
 const diodeMotor = motorOn([['VBAT', 'BT1.1', 'D9.1'], ['VM', 'D9.2', 'M1.1', 'D1.2']], [['D9', 'D', '1N5819']])
 const unknownSupply = motorOn([['VM', 'J9.1', 'M1.1', 'D1.2']], [], ['J9', 'Conn_01x02', 'J'])
+// an RS-485 transceiver U1 (SN75176B) on a board's header J1 and a bus header J2: the direction pins as each case puts them
+const rs485 = (dir: string[][], term = false) => g([['J1', 'Conn_01x05', 'Arduino Uno'], ['U1', 'RS485', 'SN75176B'], ['J2', 'Conn_01x02', 'RS485 BUS'], ['C1', 'C', '100nF'],
+  ...(term ? [['R1', 'R', '120'] as Part] : [])],
+  ['+5V', 'J1.1', 'U1.8', 'C1.1'], ['GND', 'J1.2', 'U1.5', 'C1.2'], ['RX', 'U1.1', 'J1.4'], ['TX', 'U1.4', 'J1.5'], ...dir,
+  ['BUS_A', 'U1.6', 'J2.1', ...(term ? ['R1.1'] : [])], ['BUS_B', 'U1.7', 'J2.2', ...(term ? ['R1.2'] : [])])
 // a servo (J2, 3 pins: signal, +, −) on a board's header J1: its supply pin's net is what each case changes
 const servoOn = (power: string[][], extra: Part[] = [], board = 'Arduino Uno') =>
   g([['J1', 'Conn_01x04', board], ['J2', 'Conn_01x03', 'SERVO SG90'], ...extra],
@@ -130,6 +135,14 @@ const checks: [string, boolean][] = [
     validateCircuit(straightMotor).some(i => i.code === 'CIR205' && i.advice && /퓨즈:/.test(i.message) && /불이 날 수/.test(i.message) && /PTC/.test(i.suggestion) && !/\d+\s*(mA|A\b)/.test(i.suggestion))
     && !cir('CIR202', timer([['IN', 'BT1.1', 'F1.1'], ['F', 'F1.2', 'D9.1'], ['VCC', 'D9.2']], [['F1', 'Fuse', '1A'], ['D9', 'D', '1N5819']])).length
     && cir('CIR203', motorOn([['VBAT', 'BT1.1', 'F1.1'], ['VM', 'F1.2', 'M1.1', 'D1.2']], [['F1', 'Fuse', '2A']])).join() === 'M1'],
+  // CIR206-CIR207 (2026-11-17): an SN75176B with RE and DE on the board's pin passes; RE or DE left on no other part warns
+  // (not as advice: it does not talk); a resistor across A and B is advice to keep it only at the bus's ends
+  ['CIR206: RS-485 RE/DE joined to the board passes; DE or RE on nothing warns (a problem, not advice) and names the pin',
+    !cir('CIR206', rs485([['DIR', 'U1.2', 'U1.3', 'J1.3']])).length && cir('CIR206', rs485([['DIR', 'U1.2', 'J1.3']])).join() === 'U1'
+    && validateCircuit(rs485([['RE', 'U1.2']])).some(i => i.code === 'CIR206' && !i.advice && /RE·DE/.test(i.message) && /방향 핀:/.test(i.message) && /RE\(2번\)와 DE\(3번\)/.test(i.suggestion))],
+  ["CIR207: a resistor across A and B is advice to keep it at the bus's ends only, citing the datasheet's 120 Ω example; none, no word",
+    validateCircuit(rs485([['DIR', 'U1.2', 'U1.3', 'J1.3']], true)).some(i => i.code === 'CIR207' && i.advice && i.refs.join() === 'R1,U1' && /양 끝/.test(i.message) && /120 Ω/.test(i.suggestion))
+    && !cir('CIR207', rs485([['DIR', 'U1.2', 'U1.3', 'J1.3']])).length],
   // CIR204 (2026-11-17): a servo on an Uno's 5 V alone warns; with a battery, a regulator's output or a supply header on that
   // net, or on a net named as a signal, it does not; the warning names what, why and the fix with no figure of its own
   ['CIR204: a servo fed only by the Uno\'s 5 V (or USB) warns; a battery, a regulator or a supply header on it, or a bare signal net, does not',
