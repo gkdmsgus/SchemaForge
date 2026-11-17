@@ -68,9 +68,14 @@ export function splitEdit(edit: BoardEdit): [EditPart, BoardEdit][] {
   return out
 }
 
+/** the board an enclosure fixes (기구 조건): size and mounting holes in mm from the board's top-left corner */
+export interface Mech { width: number; height: number; holes: [number, number][] }
+
 export interface Overrides {
   parts: Record<string, [number, number, number]>
   net_width: Record<string, number>
+  /** kept on every reroute, so a round never changes the board's size or its holes */
+  mech?: Mech
 }
 
 type Box = [number, number, number, number]

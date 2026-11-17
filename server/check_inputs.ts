@@ -120,6 +120,12 @@ const I2: Case[] = [
   post('/chat_edit', { graph: GRAPH, message: 'x', history: 'x' }, 'history a word'),
   post('/chat_edit', { graph: GRAPH, message: 5 }, 'message a number'),
   post('/test_code', { code: 5 }, 'code a number', true),
+  // the enclosure's board (2026-11-17): refused before any slot or file, on both servers (the board route is open to all)
+  post('/generate_pcb_stream', { filename: 'x.net', mech: 'big' }, 'mech a word'),
+  post('/generate_pcb_stream', { filename: 'x.net', mech: { width: 3, height: 30 } }, 'mech 3 mm wide'),
+  post('/generate_pcb_stream', { filename: 'x.net', mech: { width: '40', height: 30 } }, 'mech width a word'),
+  post('/generate_pcb_stream', { filename: 'x.net', mech: { width: 40, height: 30, holes: [[50, 5]] } }, 'a hole off the board'),
+  post('/generate_pcb_stream', { filename: 'x.net', mech: { width: 40, height: 30, holes: Array.from({ length: 13 }, () => [10, 10]) } }, '13 holes'),
   post('/mouser_search', { components: 'x' }, 'components a word'),
   post('/mouser_search', { components: [5] }, 'a line a number'),
   post('/mouser_search', { components: [{ ref: 'R1', value: {} }] }, 'a value an object'),

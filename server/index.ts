@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto'
 import {
   MAX_ROUNDS, applyEdit, askModel, backup, better, clashText, describeBoard, describeOutcome, metricsOf, precheck, precheckNote,
   splitEdit, readBoard, roundFeedback, runGenerator,
-  type AiRound, type Metrics, type Overrides,
+  type AiRound, type Mech, type Metrics, type Overrides,
 } from './ai_layout'
 import { childEnv, runSkidl as runSkidlIn } from './skidl_run'
 import { parseNetlist, type NetGraph, type NetNode } from './netlist'
@@ -1284,6 +1284,26 @@ async function slotFor(req: Request, res: Response): Promise<Slot | null> {
 const netName = (v: unknown) => String(v ?? '').replace(/["\\\r\n\t]/g, '').trim().slice(0, 64)
 
 /** a graph from a request as graphToNetlist can write it, or null when it is not one or is too big */
+/**
+ * The board an enclosure fixes, as a request sends it: {width, height} in mm (5 to 500, the generator's own bounds) and up to
+ * 12 holes [x, y] on the board. Null for anything else; the generator says when a hole is too near the edge or the circuit
+ * does not fit (2026-11-17, enclosure input step 1).
+ */
+export function cleanMech(m: unknown): Mech | null {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null
+  const { width, height, holes } = m as Record<string, unknown>
+  const mm = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
+  if (!mm(width, 5, 500) || !mm(height, 5, 500)) return null
+  const list = holes == null ? [] : holes
+  if (!Array.isArray(list) || list.length > 12) return null
+  const out: [number, number][] = []
+  for (const h of list) {
+    if (!Array.isArray(h) || h.length !== 2 || !mm(h[0], 0, width as number) || !mm(h[1], 0, height as number)) return null
+    out.push([h[0] as number, h[1] as number])
+  }
+  return { width: width as number, height: height as number, holes: out }
+}
+
 function cleanGraph(g: NetGraph | undefined): NetGraph | null {
   if (!g || !Array.isArray(g.components) || !Array.isArray(g.nets) || g.components.length > 300 || g.nets.length > 600
     || g.nets.some(n => !Array.isArray(n?.nodes) || n.nodes.length > 300)) return null
@@ -1419,7 +1439,7 @@ async function runDrc(pcbPath: string, signal?: AbortSignal): Promise<DrcResult>
 async function runAiLoop(
   netPath: string, pcbPath: string, style: PcbStyle,
   doneEvent: Record<string, unknown>, drc: DrcResult,
-  emit: (r: AiRound) => void, signal: AbortSignal, slot: () => Promise<Answer>,
+  emit: (r: AiRound) => void, signal: AbortSignal, mech: Mech | null, slot: () => Promise<Answer>,
 ): Promise<{ done: Record<string, unknown>; drc: DrcResult } | null> {
   const jsonPath = pcbPath.replace(/\.kicad_pcb$/, '') + '.board.json'
   const summary = (doneEvent.summary || {}) as Record<string, unknown>
@@ -1451,6 +1471,7 @@ async function runAiLoop(
     const ov: Overrides = {
       parts: Object.fromEntries(board.parts.map(p => [p.ref, [p.x, p.y, p.rot] as [number, number, number]])),
       net_width: { ...((summary.net_width as Record<string, number>) || {}) },
+      ...(mech ? { mech } : {}),
     }
     const history: string[] = []
     const feedback: string[] = []   // what happened to each earlier proposal, fed back to the model
@@ -1470,7 +1491,7 @@ async function runAiLoop(
       for (const [part, sub] of splitEdit(edit)) {
         if (signal.aborted) break
         const label = part === 'width' ? '선 폭' : '배치'
-        const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width } }
+        const trial: Overrides = { parts: { ...ov.parts }, net_width: { ...ov.net_width }, ...(ov.mech ? { mech: ov.mech } : {}) }
         const notes = applyEdit(trial, sub, board)
         // Reject collisions before paying for a reroute and DRC, and tell the model exactly what hit what.
         const problems = precheck(board, trial)
@@ -1595,10 +1616,14 @@ const PCB_SAYS = {
   noPython: '서버에서 기판을 만드는 프로그램을 실행하지 못했습니다. 운영자가 서버 설치(python)를 확인해야 합니다.',
   checkFailed: '완성된 기판을 검사하다가 서버 오류가 나서 멈췄습니다. 재시도를 눌러 다시 만들어 주세요.',
   busy: '지금 서버에서 기판을 만드는 사람이 많아 시작하지 못했습니다. 잠시 뒤에 다시 눌러 주세요.',
+  badMech: '기판 크기와 고정 구멍 자리를 읽지 못했습니다. 가로·세로는 5~500 mm 사이 숫자로, 구멍은 기판 안의 x, y(mm)로 12개까지 적어 주세요.',
 }
 
 app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, res: Response) => {
   const { filename, graph, baseName, style, ai } = req.body || {}
+  const mechIn = (req.body || {}).mech
+  const mech = mechIn == null ? null : cleanMech(mechIn)
+  if (mechIn != null && !mech) return res.status(400).json({ code: 'bad_mech', error: PCB_SAYS.badMech })
   if (ai === true) {
     // the board itself is open to all (the demos); the AI rounds call the model
     const refusal = memberRefusal(GUARD, req.user)
@@ -1691,8 +1716,12 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
   if (res.socket) res.socket.setNoDelay(true)
   streaming = true
 
+  // the enclosure's board goes to the generator as its overrides file, read once at its start and removed after
+  const mechPath = mech ? join(tmpdir(), `sf_mech_${randomUUID().slice(0, 8)}.json`) : null
+  if (mechPath) writeFileSync(mechPath, JSON.stringify({ mech }), 'utf8')
   const proc = spawn('python', [join(process.cwd(), 'pcb_generator.py'), netPath, pcbPath,
-    '--style', pcbStyle(style), '--stream'], { env: childEnv() })
+    '--style', pcbStyle(style), '--stream', ...(mechPath ? ['--overrides', mechPath] : [])], { env: childEnv() })
+  if (mechPath) proc.once('close', () => { try { unlinkSync(mechPath) } catch { /* already gone */ } })
   abort.signal.addEventListener('abort', () => proc.kill())
   // the run ends when python has and the DRC and AI rounds after its done line have
   let checked: Promise<void> = Promise.resolve()
@@ -1706,7 +1735,9 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
     for (const line of lines) {
       if (!line.trim() || finished) continue
       try {
-        const ev = JSON.parse(line) as { type: string }
+        const ev = JSON.parse(line) as { type: string; error?: string }
+        // the enclosure's board cannot take the circuit: the generator's own Korean words (exit 3 follows)
+        if (ev.type === 'refused') { end('error', { code: 'mech', error: ev.error || PCB_SAYS.badMech }); continue }
         if (ev.type === 'done') {
           // KiCad checks the finished board; the generator itself stays KiCad-free.
           // The python process exits while DRC runs, so hold the close handler back.
@@ -1727,7 +1758,7 @@ app.post('/generate_pcb_stream', optionalAuth as any, async (req: AuthRequest, r
             let final = ev as Record<string, unknown>
             let lastDrc = drc
             if (useAi) {
-              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal,
+              const out = await runAiLoop(netPath, pcbPath, pcbStyle(style), final, drc, r => send('ai', r), abort.signal, mech,
                 () => SLOTS.acquire(jobKey(req), abort.signal))
               if (out) {
                 final = out.done
