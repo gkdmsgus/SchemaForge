@@ -61,6 +61,9 @@ const IR_IRLZ = 'International Rectifier IRLZ44NPbF 데이터시트 PD-94831 (20
 const TI_555 = 'TI NE555 데이터시트 SLFS022K'
 const AMS_1117 = 'Advanced Monolithic AMS1117 데이터시트(ds1117)'
 const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
+// the ATmega328P of the Uno and Nano, read 2026-11-17 from Microchip's copy of Atmel's sheet 7810D (the one made in the
+// automotive process; the general sheet DS40002061 was over the fetch size limit). 28.1 and the notes under 28.2
+const ATMEGA_328P = 'Atmel ATmega328P 데이터시트 7810D-AVR-01/15 (자동차용 공정판)'
 // two 18650 lithium-ion cells, read 2026-11-14: Panasonic's sheet (batteryspace.com copy) and Murata's (murata.com)
 const PANA_NCR = 'Panasonic NCR18650B 데이터시트 VERSION 13.11 R1'
 const MURATA_VTC6 = 'Murata US18650VTC6 데이터시트 Version 001'
@@ -252,6 +255,14 @@ export const SPECS = {
     smd: { p_max: { v: 0.125, src: 'Yageo RC0805 부품 스펙시트(RC0805FR-071K5L): 정격 전력 0.125 W @ 70 °C' } },
     tht: { p_max: { v: 0.25, src: 'Yageo CFR-25 데이터시트: 정격 전력 0.25 W @ 70 °C (몸체 길이 6.3 mm, 지름 2.4 mm로 KiCad R_Axial_DIN0207_L6.3mm_D2.5mm 풋프린트 크기)' } },
   } satisfies Record<'smd' | 'tht', ResSpec>,
+
+  // a microcontroller pin driving a transistor's base through a resistor: what one pin may give
+  mcu: {
+    ATmega328P: {
+      pin_abs_max: { v: 0.04, src: `${ATMEGA_328P}, 28.1 절대 최대 정격: I/O 핀 하나당 DC 전류 40.0 mA` },
+      pin_rated: { v: 0.02, src: `${ATMEGA_328P}, 28.2 주석 4: VCC 5 V에서 시험 조건 20 mA보다 큰 전류는 보장하지 않음 (20 mA에서 출력 최소 4.1 V)` },
+    },
+  } satisfies Record<'ATmega328P', Record<'pin_abs_max' | 'pin_rated', Num>>,
 
   // a lithium-ion cell: charged to this voltage, named by this one. A pack of n cells in series is n times these.
   // LiFePO4 and high-voltage (LiHV) cells charge to other voltages and are not read as lithium-ion

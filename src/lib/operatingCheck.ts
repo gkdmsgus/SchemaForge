@@ -412,14 +412,17 @@ const writtenLevels = (t: string) => {
 /** a transistor's base or gate pin */
 const controlPin = (x: Ctx, nd: Node) => { const q = x.part(nd.ref); return !!q && (q.part === 'Q_NPN' || q.part === 'Q_NMOS') && nd.pin === 1 }
 /** `by`: what the level is read from, for the basis ("J1 값 Arduino Uno") */
-function headerLevel(x: Ctx, p: OpPart, signal: string): { v: 3.3 | 5; by: string } | null {
+function headerLevel(x: Ctx, p: OpPart, signal: string): { v: 3.3 | 5; by: string; mcu?: 'ATmega328P' } | null {
   if (!/^Conn_/.test(p.part) || isMotor(p) || /PWR|POWER|전원/i.test(p.value)) return null
   const s = p.value.toUpperCase()
-  const level = (v: 3.3 | 5 | null, more = '') => (v == null ? null : { v, by: `${p.ref} 값 ${p.value}${more}` })
-  if (/ESP-?32|ESP-?8266|STM32|RP2040|(?<![A-Z])PICO(?![A-Z])|RASPBERRY|JETSON|NANO\s*33/.test(s)) return level(3.3)
+  if (/ESP-?32|ESP-?8266|STM32|RP2040|(?<![A-Z])PICO(?![A-Z])|RASPBERRY|JETSON|NANO\s*33/.test(s)) return { v: 3.3, by: `${p.ref} 값 ${p.value}` }
   const words = s.split(/[^A-Z0-9]+/).filter(Boolean)
   const at = words.findIndex(w => /^(UNO|NANO|MEGA|MEGA2560)$/.test(w))
   const board = at >= 0 && words.slice(0, at).every(w => w === 'ARDUINO') && words.slice(at + 1).every(w => BOARD_TAIL.test(w))
+  // the chip whose pin limits are looked up: an Uno or a Nano (not a Mega, an ATmega2560), or the ATmega328 named, at 5 V
+  const avr = (board && /^(UNO|NANO)$/.test(words[at])) || /ATMEGA328/.test(s)
+  const level = (v: 3.3 | 5 | null, more = '') => (v == null ? null
+    : { v, by: `${p.ref} 값 ${p.value}${more}`, ...(v === 5 && avr ? { mcu: 'ATmega328P' as const } : {}) })
   // the chip with no board named around it (an Arduino Nano ATmega328 is still the 5 V board)
   const bare = at < 0 && /ATMEGA328/.test(s)
   const board5 = board || /ATMEGA328/.test(s)
@@ -1080,7 +1083,7 @@ const stringVfMax = (s: LedString, specs: LedSpec[]) =>
   (s.k > 1 ? Math.max(...specs.map(sp => sp.vf_max.v)) : specs.reduce((a, sp) => a + sp.vf_max.v, 0))
 
 /** `signal`: an assumed level (the signal voltage is not known); `named`: a signal whose level its header names */
-interface Cand { label: string; lv: Level; signal: boolean; named?: boolean }
+interface Cand { label: string; lv: Level; signal: boolean; named?: boolean; mcu?: 'ATmega328P' }
 interface Load {
   label: string
   kind: 'res' | 'fixed' | 'clamp' | 'unknown'
@@ -1253,7 +1256,7 @@ function signalOn(x: Ctx, net: string, skip: string): Cand[] {
   const parts = [...new Map(x.on(net).filter(n => n.ref !== skip).map(n => [n.ref, x.part(n.ref)] as const)).values()]
     .filter((p): p is OpPart => !!p && isExternal(p))
   if (!parts.length) return signalCands()
-  const one = (v: 3.3 | 5, by: string): Cand[] => [{ label: V(v), lv: { lo: v, hi: v, why: `${by} → ${V(v)} 신호로 계산` }, signal: false, named: true }]
+  const one = (v: 3.3 | 5, by: string, mcu?: 'ATmega328P'): Cand[] => [{ label: V(v), lv: { lo: v, hi: v, why: `${by} → ${V(v)} 신호로 계산` }, signal: false, named: true, ...(mcu ? { mcu } : {}) }]
   // the signal net's own name, when it writes 3.3 V alone, is that pin's level before any name of the board (2026-11-09
   // review: a pin on VCC_3V3, 3V3_OUT or IOREF_3V3 of an "Arduino Uno" header read as 5 V). Only ever lowering it: a 5 V in
   // the name is as often the load's (PWM_5V, FAN_5V_CTRL) and lifted an ESP32's 3.3 V pin to 5 V (third review of 11-09)
@@ -1262,7 +1265,8 @@ function signalOn(x: Ctx, net: string, skip: string): Cand[] {
   const levels = parts.map(p => headerLevel(x, p, net))
   const v = levels[0]?.v
   if (v == null || levels.some(l => l?.v !== v)) return signalCands()
-  return one(v, levels.map(l => l!.by).join(', '))
+  // a pin of a chip whose limits are known only when every header driving the net is that chip
+  return one(v, levels.map(l => l!.by).join(', '), levels.every(l => l!.mcu === 'ATmega328P') ? 'ATmega328P' : undefined)
 }
 
 /** what drives the base/gate: a supply, a 555 output, a resistor from a signal, or nothing */
@@ -1431,6 +1435,23 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
         ...(knownJ ? senseLine(vE, `부하 ${mA(iTop)}`) : []),
         ...(ledClamp ? [`${clamp!.label}에 직렬 저항이 없어 실제 전류는 제한되지 않습니다. 아래는 그 LED에 정격 ${mA(clamp!.iCap!)}만 흐른다고 보고 계산했습니다`] : []),
       ]
+      // the microcontroller pin feeding the base resistor gives that resistor's whole current, (V − VBE − VE) ÷ R: past
+      // the pin's absolute maximum it can be damaged whatever the load, past its rated current it is not guaranteed
+      // (2026-11-17, a brain session's idea from a reel on BJT drive). VBE at its saturation maximum gives the least current
+      // the pin can give, so an error is never overstated; VE is 0 when the load is unknown (more current, not less)
+      const pinSpec = SPECS.mcu.ATmega328P
+      const pinI = sw.cands.filter(cd => cd.mcu).map(cd => ({ cd, i: (cd.lv.hi - vbe - vE) / sw.drive!.ohms }))
+      const pin = pinI.reduce<(typeof pinI)[number] | null>((a, p) => (!a || p.i > a.i ? p : a), null)
+      const pinLine = pin ? `아두이노 핀 전류 = (${V(pin.cd.lv.hi)} − VBE ${V(vbe)}${vE ? ` − 감지 저항 ${V(vE)}` : ''}) ÷ ${sw.drive!.r.ref} ${ohm(sw.drive!.ohms)} = ${mA(pin.i)} · ${cite(pinSpec.pin_abs_max)} · ${cite(pinSpec.pin_rated)}` : ''
+      const pinFix = (iMax: number) => `${eul(sw.drive!.r.ref)} ${Math.ceil((pin!.cd.lv.hi - vbe - vE) / iMax / 10) * 10} Ω 이상으로 키우면 핀 전류가 ${mA(iMax)} 아래로 내려갑니다. `
+        + `키운 뒤 '트랜지스터 켜짐'이 그대로 통과하는지 확인합니다. 부하 전류가 커서 베이스 전류를 줄일 수 없으면 로직 레벨 MOSFET(예: IRLZ44N)을 씁니다.`
+      if (pin && atLeast(pin.i, pinSpec.pin_abs_max.v)) {
+        const [a, b] = two(pin.i, pinSpec.pin_abs_max.v, mA)
+        verdict('error', `${q.ref} 베이스 저항 ${sw.drive!.r.ref} ${ohm(sw.drive!.ohms)}이 작아 아두이노 핀에서 ${a}가 흐릅니다. 핀 하나의 절대 최대 ${b}를 넘어 핀이 망가질 수 있습니다`, [...head, pinLine])
+        sw.result.fix = pinFix(pinSpec.pin_rated.v)
+        sw.offWhy = sw.result.summary
+        continue
+      }
       if (clamp && !ledClamp) { verdict('unknown', `${q.ref} 부하가 단락되어 켜짐을 계산하지 않았습니다 (스위치 전류 한계 참고)`, head, clamp.cause ?? q.ref); sw.offWhy = sw.result.summary; continue }
       if (!knownJ) {
         const lines = sw.cands.map(cd => `${cd.label}: IB ${mA(Math.max(0, ib(cd)))}`)
@@ -1460,6 +1481,13 @@ function analyzeSwitches(x: Ctx, strings: LedString[]): Switch[] {
         }
       } else {
         verdict('unknown', `${q.ref} 켜짐을 보장할 수 없습니다: ${per.find(p => p.rg.state === 'unknown')!.rg.line}`, [...head, ...lines])
+      }
+      // past the pin's rated current: a pass becomes a warning, any other verdict keeps its own and shows the line
+      if (pin && pin.i > pinSpec.pin_rated.v + 1e-9) {
+        if (sw.result.state === 'pass') {
+          verdict('warn', `${q.ref} 아두이노 핀에서 ${mA(pin.i)}가 흘러, 핀이 보장하는 ${mA(pinSpec.pin_rated.v)}를 넘습니다. 핀 출력 전압이 떨어지거나 핀에 무리가 갈 수 있습니다`, [...head, ...lines, pinLine])
+          sw.result.fix = pinFix(pinSpec.pin_rated.v)
+        } else sw.result.detail.push(pinLine)
       }
       sw.offWhy = sw.dropMax == null ? `${ga(q.ref)} 켜지는지 보장되지 않아 계산하지 않았습니다 (트랜지스터 켜짐 참고)` : ''
       if (ledClamp) {
