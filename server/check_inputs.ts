@@ -1,12 +1,17 @@
-// Checks I1-I2: what the server answers a request it cannot use. Every case is a real request to a server started here,
+// Checks I1-I2, F1-F4: what the server answers a request it cannot use. Every case is a real request to a server started here,
 // in development and in production (NODE_ENV=production), and passes only on the status it names, with JSON whose error
 // is a Korean sentence and no stack or server path anywhere in the answer. Express's own pages showed the stack in
 // development (a broken JSON body: "SyntaxError ... at JSON.parse" and the server's paths) and English in production.
 // I1 the body or address Express could not read: broken JSON, too large, a malformed %-escape; a route that is not there.
 // I2 a field of the wrong type or missing on each route that reads a body (a number for a description was a TypeError).
+// F1 an opinion (POST /feedback, 의견 남기기) the server cannot use: 400 in Korean on both servers. F2 one it can is kept as
+// one JSON line of rating, comment and circuit only (no address, nothing else sent), 500 Korean letters fit. F3 the sixth
+// from one address in ten minutes is 429 in Korean, another address still gets through. F4 the file is a dot file in
+// outputs/ (the file routes refuse dot files: check_deploy_guard D16) and the server names it nowhere in its answers.
 // No model, Supabase or Mouser is called: the model's address is a closed port and no Mouser key is given.
 // Usage (from server/): npx tsx check_inputs.ts   → exit 0 only if all pass
 import { spawn, type ChildProcess } from 'child_process'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { request } from 'http'
 import { createServer } from 'net'
 import { tmpdir } from 'os'
@@ -27,11 +32,16 @@ const freePort = () => new Promise<number>((resolve, reject) => {
 
 interface Server { port: number; proc: ChildProcess; said: () => string }
 
+/** where each server keeps the opinions it is sent (SF_FEEDBACK_FILE), not the checkout's outputs/ */
+const FEEDBACK_DIR = mkdtempSync(join(tmpdir(), 'sf_feedback_'))
+const feedbackFile = (mode: string) => join(FEEDBACK_DIR, `${mode}.jsonl`)
+
 async function start(mode: 'development' | 'production'): Promise<Server> {
   const port = await freePort()
   const proc = spawn(process.execPath, [join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'index.ts'], {
     env: { ...process.env, NODE_ENV: mode, PORT: String(port), SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', ALLOWED_EMAILS: '',
-           SF_OUTPUTS_SWEEP: '', FRONTEND_URL: '', OPENAI_API_KEY: 'sk-none', OPENAI_BASE_URL: 'http://127.0.0.1:9/v1', MOUSER_API_KEY: '', SF_AI_STUB: '' },
+           SF_OUTPUTS_SWEEP: '', FRONTEND_URL: '', OPENAI_API_KEY: 'sk-none', OPENAI_BASE_URL: 'http://127.0.0.1:9/v1', MOUSER_API_KEY: '', SF_AI_STUB: '',
+           SF_FEEDBACK_FILE: feedbackFile(mode) },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let said = ''
@@ -132,6 +142,28 @@ const I2: Case[] = [
   post('/mouser_search', { components: Array.from({ length: 61 }, (_, i) => ({ ref: `R${i + 1}`, value: '-' })) }, '61 lines'),
 ]
 
+// F1. an opinion the server cannot use
+const F1: Case[] = [
+  post('/feedback', {}, 'no rating'),
+  post('/feedback', { rating: 0 }, 'rating 0'),
+  post('/feedback', { rating: 6 }, 'rating 6'),
+  post('/feedback', { rating: 3.5 }, 'rating 3.5'),
+  post('/feedback', { rating: '5' }, 'rating a word'),
+  post('/feedback', { rating: 4, comment: 5 }, 'comment a number'),
+  post('/feedback', { rating: 4, comment: '가'.repeat(501) }, 'comment 501 letters'),
+  post('/feedback', { rating: 4, circuit: {} }, 'circuit an object'),
+  post('/feedback', { rating: 4, circuit: 'x'.repeat(81) }, 'circuit 81 letters'),
+  post('/feedback', { rating: 4, ip: '1.2.3.4' }, 'a field it does not take'),
+  { name: '/feedback a list for a body', method: 'POST', path: '/feedback', body: '[5]', status: 400 },
+]
+
+/** a JSON body sent as from the address `from` (the one proxy in front is trusted: index.ts 'trust proxy') */
+const sendFeedback = (s: Server, body: unknown, from: string) =>
+  ask(s.port, 'POST', '/feedback', json(body), { 'X-Forwarded-For': from }).then(r => ({ ...r, error: (() => {
+    try { return String((JSON.parse(r.text) as { error?: unknown }).error ?? '') } catch { return '' }
+  })() }))
+const lines = (mode: string) => { try { return readFileSync(feedbackFile(mode), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>) } catch { return [] } }
+
 async function main() {
   let dev: Server | undefined, prod: Server | undefined
   try {
@@ -149,8 +181,35 @@ async function main() {
     const bad = (await Promise.all(I2.map(c => run(dev!, c, token)))).filter(Boolean)
     check('I2 a field of the wrong type or missing, each route that reads a body: 400 in Korean, no stack', !!token && !bad.length,
       !token ? 'no local sign-in token' : bad.length ? bad.join(' | ') : `${I2.length} requests`)
+
+    // F1-F4 (the refused ones first: nothing is kept for them)
+    await both('F1 an opinion the server cannot use: 400 in Korean', F1)
+    const kept0 = [...lines('development'), ...lines('production')].length
+    const good = await sendFeedback(dev!, { rating: 4, comment: ' 데모가 빨라요\r\n좋아요 ', circuit: 'Demo: motor' }, '203.0.113.7')
+    const long = await sendFeedback(dev!, { rating: 1, comment: '가'.repeat(500) }, '203.0.113.7')
+    const kept = lines('development')
+    const keys = kept.map(l => Object.keys(l).sort().join(','))
+    check('F2 an opinion is kept as one line of rating, comment, circuit and time, no address; 500 Korean letters fit',
+      kept0 === 0 && good.status === 200 && long.status === 200 && kept.length === 2 && keys.every(k => k === 'circuit,comment,created_at,rating')
+      && kept[0].comment === '데모가 빨라요\n좋아요' && kept[0].circuit === 'Demo: motor' && kept[0].rating === 4 && kept[1].comment === '가'.repeat(500)
+      && kept[1].circuit === null && !readFileSync(feedbackFile('development'), 'utf8').includes('203.0.113'),
+      `before ${kept0}, ${good.status} ${long.status}, ${kept.length} line(s): ${keys.join(' | ')}`)
+
+    const five = await Promise.all(Array.from({ length: 5 }, (_, i) => sendFeedback(prod!, { rating: 5, comment: `F3 ${i}` }, '198.51.100.20')))
+    const sixth = await sendFeedback(prod!, { rating: 5 }, '198.51.100.20')
+    const other = await sendFeedback(prod!, { rating: 5 }, '198.51.100.21')
+    check('F3 the sixth opinion from one address in ten minutes is 429 in Korean, another address still gets through',
+      five.every(r => r.status === 200) && sixth.status === 429 && /[가-힣]/.test(sixth.error) && /10분에 5번/.test(sixth.error)
+      && other.status === 200 && lines('production').length === 6,
+      `${five.map(r => r.status).join(',')} then ${sixth.status} "${sixth.error}", another ${other.status}, ${lines('production').length} kept`)
+
+    const named = /FEEDBACK_FILE = .*join\(OUTPUTS_DIR, '([^']+)'\)/.exec(readFileSync('index.ts', 'utf8'))?.[1] ?? ''
+    const said = [good, long, ...five, sixth, other].map(r => r.text).join(' ')
+    check('F4 the opinions file is a dot file in outputs/, named in no answer', named.startsWith('.') && !said.includes('jsonl') && !said.includes(FEEDBACK_DIR),
+      `outputs/${named}`)
   } finally {
     await Promise.all([stop(dev), stop(prod)])
+    rmSync(FEEDBACK_DIR, { recursive: true, force: true })
   }
 }
 

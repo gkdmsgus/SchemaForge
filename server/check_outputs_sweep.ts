@@ -1,10 +1,10 @@
-// Checks O1-O4: what a deployed server keeps in outputs/ (outputs_sweep.ts). On the Jetson the folder outlives restarts
+// Checks O1-O5: what a deployed server keeps in outputs/ (outputs_sweep.ts). On the Jetson the folder outlives restarts
 // on the SD card, and nothing removed from it (review of 2026-11-03).
 // Usage (from server/): npx tsx check_outputs_sweep.ts   → exit 0 only if all pass
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { sweepOutputs } from './outputs_sweep'
+import { KEPT, sweepOutputs } from './outputs_sweep'
 
 let failed = 0
 const check = (name: string, ok: boolean, info = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`) }
@@ -47,6 +47,15 @@ try {
   const images = ['../Dockerfile', '../Dockerfile.jetson'].map(f => /\bSF_OUTPUTS_SWEEP=1\b/.test(readFileSync(f, 'utf8')))
   const guard = /SF_OUTPUTS_SWEEP: ''/.test(readFileSync('check_deploy_guard.ts', 'utf8'))
   check('O4 deploy images sweep, the guard check does not', images.every(Boolean) && guard, `Dockerfile ${images[0]}, Dockerfile.jetson ${images[1]}, check_deploy_guard ${guard}`)
+
+  // O5. the visitors' opinions of a server without Supabase (POST /feedback) stay a month old and over the cap, and
+  //     do not count toward it; index.ts writes them under the name kept
+  put('.feedback.jsonl', 900, 30 * 24)
+  put('d.kicad_pcb', 400, 2)
+  const s5 = sweepOutputs(dir, 24, 900, now)
+  const named = /FEEDBACK_FILE = .*join\(OUTPUTS_DIR, '([^']+)'\)/.exec(readFileSync('index.ts', 'utf8'))?.[1]
+  check('O5 the feedback file stays whatever its age and size, and is not counted', existsSync(join(dir, '.feedback.jsonl'))
+    && !s5.removed.includes('.feedback.jsonl') && s5.bytes === 900 && !!named && KEPT.has(named), `${JSON.stringify(s5)}, index.ts writes ${named}`)
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }

@@ -1,4 +1,4 @@
-// Checks A1-A23: sign-up, sign-in, history, favorites and the AI editor's chat against Supabase (index.ts). A mock
+// Checks A1-A24: sign-up, sign-in, history, favorites and the AI editor's chat against Supabase (index.ts). A mock
 // Supabase runs on a local port: GoTrue (sign-up, the password and refresh grants, /user, logout) and a small
 // in-memory PostgREST for sessions, chat_messages and favorites that records the headers of every request. The
 // real server runs in production mode with ALLOWED_EMAILS=a@x.com; its model calls go to the mock too. A22 runs it
@@ -26,7 +26,7 @@ interface MockUser { id: string; email: string; password: string; confirmed: boo
 const users = new Map<string, MockUser>()                       // by email
 const access = new Map<string, { uid: string; exp: number }>()  // access token → owner and expiry; logout drops them
 const refresh = new Map<string, string>()                       // refresh token → owner; each works once
-const tables: Record<string, Row[]> = { sessions: [], chat_messages: [], favorites: [] }
+const tables: Record<string, Row[]> = { sessions: [], chat_messages: [], favorites: [], feedback: [] }
 /** every request the server sent to the mock, with the key it sent */
 const seen: { method: string; path: string; grant: string; auth: string; apikey: string }[] = []
 /** "Confirm email" off: sign-up answers with a session */
@@ -114,8 +114,9 @@ const COLUMNS: Record<string, string[]> = {
   sessions: ['id', 'user_id', 'prompt', 'code', 'guide', 'graph', 'filename', 'created_at', 'name'],
   chat_messages: ['id', 'session_id', 'role', 'content', 'actions', 'created_at'],
   favorites: ['id', 'user_id', 'session_id', 'created_at'],
+  feedback: ['id', 'rating', 'comment', 'circuit', 'created_at'],
 }
-const NOT_NULL: Record<string, string[]> = { sessions: ['prompt'], chat_messages: ['session_id', 'role', 'content'], favorites: ['user_id', 'session_id'] }
+const NOT_NULL: Record<string, string[]> = { sessions: ['prompt'], chat_messages: ['session_id', 'role', 'content'], favorites: ['user_id', 'session_id'], feedback: ['rating'] }
 
 class PgError { constructor(public status: number, public body: Row) {} }
 const noColumn = (table: string, c: string) => new PgError(400, { code: '42703', message: `column ${table}.${c} does not exist` })
@@ -483,6 +484,23 @@ async function flow() {
   const after = await call('GET', '/sessions', { token: B })
   check('A18 logout', out.status === 200 && after.status === 401 && after.body.code === 'auth_expired', `${brief(out)} | ${brief(after)}`)
 
+  // A24. an opinion (의견 남기기) from a visitor with no login on the deployed server goes into the feedback table, with
+  //      rating, comment and circuit only (no user, no address); a table not made yet (schema.sql not run) is 503 in
+  //      Korean that names no table
+  const fbBefore = tables.feedback.length
+  const fb = await call('POST', '/feedback', { body: { rating: 5, comment: '발표 잘 봤습니다', circuit: 'Demo: motor' } })
+  const fbSigned = await call('POST', '/feedback', { token: A, body: { rating: 3 } })
+  const fbRows = tables.feedback.slice(fbBefore)
+  const saved = tables.feedback
+  delete tables.feedback
+  const noTable = await call('POST', '/feedback', { body: { rating: 2 } })
+  tables.feedback = saved
+  check('A24 an opinion with no login goes into feedback (rating, comment, circuit only); no table yet is 503 in Korean',
+    fb.status === 200 && fbSigned.status === 200 && fbRows.length === 2 && fbRows.every(r => keysOf(r) === 'circuit,comment,created_at,id,rating')
+    && fbRows[0].rating === 5 && fbRows[0].comment === '발표 잘 봤습니다' && fbRows[0].circuit === 'Demo: motor' && fbRows[1].comment === null
+    && noTable.status === 503 && /[가-힣]/.test(noTable.body.error ?? '') && !/feedback|42P01|relation/.test(noTable.text),
+    `${brief(fb)} | signed in ${fbSigned.status} | ${fbRows.length} row(s) ${fbRows.map(keysOf).join(' | ')} | no table ${brief(noTable)}`)
+
   // A19. every PostgREST request carried the service key, those after a's and b's sign-ins too
   const rest = seen.filter(s => s.path.startsWith('/rest/v1/'))
   const late = seen.slice(loginsDone).filter(s => s.path.startsWith('/rest/v1/'))
@@ -503,6 +521,9 @@ async function flow() {
   }
   check('A20 Supabase down: 503', Object.values(down).every(r => r.status === 503 && r.body.error === DOWN),
     Object.entries(down).map(([k, r]) => `${k} ${r.status}`).join(', '))
+  // A24 (down): an opinion is 503 too, said as an opinion not kept (not a login that failed)
+  const fbDown = await call('POST', '/feedback', { body: { rating: 4 } })
+  check('A24 Supabase down: an opinion is 503, not kept, in its own words', fbDown.status === 503 && /의견/.test(fbDown.body.error ?? ''), brief(fbDown))
 
   // A21. /netlist/restore writes a netlist Render's disk lost, once; never overwrites; refuses a name with a path
   const name = `restorecheck_${randomUUID().slice(0, 8)}.net`

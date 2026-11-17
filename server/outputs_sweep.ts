@@ -8,6 +8,9 @@ import { join } from 'path'
 
 export interface Swept { removed: string[]; bytes: number }
 
+/** what stays whatever its age: the visitors' opinions of a server without Supabase (index.ts POST /feedback) */
+export const KEPT = new Set(['.feedback.jsonl'])
+
 /** the size of a file, or of a folder and everything in it */
 function sizeOf(path: string): number {
   const st = statSync(path)
@@ -15,9 +18,9 @@ function sizeOf(path: string): number {
   return readdirSync(path).reduce((n, name) => n + sizeOf(join(path, name)), 0)
 }
 
-/** removes the entries of dir older than keepHours, then the oldest while the rest is over maxBytes */
+/** removes the entries of dir older than keepHours, then the oldest while the rest is over maxBytes; KEPT stays and is not counted */
 export function sweepOutputs(dir: string, keepHours: number, maxBytes: number, now = Date.now()): Swept {
-  const entries = readdirSync(dir).map(name => {
+  const entries = readdirSync(dir).filter(name => !KEPT.has(name)).map(name => {
     const path = join(dir, name)
     try { return { name, path, mtime: statSync(path).mtimeMs, bytes: sizeOf(path) } } catch { return null }
   }).filter((e): e is NonNullable<typeof e> => !!e).sort((a, b) => a.mtime - b.mtime)

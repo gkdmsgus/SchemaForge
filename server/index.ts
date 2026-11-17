@@ -4,7 +4,7 @@ import cors from 'cors'
 import { spawn } from 'child_process'
 import {
   mkdirSync, mkdtempSync, existsSync, rmSync,
-  writeFileSync, readFileSync, unlinkSync,
+  writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync,
 } from 'fs'
 import { join, basename } from 'path'
 import { tmpdir } from 'os'
@@ -21,6 +21,7 @@ import { DEMOS, cachedDemo } from './demo_cache'
 import { vendoredKicadConfig } from './kicad_config'
 import { Slots, clientKey, refused, type Answer, type Slot } from './job_slots'
 import { sweepOutputs } from './outputs_sweep'
+import { FEEDBACK_SAYS, FeedbackLimit, readFeedback } from './feedback'
 import { MODEL, MODEL_BASE, MODEL_MINI, modelClient, modelExtra, modelFailure, modelLabel, modelProvider } from './model'
 import {
   errorKeys, errorSites, fixableErrors, repairErc, runErc, splitOutput, stripFences, stubErcFix,
@@ -486,6 +487,39 @@ app.delete('/favorites/:id', requireAuth as any, async (req: AuthRequest, res: R
   const r = await db.from('favorites').delete().eq('id', req.params.id).eq('user_id', req.user!.id)
   if (r.error) return dbFail(res, r)
   res.json({ ok: true })
+})
+
+// ── POST /feedback — 의견 남기기 ──────────────────────────────────
+// A visitor's rating (1-5), a short opinion and the circuit on the screen, with no login (feedback.ts). Stored in the
+// Supabase feedback table (schema.sql) when the server has one, else one JSON line each in FEEDBACK_FILE, a dot file
+// in outputs/ that the file routes refuse (dot files) and the sweep keeps, at most FEEDBACK_FILE_MAX. No address, user
+// or browser is stored with it; the limit counts under clientKey(req.ip) in memory only. check_inputs.ts F1-F4,
+// check_auth_flow.ts A24
+
+const feedbackLimit = new FeedbackLimit(5, 300, 10 * 60_000)
+const FEEDBACK_FILE = process.env.SF_FEEDBACK_FILE || join(OUTPUTS_DIR, '.feedback.jsonl')
+const FEEDBACK_FILE_MAX = 2 * 1024 * 1024
+
+app.post('/feedback', async (req: Request, res: Response) => {
+  const fb = readFeedback(req.body)
+  if ('error' in fb) return res.status(400).json({ error: fb.error })
+  const busy = feedbackLimit.take(clientKey(req.ip))
+  if (busy) return res.status(429).json({ error: busy })
+  if (db) {
+    const r = await db.from('feedback').insert(fb)
+    if (!r.error) return res.json({ ok: true })
+    // a table not made yet (schema.sql not run) is named in the log, never to the visitor
+    console.error('[feedback]', r.status, r.error.code, r.error.message)
+    return res.status(503).json({ error: FEEDBACK_SAYS.failed })
+  }
+  try {
+    if (existsSync(FEEDBACK_FILE) && statSync(FEEDBACK_FILE).size > FEEDBACK_FILE_MAX) return res.status(507).json({ error: FEEDBACK_SAYS.full })
+    appendFileSync(FEEDBACK_FILE, JSON.stringify({ ...fb, created_at: new Date().toISOString() }) + '\n')
+    res.json({ ok: true })
+  } catch (e) {
+    console.error('[feedback]', (e as Error).message)
+    res.status(503).json({ error: FEEDBACK_SAYS.failed })
+  }
 })
 
 // ── Circuit Generation Helpers ─────────────────────────────────────

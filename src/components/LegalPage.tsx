@@ -1,12 +1,12 @@
 // Terms of service and privacy policy. Written from what the code actually does: Supabase auth and the
-// sessions/chat_messages/favorites tables, the model API (/health's provider; OpenAI unless OPENAI_BASE_URL says
+// sessions/chat_messages/favorites/feedback tables (feedback: the 의견 button, server/feedback.ts), the model API (/health's provider; OpenAI unless OPENAI_BASE_URL says
 // otherwise), Mouser part search, the fonts from Google Fonts (index.html, _sf-tokens.scss), files in server/outputs
 // (a deploy image deletes them: server/index.ts SF_OUTPUTS_*), the server's error log and the browser's localStorage.
 // scripts/check_legal.ts holds the policy to the code: change one, and that check says what the other must say.
 
 import { useModelName, modelCompany } from '../lib/modelName'
 
-const UPDATED = '2026-11-08'
+const UPDATED = '2026-11-17'
 const ISSUES = 'https://github.com/gkdmsgus/SchemaForge/issues'
 
 export default function LegalPage({ kind }: { kind: 'terms' | 'privacy' }) {
@@ -73,6 +73,10 @@ function Privacy({ company }: { company: string }) {
           <tr><td>회로 설명, 생성 결과, 채팅 수정 내용</td><td>로그인한 상태로 생성·수정할 때</td><td>Supabase sessions, chat_messages 테이블</td></tr>
           <tr><td>즐겨찾기</td><td>즐겨찾기를 누를 때</td><td>Supabase favorites 테이블</td></tr>
           <tr>
+            <td>별점, 의견, 보던 회로 이름</td><td>위쪽의 의견 버튼으로 보낼 때 (로그인 없이도)</td>
+            <td>Supabase feedback 테이블 (Supabase를 쓰지 않는 서버는 서버 outputs 폴더의 의견 파일). 계정, IP 주소, 브라우저 정보는 함께 저장하지 않습니다.</td>
+          </tr>
+          <tr>
             <td>생성된 파일 (.net, .kicad_pcb, 거버)</td><td>생성할 때 (로그인 없이 데모를 열 때도)</td>
             <td>서버의 outputs 폴더. 공개 서버는 15분마다 살펴 만든 지 24시간이 지난 파일을 지우고, 폴더가 1 GB를 넘으면 오래된 것부터 지웁니다.</td>
           </tr>
@@ -96,6 +100,11 @@ function Privacy({ company }: { company: string }) {
         기록 서랍에서 항목마다 지우거나, 전체 삭제로 모두 지울 수 있습니다. 회로 기록을 지우면 그 채팅과 즐겨찾기도 함께 지워집니다.
       </p>
       <p>
+        보낸 의견은 운영자가 읽고 정리할 때까지 보관합니다. 누가 보냈는지 저장하지 않아 보낸 의견을 골라 지울 수 없으니,
+        의견에 메일 주소 같은 개인정보는 적지 마세요. 같은 곳에서 너무 자주 보내지 않도록 IP 주소를 10분 동안 서버 메모리에서만
+        세고, 어디에도 저장하지 않습니다.
+      </p>
+      <p>
         계정(메일 주소)은 아직 화면에서 지울 수 없습니다. 계정 삭제는 <a href={ISSUES}>프로젝트 저장소의 이슈</a>로
         요청해 주세요. 이슈는 누구나 볼 수 있으니 메일 주소 같은 개인정보는 적지 마세요.
         브라우저에 남은 기록은 브라우저의 사이트 데이터 삭제로 지울 수 있습니다.
@@ -104,7 +113,7 @@ function Privacy({ company }: { company: string }) {
       <h2>4. 로그인 없이 쓰는 경우</h2>
       <p>
         데모(<a href="/?demo=motor">모터 드라이버 데모</a>)는 계정 정보를 받지 않습니다. 만든 파일은 1절처럼 서버 outputs
-        폴더에 남았다가 지워지고, 화면 글꼴은 2절처럼 Google Fonts에서 받습니다.
+        폴더에 남았다가 지워지고, 화면 글꼴은 2절처럼 Google Fonts에서 받습니다. 의견을 보내면 1절의 별점, 의견, 회로 이름만 저장합니다.
       </p>
 
       <h2>5. 문의</h2>
