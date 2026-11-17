@@ -8,6 +8,7 @@ import PlanPanel from './components/PlanPanel'
 import SideDrawer from './components/SideDrawer'
 import AuthModal, { type AuthNotice } from './components/AuthModal'
 import LegalPage from './components/LegalPage'
+import FeedbackDialog from './components/FeedbackDialog'
 import { getSavedResults, saveResultToLocal } from './lib/storage'
 import { Button, Spinner } from './components/primitives.tsx'
 import {
@@ -88,6 +89,7 @@ export default function App() {
   const authRef = useRef(authUser)
   authRef.current = authUser
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null)
   // /auth/me said a deployed server will refuse this account's generation: said once near the input
   const [cannotGenerate, setCannotGenerate] = useState(false)
@@ -631,6 +633,7 @@ export default function App() {
         onMenuClick={() => setSideDrawerOpen(o => !o)}
         user={authUser}
         onAuthClick={() => setAuthModalOpen(true)}
+        onFeedbackClick={() => setFeedbackOpen(true)}
         onLogout={async () => {
           await apiLogout()
           setAuthUser(null)
@@ -670,6 +673,9 @@ export default function App() {
         settings={settings}
         setSettings={setSettings}
       />
+
+      {/* the circuit on the screen goes along when there is one (a demo is "Demo: motor"); the visitor can clear it */}
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} circuit={result ? lastPrompt.current : ''} />
 
       {LEGAL_PAGE && <LegalPage kind={LEGAL_PAGE} />}
 

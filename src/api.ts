@@ -134,6 +134,13 @@ async function postOpen<T>(path: string, body: unknown): Promise<T> {
   return readJson<T>(res)
 }
 
+// ── Feedback (의견 남기기) ────────────────────────────────────────
+
+/** a visitor's rating and short opinion, with no login (server/feedback.ts); a refusal is an ApiError in Korean */
+export async function sendFeedback(fb: { rating: number; comment?: string; circuit?: string }): Promise<void> {
+  await postOpen<{ ok?: boolean }>('/feedback', fb)
+}
+
 // ── Auth ──────────────────────────────────────────────────────────
 
 export interface AuthUser { id: string; email: string }

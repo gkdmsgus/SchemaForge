@@ -51,6 +51,7 @@ export default defineConfig({
       '/auth': API,
       '/sessions': API,
       '/favorites': API,
+      '/feedback': API,
       '/health': API,
       '/demo_result': API,
     }

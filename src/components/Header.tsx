@@ -33,6 +33,8 @@ interface HeaderProps {
   user?: AuthUser | null
   onAuthClick?: () => void
   onLogout?: () => void
+  /** 의견 남기기 (FeedbackDialog): open to every visitor, signed in or not */
+  onFeedbackClick?: () => void
 }
 
 export default function Header({
@@ -45,6 +47,7 @@ export default function Header({
   user,
   onAuthClick,
   onLogout,
+  onFeedbackClick,
 }: HeaderProps) {
   const dotColor = {
     ready:   'var(--sf-cyan)',
@@ -161,6 +164,23 @@ export default function Header({
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--sf-amber-deep)' }}
             onMouseLeave={e => { e.currentTarget.style.background = 'var(--sf-amber-fill)' }}
           >로그인</button>
+        )}
+        {onFeedbackClick && (
+          <button
+            onClick={onFeedbackClick}
+            title="의견 남기기"
+            aria-label="의견 남기기"
+            style={{
+              background: 'none',
+              border: '1px solid var(--sf-line)',
+              borderRadius: 4, color: 'var(--sf-fg-dim)',
+              cursor: 'pointer', fontSize: 12, padding: '4px 9px', whiteSpace: 'nowrap',
+              fontFamily: 'var(--sf-font-sans)',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--sf-line-strong)'; e.currentTarget.style.color = 'var(--sf-fg)' }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--sf-line)'; e.currentTarget.style.color = 'var(--sf-fg-dim)' }}
+          >의견</button>
         )}
         <Button variant="ghost" size="sm" icon={<IconSettings size={14} />} onClick={onSettingsClick} aria-label="설정" />
       </div>

@@ -24,6 +24,7 @@ const OUT: Record<string, string> = {
   'scripts/check_auth_dialog.mjs': BROWSER,
   'scripts/check_board_panel.mjs': BROWSER,
   'scripts/check_drawer.mjs': BROWSER,
+  'scripts/check_feedback.mjs': BROWSER,
   'scripts/check_live.mjs': 'a browser on the deployed app (README), so npm run test:browser leaves it out',
   'scripts/check_pcb_sketch.mjs': BROWSER,
   'scripts/check_phone_width.mjs': `${BROWSER}, with KiCad: it makes a board of each demo on a phone-sized screen`,
