@@ -42,7 +42,7 @@
 ## 2. 로그인과 회로 생성 열기
 
 1. [supabase.com](https://supabase.com)에서 프로젝트를 만든다. 리전은 Render와 같은 **Southeast Asia (Singapore)** (로그인 확인은 서버가 Supabase에 묻는다). 만들 때 Security의 "Automatically expose new tables"는 끄고 "Enable automatic RLS"는 켠다.
-2. **SQL Editor**에 `server/schema.sql` 전체를 붙여 넣고 실행한다. 여러 번 실행해도 된다. 2026-05 이후 새 프로젝트는 표 권한을 자동으로 주지 않아서, 이 파일의 GRANT가 없으면 기록·즐겨찾기가 "permission denied"로 실패한다. 예전 schema.sql을 실행한 프로젝트도 다시 실행한다 (`sessions.name` 열과 권한).
+2. **SQL Editor**에 `server/schema.sql` 전체를 붙여 넣고 실행한다. 여러 번 실행해도 된다. 2026-05 이후 새 프로젝트는 표 권한을 자동으로 주지 않아서, 이 파일의 GRANT가 없으면 기록·즐겨찾기가 "permission denied"로 실패한다. 예전 schema.sql을 실행한 프로젝트도 다시 실행한다 (`sessions.name` 열과 권한, 2026-11-17부터 의견 남기기의 `feedback` 표). 실행하지 않으면 의견 보내기가 "의견을 저장하지 못했습니다"로 실패하고, 서버 기록에 `[feedback]` 줄이 남는다.
 3. **Authentication → Sign In / Providers**에서 **Confirm email이 켜져 있는지** 확인한다 (호스팅 프로젝트 기본값). 끄면 가입하자마자 확인된 계정이 되어, 남의 주소로 가입해도 `ALLOWED_EMAILS`를 통과한다.
 4. **Authentication → URL Configuration**의 Site URL을 공개 주소 `https://schemaforge-app.duckdns.org`(젯슨, 7절)로 바꾸고, Redirect URLs에 `https://schemaforge-app.duckdns.org/**`를 넣는다. 기본값 `http://localhost:3000`이면 확인 메일 링크가 열리지 않는다. Render와 젯슨이 Supabase 프로젝트 하나를 함께 쓰고 서버가 돌아갈 주소를 따로 주지 않으므로, 어느 주소에서 가입해도 확인 메일의 링크는 이 주소로 간다 (2026-11-08까지는 `https://schemaforge.kro.kr`).
 5. Supabase 기본 메일은 **조직 멤버 주소로만, 시간당 2통** 보낸다. 그래서 `ALLOWED_EMAILS`에는 Supabase 계정 메일을 넣고 그 주소로 가입한다. 다른 사람도 가입하게 하려면 Authentication → SMTP에 메일 서버를 붙인다.
