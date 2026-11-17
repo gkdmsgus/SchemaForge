@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { mechLabel, parseMech, type Mech } from '../lib/mech'
+import { mechLabel, parseMech, pinText, type Mech } from '../lib/mech'
 
 /**
- * The board an enclosure fixes, typed before the PCB is made (기구 조건 step 1): width and height in mm and the M3 holes'
- * spots. Empty is the usual board, sized from the parts with a hole in each corner.
+ * The board an enclosure fixes, typed before the PCB is made (기구 조건 steps 1 and 2): width and height in mm, the M3
+ * holes' spots and the parts pinned to an edge. Empty is the usual board, sized from the parts with a hole in each corner.
  */
 export default function MechInput({ mech, onChange, buttonStyle }: {
   mech: Mech | null
@@ -15,6 +15,7 @@ export default function MechInput({ mech, onChange, buttonStyle }: {
   const [w, setW] = useState(mech ? String(mech.width) : '')
   const [h, setH] = useState(mech ? String(mech.height) : '')
   const [holes, setHoles] = useState(mech ? mech.holes.map(([x, y]) => `${x}, ${y}`).join('; ') : '')
+  const [fixed, setFixed] = useState(mech?.fixed ? mech.fixed.map(pinText).join('\n') : '')
   const [error, setError] = useState('')
   // the panel is drawn on the page itself, under the button: the toolbar it sits in scrolls sideways and cut it off
   // (2026-11-17, seen on the LED demo: the box opened but nothing of it showed)
@@ -46,13 +47,13 @@ export default function MechInput({ mech, onChange, buttonStyle }: {
   }, [open])
 
   const apply = () => {
-    const { mech: m, error: e } = parseMech(w, h, holes)
+    const { mech: m, error: e } = parseMech(w, h, holes, fixed)
     setError(e)
     if (e) return
     onChange(m)
     setOpen(false)
   }
-  const clear = () => { setW(''); setH(''); setHoles(''); setError(''); onChange(null); setOpen(false) }
+  const clear = () => { setW(''); setH(''); setHoles(''); setFixed(''); setError(''); onChange(null); setOpen(false) }
   const field: CSSProperties = { width: '100%', padding: '4px 6px', border: '1px solid var(--sf-line)', borderRadius: 4,
     background: 'var(--sf-bg)', color: 'var(--sf-fg)', fontFamily: 'var(--sf-font-mono)', fontSize: 12 }
   const label: CSSProperties = { display: 'block', marginTop: 8, color: 'var(--sf-fg-muted)', fontSize: 11 }
@@ -60,16 +61,16 @@ export default function MechInput({ mech, onChange, buttonStyle }: {
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button ref={button} type="button" data-testid="mech-toggle" aria-expanded={open} aria-controls="mech-panel" onClick={() => setOpen(o => !o)}
-        title="케이스가 정해져 있으면 기판 크기와 고정 구멍 자리를 적습니다"
+        title="케이스가 정해져 있으면 기판 크기, 고정 구멍, 가장자리에 고정할 부품을 적습니다"
         style={{ ...buttonStyle, color: mech ? 'var(--sf-cyan-deep)' : buttonStyle.color }}>
         {mech ? `기판 ${mechLabel(mech)}` : '기판 크기'}
       </button>
       {open && at && createPortal(
-        <div ref={panel} id="mech-panel" role="dialog" aria-label="기판 크기와 고정 구멍" data-testid="mech-panel"
+        <div ref={panel} id="mech-panel" role="dialog" aria-label="기판 크기, 고정 구멍, 고정 부품" data-testid="mech-panel"
           style={{ position: 'fixed', top: at.top, left: at.left, zIndex: 1000, width: 290, padding: 12,
             background: 'var(--sf-bg-1)', border: '1px solid var(--sf-line-strong)', borderRadius: 8, boxShadow: 'var(--sf-shadow-md)',
             fontFamily: 'var(--sf-font-sans)', fontSize: 12, lineHeight: 1.5, color: 'var(--sf-fg)', textAlign: 'left' }}>
-          <div style={{ fontWeight: 700 }}>기판 크기와 고정 구멍</div>
+          <div style={{ fontWeight: 700 }}>기판 크기, 고정 구멍, 고정 부품</div>
           <div style={{ color: 'var(--sf-fg-muted)', fontSize: 11 }}>
             케이스가 정해져 있으면 적습니다. 부품은 이 크기 안에서 구멍을 피해 놓이고, 들어가지 않으면 PCB를 만들지 않고 필요한 크기를 알려 줍니다.
           </div>
@@ -85,6 +86,13 @@ export default function MechInput({ mech, onChange, buttonStyle }: {
             <textarea data-testid="mech-holes" rows={2} value={holes} onChange={e => setHoles(e.target.value)} placeholder="4, 5; 36, 5; 36, 26; 4, 26"
               style={{ ...field, resize: 'vertical' }} />
           </label>
+          <label style={label}>가장자리에 고정할 부품(커넥터 등): 부품 번호, 변, 자리(mm), 한 줄에 하나
+            <textarea data-testid="mech-fixed" rows={2} value={fixed} onChange={e => setFixed(e.target.value)} placeholder="J1, 왼쪽, 15"
+              style={{ ...field, resize: 'vertical' }} />
+          </label>
+          <div style={{ color: 'var(--sf-fg-muted)', fontSize: 11 }}>
+            자리는 부품 가운데까지 잰 거리입니다: 왼쪽·오른쪽 변은 위에서, 위·아래 변은 왼쪽에서. 넷째 칸에 회전(0·90·180·270)을 적으면 그대로 두고, 비우면 배선이 짧은 쪽으로 돌립니다.
+          </div>
           {error && <div role="alert" data-testid="mech-error" style={{ marginTop: 6, color: 'var(--sf-danger)' }}>{error}</div>}
           <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
             <button type="button" data-testid="mech-apply" onClick={apply} style={{ ...buttonStyle, color: 'var(--sf-fg)' }}>적용</button>
