@@ -67,7 +67,7 @@ const item = (b: BoardModel, ref: string) => reviewItems(b).find(i => i.ref === 
 
 // H1. only parts with a polarity, an exact-part pinout, a pin-1 mark or a connector order
 if (boards.length) {
-  const target = /^(LED|D|CP|Buzzer|Battery|Q_NPN|Q_NMOS|REG|Relay|Bridge|NE555|RS485|Conn_01x\d\d)$/
+  const target = /^(LED|D|CP|Buzzer|Battery|Q_NPN|Q_NMOS|REG|Relay|Bridge|NE555|RS485|HX711|Conn_01x\d\d)$/
   const bad: string[] = []
   let n = 0
   for (const { f, b } of boards) {

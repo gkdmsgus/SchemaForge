@@ -80,7 +80,7 @@ const PREFIXES: [RegExp, string, string?][] = [
   [/^(R|resistor|저항)$/i, 'R', 'R'], [/^(C|capacitor|커패시터|콘덴서)$/i, 'C', 'C'], [/^CP$/i, 'C', 'CP'], [/^(L|inductor|인덕터)$/i, 'L', 'L'],
   [/^LED$/i, 'D', 'LED'], [/^(D|diode|다이오드)$/i, 'D', 'D'], [/^Q_NPN$/i, 'Q', 'Q_NPN'], [/^Q_NMOS$/i, 'Q', 'Q_NMOS'], [/^Q(_|$)/i, 'Q'],
   [/^NE555$/i, 'U', 'NE555'], [/^REG$/i, 'U', 'REG'], [/^U$/i, 'U'], [/^(SW|switch|스위치)$/i, 'SW', 'SW'], [/^SW/i, 'SW'], [/^(relay|릴레이)$/i, 'K', 'Relay'],
-  [/^(buzzer|버저|부저)$/i, 'LS', 'Buzzer'], [/^(battery|배터리|전지)$/i, 'BT', 'Battery'], [/^(crystal|크리스탈)$/i, 'Y', 'Crystal'], [/^(fuse|ptc|퓨즈)$/i, 'F', 'Fuse'], [/^RS-?485$/i, 'U', 'RS485'], [/^conn/i, 'J'],
+  [/^(buzzer|버저|부저)$/i, 'LS', 'Buzzer'], [/^(battery|배터리|전지)$/i, 'BT', 'Battery'], [/^(crystal|크리스탈)$/i, 'Y', 'Crystal'], [/^(fuse|ptc|퓨즈)$/i, 'F', 'Fuse'], [/^RS-?485$/i, 'U', 'RS485'], [/^HX711$/i, 'U', 'HX711'], [/^conn/i, 'J'],
 ]
 const refPrefix = (ref: string) => ref.replace(/\d+$/, '')
 
@@ -198,7 +198,7 @@ const KIND_WORDS: Record<string, string[]> = {
   R: ['저항'], C: ['커패시터', '캐패시터', '콘덴서'], CP: ['커패시터', '캐패시터', '콘덴서', '전해 커패시터', '전해 콘덴서'],
   L: ['인덕터'], LED: ['LED'], D: ['다이오드'], Bridge: ['브리지', '정류기'], Q_NPN: ['트랜지스터'],
   Q_NMOS: ['트랜지스터', 'MOSFET', '모스펫'], NE555: ['555', 'NE555', '타이머'], REG: ['레귤레이터'], Relay: ['릴레이'],
-  Buzzer: ['버저', '부저'], SW: ['스위치', '버튼'], Battery: ['배터리', '전지'], Crystal: ['크리스탈'], Fuse: ['퓨즈'], RS485: ['RS-485', 'RS485', '트랜시버', '통신 칩'],
+  Buzzer: ['버저', '부저'], SW: ['스위치', '버튼'], Battery: ['배터리', '전지'], Crystal: ['크리스탈'], Fuse: ['퓨즈'], RS485: ['RS-485', 'RS485', '트랜시버', '통신 칩'], HX711: ['HX711', '로드셀 앰프', '앰프'],
 }
 const TYPE_OF_PREFIX: Record<string, string> = { R: 'R', C: 'C', L: 'L', D: 'D', SW: 'SW', K: 'Relay', LS: 'Buzzer', BT: 'Battery', Y: 'Crystal', F: 'Fuse' }
 const kindWords = (name: string | undefined, ref: string): string[] =>

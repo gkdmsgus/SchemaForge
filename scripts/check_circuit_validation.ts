@@ -107,6 +107,14 @@ const rs485 = (dir: string[][], term = false) => g([['J1', 'Conn_01x05', 'Arduin
   ...(term ? [['R1', 'R', '120'] as Part] : [])],
   ['+5V', 'J1.1', 'U1.8', 'C1.1'], ['GND', 'J1.2', 'U1.5', 'C1.2'], ['RX', 'U1.1', 'J1.4'], ['TX', 'U1.4', 'J1.5'], ...dir,
   ['BUS_A', 'U1.6', 'J2.1', ...(term ? ['R1.1'] : [])], ['BUS_B', 'U1.7', 'J2.2', ...(term ? ['R1.2'] : [])])
+// an HX711 U1 with a load cell header J2 and the board's header J1; `skip` leaves those pins on nothing
+const hx711 = (skip: string[] = []) => {
+  const pins: Record<string, string> = { '1': '+5V', '3': '+5V', '16': '+5V', '4': 'AGND', '5': 'AGND', '6': 'VBG', '7': 'LC_A-', '8': 'LC_A+', '9': 'AGND', '10': 'AGND', '11': 'SCK', '12': 'DOUT', '14': 'AGND', '15': 'AGND' }
+  const nets: Record<string, string[]> = { '+5V': ['J1.1', 'C1.1'], AGND: ['J1.2', 'C1.2', 'C2.2', 'J2.2'], VBG: ['C2.1'], 'LC_A-': ['J2.3'], 'LC_A+': ['J2.4'], SCK: ['J1.3'], DOUT: ['J1.4'] }
+  for (const [pin, n] of Object.entries(pins)) if (!skip.includes(pin)) nets[n].push(`U1.${pin}`)
+  return g([['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'HX711', 'HX711'], ['J2', 'Conn_01x04', 'LOAD CELL'], ['C1', 'C', '100nF'], ['C2', 'C', '100nF']],
+    ...Object.entries(nets).map(([n, ps]) => [n, ...ps]))
+}
 // a servo (J2, 3 pins: signal, +, −) on a board's header J1: its supply pin's net is what each case changes
 const servoOn = (power: string[][], extra: Part[] = [], board = 'Arduino Uno') =>
   g([['J1', 'Conn_01x04', board], ['J2', 'Conn_01x03', 'SERVO SG90'], ...extra],
@@ -143,6 +151,12 @@ const checks: [string, boolean][] = [
   ["CIR207: a resistor across A and B is advice to keep it at the bus's ends only, citing the datasheet's 120 Ω example; none, no word",
     validateCircuit(rs485([['DIR', 'U1.2', 'U1.3', 'J1.3']], true)).some(i => i.code === 'CIR207' && i.advice && i.refs.join() === 'R1,U1' && /양 끝/.test(i.message) && /120 Ω/.test(i.suggestion))
     && !cir('CIR207', rs485([['DIR', 'U1.2', 'U1.3', 'J1.3']])).length],
+  // CIR208 (2026-11-17): an HX711 with its load cell, its two lines to the board, RATE and XI all joined passes; the load cell
+  // pins and RATE left on nothing are named with what each does, and the fix puts RATE and XI on GND
+  ['CIR208: an HX711 wired as its datasheet asks passes; the load cell inputs and RATE on nothing warn and say what each pin does',
+    !cir('CIR208', hx711()).length && cir('CIR208', hx711(['7', '8', '15'])).join() === 'U1'
+    && validateCircuit(hx711(['7', '8', '15'])).some(i => i.code === 'CIR208' && !i.advice && /A\+·A−, RATE/.test(i.message) && /로드셀 앰프:/.test(i.message)
+      && /10번, 전원에 이으면 80번/.test(i.message) && /A\+\(8번\)/.test(i.suggestion) && /RATE\(15번\)/.test(i.suggestion) && !/PD_SCK/.test(i.message))],
   // CIR204 (2026-11-17): a servo on an Uno's 5 V alone warns; with a battery, a regulator's output or a supply header on that
   // net, or on a net named as a signal, it does not; the warning names what, why and the fix with no figure of its own
   ['CIR204: a servo fed only by the Uno\'s 5 V (or USB) warns; a battery, a regulator or a supply header on it, or a bare signal net, does not',

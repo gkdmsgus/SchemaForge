@@ -28,6 +28,7 @@ export const PIN_NAMES: Record<string, string[]> = {
   Buzzer: ['+', '-'],
   Battery: ['+', '-'],
   RS485: ['R', 'RE', 'DE', 'D', 'GND', 'A', 'B', 'VCC'],
+  HX711: ['VSUP', 'BASE', 'AVDD', 'VFB', 'AGND', 'VBG', 'INA-', 'INA+', 'INB-', 'INB+', 'PD_SCK', 'DOUT', 'XO', 'XI', 'RATE', 'DVDD'],
 }
 
 /** Real part each footprint's pinout was taken from (server/pcb/footprints_table.py). */
@@ -43,7 +44,7 @@ export const ASSUMED: Record<string, { smd: string; tht: string }> = {
 function kindOf(part: string): ReviewKind | null {
   if (['LED', 'D', 'CP', 'Buzzer', 'Battery'].includes(part)) return 'polarity'
   if (['Q_NPN', 'Q_NMOS', 'REG', 'Relay', 'Bridge'].includes(part)) return 'pinout'
-  if (['NE555', 'RS485'].includes(part)) return 'orientation'
+  if (['NE555', 'RS485', 'HX711'].includes(part)) return 'orientation'
   if (/^Conn_01x\d\d$/.test(part)) return 'connector'
   return null
 }

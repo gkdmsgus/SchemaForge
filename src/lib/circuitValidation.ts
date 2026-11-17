@@ -228,6 +228,28 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
     }
   }
 
+  // CIR208. an HX711 load cell amplifier with pins a working one needs left on nothing (2026-11-17, Avia's datasheet table 1):
+  // the load cell's signal (INA+ 8, INA− 7), the two lines to the microcontroller (PD_SCK 11, DOUT 12), the rate (RATE 15:
+  // low 10 Hz, high 80 Hz) and the clock input (XI 14: low uses its own oscillator)
+  for (const u of components.filter(c => c.name === 'HX711')) {
+    const free = (pin: string) => { const n = netOf(u.ref, pin); return !n || (on.get(n) ?? []).every(nd => nd.ref === u.ref) }
+    const why: [string[], string, string][] = [
+      [['8', '7'], 'A+·A−', '로드셀이 보내는 아주 작은 신호를 받는 두 핀이라, 비어 있으면 무게를 읽을 수 없습니다'],
+      [['11', '12'], 'PD_SCK·DOUT', '마이크로컨트롤러와 값을 주고받는 두 선이라, 비어 있으면 읽은 값을 가져올 수 없습니다'],
+      [['15'], 'RATE', '출력 속도를 정하는 핀이라, GND에 이으면 1초에 10번, 전원에 이으면 80번 값을 냅니다. 떠 있으면 속도가 정해지지 않습니다'],
+      [['14'], 'XI', '클록 입력이라, GND에 이으면 칩 안의 발진기를 씁니다. 떠 있으면 클록이 정해지지 않습니다'],
+    ]
+    const hit = why.filter(([pins]) => pins.some(free))
+    if (!hit.length) continue
+    add({ code: 'CIR208', severity: 'warning', title: 'HX711에 빈 핀이 있습니다',
+      message: `${u.ref}(HX711, 로드셀 앰프: 무게 센서의 작은 신호를 숫자로 바꾸는 칩)의 ${hit.map(([, nm]) => nm).join(', ')} 핀이 아무 데도 연결되지 않았습니다. ${hit.map(([, nm, w]) => `${nm}: ${w}.`).join(' ')}`,
+      suggestion: hit.map(([, nm]) => nm === 'A+·A−' ? '로드셀의 신호 두 선을 A+(8번)·A−(7번)에 잇습니다.'
+        : nm === 'PD_SCK·DOUT' ? 'PD_SCK(11번)와 DOUT(12번)을 마이크로컨트롤러의 핀 두 개에 잇습니다.'
+          : nm === 'RATE' ? 'RATE(15번)를 GND(10 Hz)나 전원(80 Hz)에 잇습니다.' : 'XI(14번)를 GND에 이어 내장 발진기를 씁니다.').join(' '),
+      chat: `${u.ref}(HX711)의 ${hit.map(([, nm]) => nm).join(', ')} 핀을 데이터시트대로 연결해줘. RATE와 XI는 GND에 이어줘.`,
+      refs: [u.ref], nets: [] })
+  }
+
   // CIR204. a servo powered from the microcontroller board alone (2026-11-17): a header whose value says SERVO, its supply
   // pin's net (named as a supply: 5V, VCC, VIN, VBUS…) fed by a board's header (Arduino, ESP32, Pico…) or USB and by
   // nothing else that supplies (a battery, a regulator's output, a supply header). No figure is given: the stall current

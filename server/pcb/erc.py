@@ -28,6 +28,7 @@ PIN_NAMES = {
     'Buzzer': ['+', '-'],
     'Battery': ['+', '-'],
     'RS485': ['R', 'RE', 'DE', 'D', 'GND', 'A', 'B', 'VCC'],
+    'HX711': ['VSUP', 'BASE', 'AVDD', 'VFB', 'AGND', 'VBG', 'INA-', 'INA+', 'INB-', 'INB+', 'PD_SCK', 'DOUT', 'XO', 'XI', 'RATE', 'DVDD'],
 }
 # The pins a template marks PWROUT or OUTPUT, by symbol pin. A netlist written from a graph (an AI edit, a session reopened
 # from the history) has no pintype, so a regulator's output net read as unpowered and tied outputs as no conflict
@@ -39,6 +40,7 @@ PIN_TYPES = {
     'NE555': {'3': 'OUTPUT'},
     'OpAmp': {'3': 'OUTPUT'},
     'RS485': {'1': 'OUTPUT'},
+    'HX711': {'12': 'OUTPUT'},
 }
 # The supply-input pins that want a capacitor to ground beside them, by symbol pin: the pins a template marks PWRIN, less
 # its ground pin. Apart from PIN_TYPES and from pintype, so a netlist with pintype and one written from a graph find the
@@ -48,6 +50,7 @@ SUPPLY_PINS = {
     'REG': ['3'],
     'OpAmp': ['4', '5'],
     'RS485': ['8'],
+    'HX711': ['1', '3', '16'],
 }
 
 

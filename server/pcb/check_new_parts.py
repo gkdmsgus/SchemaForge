@@ -88,5 +88,12 @@ part_case('P2', 'U1', 'RS485', 'SN75176B', {'1': 'RX', '2': 'DIR', '3': 'DIR', '
           [('J1', 'Conn_01x05', 'Arduino Uno'), ('J2', 'Conn_01x02', 'RS485 BUS'), ('C1', 'C', '100nF')],
           {'+5V': ['J1.1', 'C1.1'], 'GND': ['J1.2', 'C1.2'], 'RX': ['J1.3'], 'TX': ['J1.4'], 'DIR': ['J1.5'], 'BUS_A': ['J2.1'], 'BUS_B': ['J2.2']})
 
+# P3 an HX711 between a load cell header and a board's header, wired as its datasheet asks (BASE and XO left open)
+part_case('P3', 'U1', 'HX711', 'HX711', {'1': '+5V', '3': '+5V', '16': '+5V', '4': 'GND', '5': 'GND', '6': 'VBG', '7': 'LC_AN', '8': 'LC_AP',
+                                        '9': 'GND', '10': 'GND', '11': 'SCK', '12': 'DOUT', '14': 'GND', '15': 'GND'},
+          [('J1', 'Conn_01x04', 'Arduino Uno'), ('J2', 'Conn_01x04', 'LOAD CELL'), ('C1', 'C', '100nF'), ('C2', 'C', '100nF')],
+          {'+5V': ['J1.1', 'C1.1', 'J2.1'], 'GND': ['J1.2', 'C1.2', 'C2.2', 'J2.2'], 'VBG': ['C2.1'], 'LC_AN': ['J2.3'], 'LC_AP': ['J2.4'],
+           'SCK': ['J1.3'], 'DOUT': ['J1.4']})
+
 print(f'\n{failed} check(s) failed' if failed else '\nALL PASS')
 sys.exit(1 if failed else 0)
