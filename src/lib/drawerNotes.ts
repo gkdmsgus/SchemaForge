@@ -6,9 +6,9 @@
  * The server wrote it from that circuit under the board's own name (server/index.ts /generate_pcb_stream), so the two
  * files downloaded together are one circuit: the generated .net beside an edited .kicad_pcb were two (2026-11-03 tour
  * takes 1 and 3, S17). null: the generated .net (no AI edit, no finished board, or a board of another circuit; a board
- * built in the other style is still this circuit).
+ * built in the other style or to another board size is still this circuit).
  */
-export function boardNetlist(aiEdited: boolean, pcbStatus: string | null, pcbStale: 'circuit' | 'style' | null,
+export function boardNetlist(aiEdited: boolean, pcbStatus: string | null, pcbStale: 'circuit' | 'style' | 'mech' | null,
   pcbFilename: string | null): string | null {
   return aiEdited && pcbStatus === 'done' && pcbStale !== 'circuit' && pcbFilename
     ? pcbFilename.replace(/\.kicad_pcb$/, '.net') : null

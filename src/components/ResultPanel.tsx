@@ -30,6 +30,8 @@ import { validateCircuit, type CircuitIssue } from '../lib/circuitValidation'
 import { getSavedResults } from '../lib/storage'
 import { boardNetlist, guideNote, netlistNote } from '../lib/drawerNotes'
 import { useNarrow } from '../lib/useNarrow'
+import { type Mech } from '../lib/mech'
+import MechInput from './MechInput'
 
 const API = ''
 
@@ -168,7 +170,9 @@ export default function ResultPanel({
   const [aiErc, setAiErc] = useState<{ graph: NetGraph; style: 'smd' | 'tht'; findings: ErcFinding[] | null; error?: string } | null>(null)
   const [ercRetry, setErcRetry] = useState(0)       // 다시 점검: runs the check on the same circuit again
   // what the current board was built from, to tell when it no longer matches the circuit
-  const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht' } | null>(null)
+  const [pcbSource, setPcbSource] = useState<{ graph: NetGraph | undefined; style: 'smd' | 'tht'; mech: Mech | null } | null>(null)
+  // the board an enclosure fixes (기구 조건): sent with the next PCB request, kept while this result is open
+  const [mech, setMech] = useState<Mech | null>(null)
   /** text null: the server has no such file (404); failed: the request did not get through (retry offered) */
   const [netText, setNetText] = useState<{ file: string; text: string | null; failed?: boolean } | null>(null)
 
@@ -187,8 +191,8 @@ export default function ResultPanel({
   const handEdited = !!localGraph && handGraphs.current.has(localGraph)
   const editWord = handEdited ? '편집' : 'AI 편집'
   // Identity of the graph object, so chat edits, undo, code runs and version switches all count.
-  const pcbStale: 'circuit' | 'style' | null = board?.status !== 'done' || !pcbSource ? null
-    : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : null
+  const pcbStale: 'circuit' | 'style' | 'mech' | null = board?.status !== 'done' || !pcbSource ? null
+    : pcbSource.graph !== effectiveGraph ? 'circuit' : pcbSource.style !== pcbStyle ? 'style' : pcbSource.mech !== mech ? 'mech' : null
 
   // Netlist tab: the .net file itself, fetched when the tab opens and again after a rerun. After an AI edit, the board
   // built from it has its own (the one the .kicad_pcb was made from), and that is the file shown and given
@@ -380,12 +384,13 @@ export default function ResultPanel({
       return
     }
     // an edited graph (AI or by hand): the server writes a netlist from it; otherwise use the generated one
+    const withMech = mech ? { mech } : {}
     const body = localGraph
-      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai }
-      : result?.filename ? { filename: result.filename, style, ai } : null
+      ? { graph: localGraph, baseName: result?.filename?.replace('.net', '') || 'circuit', style, ai, ...withMech }
+      : result?.filename ? { filename: result.filename, style, ai, ...withMech } : null
     if (!body) { setPcbError(PCB_NO_FILE); setPcbStatus('error'); return }
 
-    setPcbSource({ graph: effectiveGraph, style })
+    setPcbSource({ graph: effectiveGraph, style, mech })
     setPcbStatus('loading')
     setPcbError('')
     // Below ~1280 px the two side panels leave the 2D + 3D board view too narrow to read.
@@ -1033,6 +1038,7 @@ export default function ResultPanel({
               {aiNote && !useAi && <StatusChip tone="warn" title={aiNote.text} testId="ai-note">
                 {aiNote.login ? 'AI 다듬기는 로그인 후' : 'AI 다듬기는 허용된 계정만'}
               </StatusChip>}
+              {pcbStatus !== 'loading' && <MechInput mech={mech} onChange={setMech} buttonStyle={ghostBtn} />}
               {(pcbStatus === null || pcbStatus === 'invalid' || (pcbStatus === 'done' && pcbStale)) && <button onClick={() => generatePCB()} style={{...ghostBtn, color: circuitErrors.length ? 'var(--sf-danger)' : ghostBtn.color}}><IconLayers size={12} /> {circuitErrors.length ? `회로 오류 ${circuitErrors.length}` : pcbStale ? 'PCB 다시 생성' : 'PCB 생성'}</button>}
               {pcbStatus === 'loading' && <StatusChip tone="accent" busy testId="pcb-loading">PCB 생성 중</StatusChip>}
               {/* a board built from a previous circuit: no downloads of files that no longer match */}
@@ -1074,7 +1080,9 @@ export default function ResultPanel({
               <span style={{ flex: 1 }}>
                 {pcbStale === 'circuit'
                   ? '회로가 바뀌었습니다. 이 기판은 바뀌기 전 회로로 만든 것이라 2D·3D·DRC·거버가 지금 회로와 다를 수 있습니다.'
-                  : `부품 방식이 바뀌었습니다. 이 기판은 ${pcbSource.style.toUpperCase()} 부품으로 만든 것입니다.`}
+                  : pcbStale === 'mech'
+                    ? `기판 크기 조건이 바뀌었습니다. 이 기판은 ${pcbSource.mech ? `${pcbSource.mech.width} × ${pcbSource.mech.height} mm 조건` : '크기 조건 없이'}으로 만든 것입니다.`
+                    : `부품 방식이 바뀌었습니다. 이 기판은 ${pcbSource.style.toUpperCase()} 부품으로 만든 것입니다.`}
               </span>
               <button onClick={() => generatePCB()} style={{ ...ghostBtn, color: 'var(--sf-fg-muted)', flexShrink: 0 }}>PCB 다시 생성</button>
             </div>
