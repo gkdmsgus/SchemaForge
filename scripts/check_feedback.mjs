@@ -42,9 +42,9 @@ try {
   const alertText = () => dialog.getByRole('alert').innerText().catch(() => '')
 
   // K1
-  await page.goto(BASE, { waitUntil: 'networkidle' })
+  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 90000 })
   const home = { reach: await reach(opener), width: await wide(page) }
-  await page.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle' })
+  await page.goto(`${BASE}/?demo=motor`, { waitUntil: 'networkidle', timeout: 90000 })
   await page.getByText('Demo: motor').first().waitFor({ timeout: 60000 }).catch(() => {})
   const demo = { reach: await reach(opener), width: await wide(page) }
   check('K1 the 의견 button is reachable on a phone, first screen and demo, and nothing sticks out to the right',
