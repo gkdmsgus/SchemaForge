@@ -16,7 +16,7 @@ import { SPECS, assumedBjt, assumedMos, ledOf, type BjtSpec, type LedColor, type
 export type OpState = 'pass' | 'warn' | 'error' | 'unknown'
 export type OpRule =
   | 'op_data' | 'op_power' | 'op_short' | 'op_led' | 'op_flyback' | 'op_relay'
-  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper'
+  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper' | 'op_rs485'
 
 /** Rules in display order, with their Korean names. */
 export const OP_RULES: [OpRule, string][] = [
@@ -33,6 +33,7 @@ export const OP_RULES: [OpRule, string][] = [
   ['op_555', '555 타이머'],
   ['op_reg', '레귤레이터 전압'],
   ['op_stepper', '스테퍼 드라이버 전원'],
+  ['op_rs485', 'RS-485 대기 전압'],
 ]
 
 export interface OpResult {
@@ -2576,6 +2577,78 @@ function checkSteppers(x: Ctx): OpResult[] {
   return out
 }
 
+/**
+ * An RS-485 transceiver's idle bus (TI SN75176B, 2026-11-17): with nobody talking, A − B is what the fail-safe bias
+ * resistors (A up to a supply, B down to GND) make across the bus's terminations, and the receiver only reads it as high
+ * from +0.2 V (SLLS101I 5.5). The terminations are this board's resistor across A–B with an equal one at the bus's other
+ * end (7.2: both ends), or the datasheet's 120 Ω at both when this board has none; the receivers' own inputs (12 kΩ a
+ * unit load) are left out, which reads a little high. No bias and no termination: this board is not where the bias goes,
+ * and nothing is said.
+ */
+function checkRs485(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const spec = SPECS.rs485.SN75176B
+  const ohmsOf = (ref: string) => parseOhms(x.part(ref)?.value ?? '')
+  /** resistors with one end on n, and the net and its known voltage at the other */
+  const tied = (n: string) => x.of('R').map(r => ({ r, o: x.net(r.ref, 1) === n ? x.net(r.ref, 2) : x.net(r.ref, 2) === n ? x.net(r.ref, 1) : null }))
+    .filter((t): t is { r: OpPart; o: string } => !!t.o && t.o !== n)
+  for (const u of x.of('RS485')) {
+    const res = (state: OpState, summary: string, detail: string[], fix?: string) =>
+      out.push({ rule: 'op_rs485', ref: u.ref, state, summary, detail, ...(fix ? { fix } : {}) })
+    const a = x.net(u.ref, 6), b = x.net(u.ref, 7)
+    if (!a || !b || a === b) continue
+    const terms = x.between(a, b).map(r => ({ r, o: ohmsOf(r.ref) }))
+    const ups = (n: string) => tied(n).filter(t => !x.isGnd(t.o) && (x.voltOf(t.o)?.v ?? 0) > 0.05)
+    const downs = (n: string) => tied(n).filter(t => x.isGnd(t.o))
+    const up = ups(a), down = downs(b)
+    const why = [`문턱: ${cite(spec.vit)}`, `바이어스: ${cite(spec.bias)}`]
+    // pulled the other way round: an idle bus reads as a steady low, which a UART takes for a break
+    if (!up.length && !down.length && (ups(b).length || downs(a).length)) {
+      const rs = [...ups(b), ...downs(a)].map(t => t.r.ref)
+      res('error', `${u.ref} 바이어스가 거꾸로입니다: B가 전원 쪽, A가 GND 쪽으로 당겨져 버스가 쉴 때 계속 0으로 읽힙니다`, [`${rs.join('·')}: B를 전원 쪽, A를 GND 쪽으로 당김`, ...why],
+        `${rs.join('·')}의 연결을 바꿔 A(6번 핀)를 전원 쪽, B(7번 핀)를 GND 쪽으로 당깁니다.`)
+      continue
+    }
+    if (!up.length && !down.length) {
+      if (terms.length) res('warn', `${u.ref} 버스 끝 기기인데 바이어스 저항이 없어, 아무도 말하지 않을 때 수신 출력이 정해지지 않습니다`,
+        [`${ga(terms.map(t => t.r.ref).join('·'))} A–B 사이 종단 저항이라 이 보드가 버스 끝입니다`, '바이어스가 없으면 쉬는 버스의 A−B는 0 V 근처이고, 문턱 ±0.2 V 사이라 수신 출력이 0과 1 사이를 오갈 수 있습니다', ...why],
+        `A(6번 핀)에서 전원으로 저항 하나, B(7번 핀)에서 GND로 저항 하나를 답니다 (바이어스 저항: 아무도 말하지 않을 때 A를 살짝 높게, B를 살짝 낮게 잡아 두는 저항). 버스 전체에 한 쌍이면 되고, 다른 기기에 이미 있으면 이 경고는 무시해도 됩니다.`)
+      continue
+    }
+    if (!up.length || !down.length) {
+      const has = up.length ? `A를 전원 쪽으로 당기는 ${up.map(t => t.r.ref).join('·')}` : `B를 GND로 당기는 ${down.map(t => t.r.ref).join('·')}`
+      res('warn', `${u.ref} 바이어스 저항이 한쪽만 있습니다 (${has}만 있음)`, [`바이어스는 A를 전원 쪽으로, B를 GND 쪽으로 한 쌍으로 당겨야 A−B에 전압이 생깁니다`, ...why],
+        `${up.length ? 'B(7번 핀)에서 GND로' : 'A(6번 핀)에서 전원으로'} 같은 값의 저항을 하나 더 답니다.`)
+      continue
+    }
+    const rup = par(up.map(t => ohmsOf(t.r.ref) ?? NaN)), rdown = par(down.map(t => ohmsOf(t.r.ref) ?? NaN))
+    const vcc = up.map(t => x.voltOf(t.o)!).reduce((m, v) => ((v.lo ?? v.v) < (m.lo ?? m.v) ? v : m))
+    const here = terms.length ? par(terms.map(t => t.o ?? NaN)) : null
+    if (!Number.isFinite(rup) || !Number.isFinite(rdown) || (here != null && !Number.isFinite(here))) {
+      res('unknown', `${u.ref} 바이어스·종단 저항 값을 읽지 못해 쉬는 버스의 전압을 판단할 수 없습니다`, [[...up, ...down, ...terms].map(t => `${t.r.ref} ${x.part(t.r.ref)?.value || '값 없음'}`).join(', ')])
+      continue
+    }
+    const rt = here != null ? here / 2 : spec.term.v / 2
+    const vs = vcc.lo ?? vcc.v
+    const vab = (vs * rt) / (rup + rdown + rt)
+    const mV = (v: number) => `${Math.round(v * 1000)} mV`
+    const detail = [
+      `A−B = 전원 ${V(vs)} × 종단 ${ohm(rt)} ÷ (위 ${ohm(rup)} + 아래 ${ohm(rdown)} + 종단 ${ohm(rt)}) = ${mV(vab)}`,
+      here != null ? `종단: 이 보드의 ${terms.map(t => t.r.ref).join('·')} ${wa(ohm(here))} 버스 반대쪽 끝의 같은 값이 나란히 → ${ohm(rt)}`
+        : `종단: 이 보드에는 없어 버스 양 끝에 ${ohm(spec.term.v)}씩 있다고 보고 ${ohm(rt)} (${cite(spec.term)})`,
+      `전원: ${up.map(t => t.o).join(', ')} ${V(vs)}: ${vcc.why}`,
+      '수신기 입력 저항(한 대에 12 kΩ)은 빼고 계산해, 실제 전압은 이보다 조금 낮습니다',
+      ...why,
+    ]
+    if (vab < spec.bias.v - 1e-9) {
+      const most = Math.floor((vs * rt / spec.bias.v - rt) / 2)
+      res('warn', `${u.ref} 버스가 쉴 때 A−B가 ${mV(vab)}로 문턱 ${mV(spec.vit.v)}보다 작아, 아무도 말하지 않을 때 수신 출력이 정해지지 않습니다`, detail,
+        `바이어스 저항 ${wa(up.map(t => t.r.ref).join('·'))} ${eul(down.map(t => t.r.ref).join('·'))} 각각 ${ohm(most)} 이하로 줄이면 A−B가 ${mV(spec.bias.v)} 이상이 됩니다.`)
+    } else res('pass', `${u.ref} 버스가 쉴 때 A−B ${mV(vab)} ≥ ${mV(spec.bias.v)} (바이어스 ${up.map(t => t.r.ref).join('·')}·${down.map(t => t.r.ref).join('·')})`, detail)
+  }
+  return out
+}
+
 function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
   const out: OpResult[] = []
   for (const r of x.of('REG')) {
@@ -2909,6 +2982,7 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   run('op_555', () => check555(x, reversedCaps))
   run('op_reg', () => checkRegs(x, reversedCaps))
   run('op_stepper', () => checkSteppers(x))
+  run('op_rs485', () => checkRs485(x))
   return { out, pulled, noPull }
 }
 

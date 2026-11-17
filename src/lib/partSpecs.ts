@@ -67,6 +67,7 @@ const TI_7805 = 'TI LM340/LM7805 데이터시트 SNOSBT0L'
 const ATMEGA_328P = 'Microchip ATmega48A/PA/88A/PA/168A/PA/328/P 데이터시트 DS40002061B'
 // Pololu's A4988 stepper motor driver carrier, read 2026-11-17 from its product page
 const POLOLU_A4988 = 'Pololu A4988 Stepper Motor Driver Carrier 제품 페이지 (pololu.com/product/1182)'
+const TI_75176 = 'TI SN65176B/SN75176B 데이터시트 SLLS101I'
 // two 18650 lithium-ion cells, read 2026-11-14: Panasonic's sheet (batteryspace.com copy) and Murata's (murata.com)
 const PANA_NCR = 'Panasonic NCR18650B 데이터시트 VERSION 13.11 R1'
 const MURATA_VTC6 = 'Murata US18650VTC6 데이터시트 Version 001'
@@ -277,6 +278,16 @@ export const SPECS = {
       cap_min: { v: 47e-6, src: `${POLOLU_A4988}: VMOT와 GND 사이, 보드 가까이에 47 µF 이상 전해 커패시터` },
     },
   } satisfies Record<'A4988', Record<'vmot_min' | 'vmot_max' | 'vdd_min' | 'vdd_max' | 'cap_min', Num>>,
+
+  // an RS-485 transceiver's receiver: it reads A − B above +0.2 V as high and below −0.2 V as low, and between them as
+  // nothing it guarantees, so an idle bus with no fail-safe bias leaves its output undefined (read 2026-11-17)
+  rs485: {
+    SN75176B: {
+      vit: { v: 0.2, src: `${TI_75176} 5.5 수신기 전기적 특성: 문턱 VIT+ 최대 0.2 V, VIT− 최소 −0.2 V` },
+      bias: { v: 0.2, src: `${TI_75176} 7.2.2: 필요하면 바깥에 페일세이프 바이어스를 달아 A−B에 +200 mV가 걸리게 한다` },
+      term: { v: 120, src: `${TI_75176} 7.2: 선의 양 끝을 특성 임피던스로 종단 (CAT-5E 선의 예 120 Ω)` },
+    },
+  } satisfies Record<'SN75176B', Record<'vit' | 'bias' | 'term', Num>>,
 
   // a lithium-ion cell: charged to this voltage, named by this one. A pack of n cells in series is n times these.
   // LiFePO4 and high-voltage (LiHV) cells charge to other voltages and are not read as lithium-ion

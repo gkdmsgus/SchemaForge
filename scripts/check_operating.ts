@@ -323,6 +323,33 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     && is(s36, 'op_stepper', 'error', 'U1', /최대 35 V를 넘어/) && is(s7, 'op_stepper', 'error', 'U1', /최소 8 V보다 낮아/)
     && is(s9s, 'op_stepper', 'error', 'U1', /완전히 충전하면 37\.8 V/) && is(s3v3, 'op_stepper', 'pass', 'U1'),
     `${show(s12, 'op_stepper')} | ${show(s36, 'op_stepper')} | ${show(s7, 'op_stepper')} | ${show(s9s, 'op_stepper')} | ${show(s3v3, 'op_stepper')}`)
+  // O7i: an RS-485 bus at rest (TI SN75176B, 2026-11-17): A − B = supply × terminations ÷ (bias up + bias down +
+  // terminations), against the receiver's 0.2 V threshold (SLLS101I 5.5). 5 V with 560 Ω each and 120 Ω here (60 Ω with
+  // the far end's): 254 mV passes; 3.3 V: 168 mV warns, at most 465 Ω each; an end board with no bias warns; a middle
+  // board with neither says nothing; one side only warns; pulled the other way is an error; no termination here reads
+  // the datasheet's 120 Ω at both ends
+  const bus = (supply: string, o: { up?: string; down?: string; term?: string; flip?: boolean } = {}) => {
+    const parts: [string, string, string][] = [['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'RS485', 'SN75176B'], ['J2', 'Conn_01x02', 'RS485 BUS']]
+    const nets: [string, ...string[]][] = [[supply, 'J1.1', 'U1.8'], ['GND', 'J1.2', 'U1.5'], ['TXD', 'J1.3', 'U1.4'], ['RXD', 'J1.4', 'U1.1'], ['DIR', 'U1.2', 'U1.3'],
+      ['BUS_A', 'U1.6', 'J2.1'], ['BUS_B', 'U1.7', 'J2.2']]
+    const hi = o.flip ? 'BUS_B' : 'BUS_A', lo = o.flip ? 'BUS_A' : 'BUS_B'
+    const join = (net: string, pin: string) => nets.find(n => n[0] === net)!.push(pin)
+    if (o.up) { parts.push(['R1', 'R', o.up]); join(hi, 'R1.1'); join(supply, 'R1.2') }
+    if (o.down) { parts.push(['R2', 'R', o.down]); join(lo, 'R2.1'); join('GND', 'R2.2') }
+    if (o.term) { parts.push(['R3', 'R', o.term]); join('BUS_A', 'R3.1'); join('BUS_B', 'R3.2') }
+    return run(circuit(parts, nets))
+  }
+  const b5 = bus('+5V', { up: '560', down: '560', term: '120' }), b33 = bus('+3V3', { up: '560', down: '560', term: '120' })
+  const bEnd = bus('+5V', { term: '120' }), bMid = bus('+5V'), bOne = bus('+5V', { up: '560', term: '120' })
+  const bFlip = bus('+5V', { up: '560', down: '560', term: '120', flip: true }), bFar = bus('+5V', { up: '560', down: '560' })
+  const p33 = pick(b33, 'op_rs485', 'U1')
+  check('O7i SN75176B idle bus: 254 mV passes, 3.3 V 168 mV warns with 465 Ω, an end board without bias warns, a middle one is silent, one side warns, reversed is an error, no termination here reads 120 Ω at both ends',
+    is(b5, 'op_rs485', 'pass', 'U1', /254 mV ≥ 200 mV/) && (pick(b5, 'op_rs485', 'U1')?.detail ?? []).some(d => /SLLS101I 5\.5/.test(d))
+    && is(b33, 'op_rs485', 'warn', 'U1', /168 mV로 문턱 200 mV/) && /각각 465 Ω 이하/.test(p33?.fix ?? '')
+    && is(bEnd, 'op_rs485', 'warn', 'U1', /버스 끝 기기인데 바이어스 저항이 없어/) && !bMid.some(r => r.rule === 'op_rs485')
+    && is(bOne, 'op_rs485', 'warn', 'U1', /한쪽만/) && is(bFlip, 'op_rs485', 'error', 'U1', /거꾸로/)
+    && is(bFar, 'op_rs485', 'pass', 'U1', /254 mV/) && (pick(bFar, 'op_rs485', 'U1')?.detail ?? []).some(d => /양 끝에 120 Ω씩/.test(d)),
+    [b5, b33, bEnd, bMid, bOne, bFlip, bFar].map(r => show(r, 'op_rs485')).join(' | ') + ` | fix ${p33?.fix}`)
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
   // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package
