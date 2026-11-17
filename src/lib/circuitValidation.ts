@@ -1,6 +1,6 @@
 import type { NetGraph } from '../types'
 import { pinNumber } from './graphEdit'
-import { fromGraph, ledsWithoutResistor } from './operatingCheck'
+import { fromGraph, ledsWithoutResistor, lithiumPack } from './operatingCheck'
 
 export interface CircuitIssue {
   code: string
@@ -123,7 +123,7 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
         for (const nd of on.get(n) ?? []) {
           const k = kindOfRef(nd.ref)
           if (nd.ref === s.ref || k === 'TestPoint' || (k === 'D' && nd.pin === '1') || (k === 'Bridge' && (nd.pin === '1' || nd.pin === '2'))) continue
-          if (k === 'SW') { const other = netOf(nd.ref, nd.pin === '1' ? '2' : '1'); if (other && !isGndName(other)) queue.push(other); continue }
+          if (k === 'SW' || k === 'Fuse') { const other = netOf(nd.ref, nd.pin === '1' ? '2' : '1'); if (other && !isGndName(other)) queue.push(other); continue }
           bare = true
           break
         }
@@ -142,7 +142,7 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
   // person works (SW). Ground nets end the walk. A motor whose supply cannot be traced is not judged
   const supplyNets = new Set(supplyIn.map(s => s.net))
   const through: Record<string, string[][]> = {
-    D: [['1', '2']], L: [['1', '2']], R: [['1', '2']], REG: [['3', '2']], Q_NPN: [['2', '3']], Q_NMOS: [['2', '3']],
+    D: [['1', '2']], L: [['1', '2']], R: [['1', '2']], Fuse: [['1', '2']], REG: [['3', '2']], Q_NPN: [['2', '3']], Q_NMOS: [['2', '3']],
     Relay: [['3', '4'], ['3', '5']],
   }
   for (const m of components.filter(c => /MOTOR|모터/i.test(c.value || ''))) {
@@ -170,6 +170,35 @@ export function validateCircuit(graph: NetGraph | null | undefined): CircuitIssu
       suggestion: `${src}의 +와 모터 ${m.ref} 사이에 모터 전류를 견디는 스위치를 하나 넣습니다. 사람이 다칠 수 있는 로봇이면 누르면 끊기는 비상정지 버튼을 씁니다.`,
       chat: `${src}의 +와 모터 ${m.ref} 전원 사이에 스위치(SW)를 직렬로 추가해줘. 스위치를 끄면 모터 전원이 끊기게 해줘.`,
       refs: [m.ref], nets: [reached] })
+  }
+
+  // CIR205. no fuse where a short would be a fire (2026-11-17): a lithium-ion battery (lithiumPack), or any supply when the
+  // circuit drives a motor. From the supply's +, past switches and series diodes, a part is reached before a fuse (Fuse). No
+  // rating is given: it is the circuit's largest current and the fuse's datasheet that decide it
+  const motorHere = components.some(c => /MOTOR|모터/i.test(c.value || ''))
+  for (const s of supplyIn) {
+    const lith = components.find(c => c.ref === s.ref && c.name === 'Battery' && lithiumPack(c.value || ''))
+    if (!lith && !motorHere) continue
+    const seen = new Set<string>(), queue = [s.net], crossed = new Set<string>()   // parts walked through: their far pin is no load
+    let bare = false
+    while (queue.length && !bare) {
+      const n = queue.shift()!
+      if (seen.has(n)) continue
+      seen.add(n)
+      for (const nd of on.get(n) ?? []) {
+        const k = kindOfRef(nd.ref)
+        if (nd.ref === s.ref || k === 'TestPoint' || k === 'Fuse' || crossed.has(nd.ref)) continue
+        if (k === 'SW' || (k === 'D' && nd.pin === '1')) { crossed.add(nd.ref); const other = netOf(nd.ref, nd.pin === '1' ? '2' : '1'); if (other && !isGndName(other)) queue.push(other); continue }
+        bare = true
+        break
+      }
+    }
+    if (!bare) continue
+    add({ code: 'CIR205', severity: 'warning', advice: true, title: '전원에 퓨즈가 없습니다',
+      message: `${s.ref} 전원에 퓨즈가 없습니다 (퓨즈: 전류가 너무 많이 흐르면 스스로 끊어져 회로를 지키는 부품). 선끼리 닿는 단락이 생기면 ${lith ? '리튬 배터리가' : '모터를 돌리는 전원이'} 큰 전류를 그대로 내보내, 선과 기판이 뜨거워지고 불이 날 수 있습니다.`,
+      suggestion: `${s.ref}의 + 바로 뒤에 퓨즈나 PTC(되살아나는 퓨즈)를 하나 직렬로 넣습니다. 정격 전류는 회로가 평소 쓰는 가장 큰 전류보다 크게, 퓨즈 데이터시트를 보고 고릅니다.`,
+      chat: `${s.ref}의 + 바로 뒤에 퓨즈(Fuse)를 직렬로 추가해줘. 퓨즈의 1번 핀은 ${s.ref}의 +에, 2번 핀은 원래 ${s.ref}의 +에 이어져 있던 회로 쪽에 연결해줘.`,
+      refs: [s.ref], nets: [s.net] })
   }
 
   // CIR204. a servo powered from the microcontroller board alone (2026-11-17): a header whose value says SERVO, its supply

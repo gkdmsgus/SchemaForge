@@ -633,7 +633,7 @@ try {
   // S20a: the safety advice the demo came with (no reverse-polarity diode, no stop switch) waits in a chip instead of covering
   // the schematic, opens on a click and folds again
   const chip20 = p20.getByTestId('cir-chip')
-  const quiet20 = !(await box20.isVisible()) && /안전 경고 2/.test(await chip20.innerText().catch(() => ''))
+  const quiet20 = !(await box20.isVisible()) && /안전 경고 3/.test(await chip20.innerText().catch(() => ''))
   await p20.getByTestId('cir-toggle').click({ timeout: 3000 }).catch(() => {})
   await p20.waitForTimeout(300)
   const opened20 = await box20.isVisible() ? await box20.innerText() : ''
@@ -641,7 +641,7 @@ try {
   await p20.waitForTimeout(300)
   const folded20 = !(await box20.isVisible())
   check('S20a the safety advice of the motor demo waits in a chip, opens on a click and folds again',
-    quiet20 && /CIR202/.test(opened20) && /CIR203/.test(opened20) && folded20, `chip ${quiet20}, opened ${!!opened20}, folded ${folded20}`)
+    quiet20 && /CIR202/.test(opened20) && /CIR203/.test(opened20) && /CIR205/.test(opened20) && folded20, `chip ${quiet20}, opened ${!!opened20}, folded ${folded20}`)
   const nets20 = await p20.locator('g[data-net]').count()
   let deleted20 = 0
   for (let i = 0; i < nets20 && !(await box20.isVisible()); i++) {

@@ -41,6 +41,7 @@ const HEIGHT_RULES: [RegExp, number][] = [
   // flat features: no body above the board, drawn as a top face only
   [/MountingHole|TestPoint/i, 0],
   [/Relay/i, 15.7],
+  [/Fuseholder_TR5/i, 5.6],      // the highest point of KiCad's STEP model of the footprint (read 2026-11-17)
   [/Buzzer|Speaker/i, 9.5],
   [/BatteryHolder|Battery/i, 6.0],
   [/PinHeader|Conn_|Screw_Terminal|TerminalBlock/i, 8.5],
@@ -60,6 +61,7 @@ const HEIGHT_RULES: [RegExp, number][] = [
   [/L_\d|Inductor/i, 1.2],
   [/R_Axial|D_DO-\d|_Horizontal|_Vertical/i, 2.6],
   [/R_\d{4}|C_\d{4}|D_SOD|L_\d{4}/i, 0.6],
+  [/Fuse_\d{4}/i, 0.55],         // the same, Fuse_1206_3216Metric.step
 ]
 
 /** Nominal height of a part's package (mm). Matches on the footprint name, then the part name. */
@@ -71,6 +73,8 @@ export function partHeight(footprint: string, part = ''): number {
 const COLOR_RULES: [RegExp, string][] = [
   [/Relay/i, '#3a4a6b'],
   [/Buzzer|Speaker/i, '#23262b'],
+  [/Fuseholder/i, '#2a2c31'],
+  [/Fuse_\d{4}/i, '#d8d2c4'],
   [/BatteryHolder|Battery/i, '#8a8f96'],
   [/PinHeader|Conn_|Terminal/i, '#e9e4d6'],
   [/DIP-\d|SOIC|SO-\d|SSOP|TSSOP/i, '#25272c'],

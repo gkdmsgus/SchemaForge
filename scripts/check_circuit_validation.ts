@@ -86,6 +86,8 @@ const cir = (code: string, c: NetGraph) => validateCircuit(c).filter(i => i.code
 const timer = (front: string[][], extra: Part[] = []) => g([bat('9V'), ['U1', 'NE555', 'NE555'], ['C1', 'CP', '10uF'], ['R1', 'R', '1k'], ...extra],
   ...front, ['VCC', 'U1.8', 'U1.4', 'C1.1', 'R1.1'], ['DIS', 'R1.2', 'U1.7'], ['GND', 'U1.1', 'C1.2', 'BT1.2'])
 const bareTimer = timer([['VCC', 'BT1.1']])
+// the same 555 on a 4S lithium pack: only the battery's value changes
+const lithTimer = (front: string[][], extra: Part[] = []) => { const t = timer(front, extra); t.components = t.components.map(c => (c.ref === 'BT1' ? { ...c, value: '4S LiPo' } : c)); return t }
 const diodeTimer = timer([['IN', 'BT1.1', 'D9.1'], ['VCC', 'D9.2']], [['D9', 'D', '1N5819']])
 const capFirst = timer([['IN', 'BT1.1', 'D9.1', 'C9.1'], ['VCC', 'D9.2'], ['GND', 'C9.2']], [['D9', 'D', '1N5819'], ['C9', 'CP', '100uF']])
 const switchThenDiode = timer([['IN', 'BT1.1', 'SW1.1'], ['SWD', 'SW1.2', 'D9.1'], ['VCC', 'D9.2']], [['SW1', 'SW', ''], ['D9', 'D', '1N5819']])
@@ -105,8 +107,8 @@ const servoOn = (power: string[][], extra: Part[] = [], board = 'Arduino Uno') =
   g([['J1', 'Conn_01x04', board], ['J2', 'Conn_01x03', 'SERVO SG90'], ...extra],
     ...power, ['D9', 'J1.3', 'J2.1'], ['GND', 'J1.2', 'J2.3', ...extra.filter(p => p[1] === 'Battery').map(p => `${p[0]}.2`)])
 const checks: [string, boolean][] = [
-  ['the demos: motor warns CIR202 (J1) and CIR203 (J2), 555 and relay warn CIR202, the LED nothing; no error',
-    said(motor) === 'warning CIR202 J1 | warning CIR203 J2' && said(led) === '' && said(ne555) === 'warning CIR202 BT1' && said(relay) === 'warning CIR202 J1'],
+  ['the demos: motor warns CIR202 (J1), CIR203 (J2) and CIR205 (J1, a motor and no fuse), 555 and relay warn CIR202, the LED nothing; no error',
+    said(motor) === 'warning CIR202 J1 | warning CIR203 J2 | warning CIR205 J1' && said(led) === '' && said(ne555) === 'warning CIR202 BT1' && said(relay) === 'warning CIR202 J1'],
   ['CIR202: a 555 straight on its battery warns; a series diode or a bridge first, also past a switch, passes; a capacitor before the diode warns',
     cir('CIR202', bareTimer).join() === 'BT1' && !cir('CIR202', diodeTimer).length && !cir('CIR202', switchThenDiode).length
     && !cir('CIR202', bridged).length && cir('CIR202', capFirst).join() === 'BT1'],
@@ -117,6 +119,17 @@ const checks: [string, boolean][] = [
     && !cir('CIR203', switchedMotor).length && !cir('CIR203', unknownSupply).length],
   ['CIR203 says what, why and the fix in Korean',
     validateCircuit(straightMotor).some(i => i.code === 'CIR203' && /비상정지:/.test(i.message) && /끼일 수/.test(i.message) && /스위치/.test(i.suggestion))],
+  // CIR205 (2026-11-17): no fuse where a short would be a fire: a lithium-ion battery, or a motor's circuit. A fuse right
+  // after the +, also past a switch, or a switch then a diode then a fuse, passes; a 9 V alkaline 555 with no motor is not asked
+  ['CIR205: a 4S lithium 555 or a motor on a battery with no fuse warns; a fuse after the + (past a switch or a diode too) passes; a 9 V 555 is not asked',
+    cir('CIR205', lithTimer([['VCC', 'BT1.1']])).join() === 'BT1' && cir('CIR205', straightMotor).join() === 'BT1'
+    && !cir('CIR205', lithTimer([['IN', 'BT1.1', 'F1.1'], ['VCC', 'F1.2']], [['F1', 'Fuse', '1A']])).length
+    && !cir('CIR205', motorOn([['VBAT', 'BT1.1', 'SW1.1'], ['VS', 'SW1.2', 'D9.1'], ['VF', 'D9.2', 'F1.1'], ['VM', 'F1.2', 'M1.1', 'D1.2']], [['SW1', 'SW', ''], ['D9', 'D', '1N5819'], ['F1', 'Fuse', '2A']])).length
+    && !cir('CIR205', bareTimer).length],
+  ['CIR205 says what, why (heat, fire) and the fix (a fuse or a PTC after the +) with no rating of its own; a fuse also counts as no bare + for CIR202 and passes the motor\'s current for CIR203',
+    validateCircuit(straightMotor).some(i => i.code === 'CIR205' && i.advice && /퓨즈:/.test(i.message) && /불이 날 수/.test(i.message) && /PTC/.test(i.suggestion) && !/\d+\s*(mA|A\b)/.test(i.suggestion))
+    && !cir('CIR202', timer([['IN', 'BT1.1', 'F1.1'], ['F', 'F1.2', 'D9.1'], ['VCC', 'D9.2']], [['F1', 'Fuse', '1A'], ['D9', 'D', '1N5819']])).length
+    && cir('CIR203', motorOn([['VBAT', 'BT1.1', 'F1.1'], ['VM', 'F1.2', 'M1.1', 'D1.2']], [['F1', 'Fuse', '2A']])).join() === 'M1'],
   // CIR204 (2026-11-17): a servo on an Uno's 5 V alone warns; with a battery, a regulator's output or a supply header on that
   // net, or on a net named as a signal, it does not; the warning names what, why and the fix with no figure of its own
   ['CIR204: a servo fed only by the Uno\'s 5 V (or USB) warns; a battery, a regulator or a supply header on it, or a bare signal net, does not',

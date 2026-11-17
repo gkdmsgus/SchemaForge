@@ -382,7 +382,7 @@ function hfeAt(spec: BjtSpec, ic: number) {
 }
 
 // Parts that drive a signal of their own (a connector pin, an IC); everything else is passive.
-const PASSIVE = new Set(['R', 'C', 'CP', 'L', 'D', 'LED', 'Q_NPN', 'Q_NMOS', 'SW', 'Battery', 'Relay', 'Buzzer', 'Crystal', 'REG'])
+const PASSIVE = new Set(['R', 'C', 'CP', 'L', 'D', 'LED', 'Q_NPN', 'Q_NMOS', 'SW', 'Battery', 'Relay', 'Buzzer', 'Crystal', 'REG', 'Fuse'])
 const isExternal = (p: OpPart) => /^Conn_/.test(p.part) || !PASSIVE.has(p.part)
 /** a motor wired through a connector: a load, never a supply */
 const isMotor = (p: OpPart) => /^Conn_/.test(p.part) && /MOTOR|모터/i.test(p.value)
@@ -577,6 +577,13 @@ function analyzePower(b: Base, force = false) {
   for (const e of edges) {
     link(e.minus, { to: e.plus, dv: e.dv, dvFull: e.full ?? e.dv, label: `${e.ref} ${V(e.dv)}`, bat: e.ref })
     link(e.plus, { to: e.minus, dv: -e.dv, dvFull: -(e.full ?? e.dv), label: `−${e.ref} ${V(e.dv)}`, bat: e.ref })
+  }
+  // a fuse (or a resettable PTC) carries its supply on as it is: its few milliohms are not counted (2026-11-17)
+  for (const f of b.of('Fuse')) {
+    const a = b.net(f.ref, 1), z = b.net(f.ref, 2)
+    if (!a || !z || a === z) continue
+    link(a, { to: z, dv: 0, label: `${f.ref} 퓨즈` })
+    link(z, { to: a, dv: 0, label: `${f.ref} 퓨즈` })
   }
   const switches: { ref: string; a: string; z: string; label: string }[] = []
   for (const sw of b.parts().filter(p => p.part === 'SW' || p.part === 'Relay')) {

@@ -568,6 +568,7 @@ Part templates — copy verbatim, changing only name, ref, value and the pin lis
 - Switch: Part(tool=SKIDL, name='SW', ref_prefix='SW', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Relay: Part(tool=SKIDL, name='Relay', ref_prefix='K', pins=[Pin(num=1,name='COIL1',func=Pin.types.PASSIVE), Pin(num=2,name='COIL2',func=Pin.types.PASSIVE), Pin(num=3,name='COM',func=Pin.types.PASSIVE), Pin(num=4,name='NO',func=Pin.types.PASSIVE), Pin(num=5,name='NC',func=Pin.types.PASSIVE)])
 - Buzzer: Part(tool=SKIDL, name='Buzzer', ref_prefix='LS', pins=[Pin(num=1,name='+',func=Pin.types.PASSIVE), Pin(num=2,name='-',func=Pin.types.PASSIVE)])
+- Fuse or resettable fuse (PTC), in series right after a supply's +: Part(tool=SKIDL, name='Fuse', ref_prefix='F', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Battery: Part(tool=SKIDL, name='Battery', ref_prefix='BT', pins=[Pin(num=1,name='+',func=Pin.types.PWROUT), Pin(num=2,name='-',func=Pin.types.PWROUT)])
 - Connector / power inlet: Part(tool=SKIDL, name='Conn_01x02', ref_prefix='J', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
 - Crystal: Part(tool=SKIDL, name='Crystal', ref_prefix='Y', pins=[Pin(num=1,name='p1',func=Pin.types.PASSIVE), Pin(num=2,name='p2',func=Pin.types.PASSIVE)])
@@ -858,9 +859,9 @@ Rules:
   circuit has just one part of that kind). Never remove or modify another part, never put its pins
   on another net, and never remove a net holding its pins: the app does not apply those edits.
 - add_component: the new part takes the free ref for its prefix listed above (R, C, L, D, Q, U, SW, K,
-  LS, BT, J, Y only), never a ref already in the component list, and a real value with units. Set "name" to the part type
+  LS, BT, J, Y, F only), never a ref already in the component list, and a real value with units. Set "name" to the part type
   exactly as one of: R, C, CP (electrolytic, 1uF and above), L, LED, D, Q_NPN, Q_NMOS,
-  NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Conn_01x02 … Conn_01x10 — the PCB
+  NE555, REG, SW, Relay, Buzzer, Battery, Crystal, Fuse, Conn_01x02 … Conn_01x10 — the PCB
   footprint is chosen from this name, and pins are numbered as in those parts
   (LED/D: 1=A 2=K, Q_NPN: 1=B 2=C 3=E, Q_NMOS: 1=G 2=D 3=S, CP: 1=+ 2=-).
 - add_net / remove_net: always set "name" to the net's name. To connect a pin to an existing
@@ -1806,7 +1807,7 @@ const MOUSER_WORD: Record<string, string> = {
   R: 'resistor', C: 'capacitor', CP: 'electrolytic capacitor', L: 'inductor', LED: 'LED', D: 'diode',
   Bridge: 'bridge rectifier',
   Q_NPN: 'NPN transistor', Q_NMOS: 'MOSFET', REG: 'regulator', NE555: '555', OpAmp: 'op amp',
-  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal',
+  Relay: 'relay', Buzzer: 'buzzer', SW: 'switch', Battery: 'battery', Crystal: 'crystal', Fuse: 'fuse',
 }
 
 /** name = part template, pkg = the board's package as a shop knows it (src/lib/bom.ts searchPkg) */

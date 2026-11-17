@@ -78,6 +78,9 @@ TABLE = {
     ('Battery', 'tht'): ('Connector_PinHeader_2.54mm', 'PinHeader_1x02_P2.54mm_Vertical', IDENTITY2),
     ('Crystal', 'smd'): ('Crystal', 'Crystal_SMD_HC49-SD', IDENTITY2),
     ('Crystal', 'tht'): ('Crystal', 'Crystal_HC49-U_Vertical', IDENTITY2),
+    # a fuse or a resettable PTC in series with a supply, no polarity: a 1206 chip, or a holder a TR5 fuse plugs into
+    ('Fuse', 'smd'):   ('Fuse', 'Fuse_1206_3216Metric', IDENTITY2),
+    ('Fuse', 'tht'):   ('Fuse', 'Fuseholder_TR5_Littelfuse_No560_No460', IDENTITY2),
 }
 
 # Conn_01xNN -> 1xNN 2.54 mm pin header, pins map 1:1.
