@@ -2925,6 +2925,10 @@ function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
     if (spec.cout_min && !atLeast(total, spec.cout_min.v)) {
       res('warn', `${r.ref} 출력 커패시터 ${uF(total)} < 권장 ${uF(spec.cout_min.v)} (발진 위험)`, [...detail, cite(spec.cout_min)]); continue
     }
+    // the output's stability the datasheet vouches for with a solid tantalum part; ceramics only are not said to be unstable,
+    // so a person looks at the ESR condition (2026-11-18, a brain session's idea; the AMS1117 sheet could not be fetched again)
+    if (spec.cout_min && caps.length && !caps.some(c => c.part === 'CP'))
+      detail.push(`사람 확인: 출력 커패시터 ${ga(caps.map(c => c.ref).join('·'))} 모두 무극성(세라믹)입니다. 데이터시트가 모든 조건에서 안정을 보장한 것은 고체 탄탈입니다 (${cite(spec.cout_min)}). 세라믹만 쓸 때의 안정 조건(ESR)은 데이터시트에서 확인합니다`)
     if (atLeast(vin.v, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 입력 ${V(vin.v)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
     if (vin.full != null && atLeast(vin.full, NEAR * spec.vin_max.v)) { res('warn', `${r.ref} 배터리를 완전히 충전하면 입력 ${V(vin.full)}가 최대 ${V(spec.vin_max.v)}에 가깝습니다`, detail); continue }
     // a lithium-ion pack runs down: past the cell voltage where input − output falls under the dropout, the output sags.

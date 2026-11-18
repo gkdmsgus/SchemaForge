@@ -334,6 +334,14 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     is(hs, 'op_drive', 'error', 'Q1', /Q1이 부하 위쪽.*게이트가 5 V까지만.*16 V/) && /로우사이드/.test(phs?.fix ?? '')
     && (phs?.detail ?? []).some(d => /12 V \+ 4 V = 16 V/.test(d)) && !/부하 위쪽/.test(pick(ls, 'op_drive', 'Q1')?.summary ?? 'x'),
     `${show(hs, 'op_drive')} | fix ${phs?.fix} | ${show(ls, 'op_drive')}`)
+  // O7g8: AMS1117 with only ceramic output capacitors keeps its verdict and adds a line for a person (the datasheet vouches
+  // for solid tantalum); the tantalum (CP) one has no such line
+  const cer = run(variant(reg, g => { g.components.find(c => c.ref === 'C1')!.name = 'C' }))
+  const pc = pick(cer, 'op_reg', 'U1'), pt = pick(run(reg), 'op_reg', 'U1')
+  check('O7g8 AMS1117 with a ceramic output capacitor keeps its pass and adds a 사람 확인 line citing the tantalum; a CP one does not',
+    pc?.state === pt?.state && (pc?.detail ?? []).some(d => /^사람 확인: 출력 커패시터 C1이 모두 무극성/.test(d) && /고체 탄탈/.test(d))
+    && !(pt?.detail ?? []).some(d => /사람 확인/.test(d)),
+    `${show(cer, 'op_reg')} | ${(pc?.detail ?? []).find(d => /사람 확인/.test(d))}`)
   // O7h: a stepper driver on Pololu's A4988 carrier (2026-11-17): VMOT 8-35 V and VDD 3-5.5 V as Pololu's page gives them,
   // a lithium pack at full charge; VMOT on a battery, VDD on the Uno's 5 V
   const stepper = (vmot: string, vdd = '+5V') => circuit([['BT1', 'Battery', vmot], ['J1', 'Conn_01x04', 'Arduino Uno'], ['U1', 'A4988', 'A4988'], ['C1', 'CP', '100uF']],
