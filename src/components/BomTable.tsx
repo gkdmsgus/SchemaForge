@@ -232,6 +232,18 @@ export default function BomTable({ components, board, style, fileBase }: BomTabl
           <li>직접 납땜한다면 부품표와 &lsquo;배치하기&rsquo; 탭이면 충분합니다.</li>
         </ul>
       </details>
+      {/* what to look at once more before paying for boards (2026-11-18, a brain session's checklist from a video on PCB
+          mistakes): each line points at the place in this app that shows it */}
+      <details className="sf-bom__note sf-bom__files" data-testid="bom-before-order">
+        <summary>주문하기 전에 확인할 것</summary>
+        <ul>
+          <li><strong>핀 배열</strong>: 트랜지스터·레귤레이터는 모양(패키지)이 같아도 제조사마다 1번 핀이 다를 수 있습니다. 산 부품의 데이터시트와 PCB 탭의 &lsquo;부품 확인&rsquo; 안내를 대조합니다.</li>
+          <li><strong>실제 크기 인쇄</strong>: .kicad_pcb를 KiCad에서 열어 1:1로 인쇄하고, 산 부품을 그 위에 올려 다리가 패드에 맞는지 봅니다.</li>
+          <li><strong>3D</strong>: PCB 탭의 3D로 부품 방향과 높이, 커넥터가 기판 가장자리를 향하는지 봅니다.</li>
+          <li><strong>검사</strong>: PCB 탭의 기판 검사 목록이 모두 통과인지(KiCad DRC 오류 0), 거버 zip에 &lsquo;확인 필요&rsquo;가 붙지 않았는지 봅니다.</li>
+          <li><strong>부품 품번</strong>: 위 표의 &lsquo;검색&rsquo;·&lsquo;제품&rsquo; 링크로 실제로 살 품번을 정하고, 그 패키지가 표의 패키지와 같은지 봅니다.</li>
+        </ul>
+      </details>
       <p className="sf-bom__note" role="status">
         {current?.state === 'unavailable' && (current.refused
           ? 'Mouser 가격·재고 조회는 허용된 계정으로 로그인해야 쓸 수 있습니다. 각 줄의 검색 링크를 쓰세요.'

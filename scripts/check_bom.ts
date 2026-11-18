@@ -329,6 +329,13 @@ function parseCsv(text: string): string[][] {
     && ['부품표', '거버', '좌표 파일'].every(w => box.includes(`<strong>${w}</strong>`)) && box.includes('이 앱은 아직 만들지 않습니다')
     && box.includes('부품표 CSV') && html.includes('>부품표 CSV<') && />\s*거버\s*</.test(panel) && /배치하기/.test(panel),
     box.slice(0, 160))
+  // B17: the checklist before ordering (2026-11-18): five lines, each pointing at a place this app has
+  const before = html.slice(html.indexOf('data-testid="bom-before-order"'))
+  check('B17 the BOM tab lists what to check before ordering: pinout, a 1:1 print, 3D, the board checks, part numbers',
+    html.includes('data-testid="bom-before-order"') && before.includes('주문하기 전에 확인할 것')
+    && ['핀 배열', '실제 크기 인쇄', '3D', '검사', '부품 품번'].every(w => before.includes(`<strong>${w}</strong>`))
+    && before.includes('부품 확인') && before.includes('KiCad DRC 오류 0') && /PCB 탭/.test(before),
+    before.slice(0, 160))
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : `\nall BOM checks passed${skipped ? ` (${skipped} skipped: no saved boards in server/outputs)` : ''}`)
