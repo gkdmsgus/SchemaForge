@@ -16,7 +16,7 @@ import { SPECS, assumedBjt, assumedMos, ledOf, type BjtSpec, type LedColor, type
 export type OpState = 'pass' | 'warn' | 'error' | 'unknown'
 export type OpRule =
   | 'op_data' | 'op_power' | 'op_short' | 'op_led' | 'op_flyback' | 'op_relay'
-  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper' | 'op_rs485' | 'op_feed'
+  | 'op_drive' | 'op_switch' | 'op_rpower' | 'op_cap' | 'op_555' | 'op_reg' | 'op_stepper' | 'op_rs485' | 'op_feed' | 'op_i2c' | 'op_adc' | 'op_level'
 
 /** Rules in display order, with their Korean names. */
 export const OP_RULES: [OpRule, string][] = [
@@ -35,6 +35,9 @@ export const OP_RULES: [OpRule, string][] = [
   ['op_stepper', '스테퍼 드라이버 전원'],
   ['op_rs485', 'RS-485 대기 전압'],
   ['op_feed', '칩 전원 연결'],
+  ['op_i2c', 'I2C 풀업'],
+  ['op_adc', 'ADC 입력 분압'],
+  ['op_level', '3.3 V·5 V 신호 연결'],
 ]
 
 export interface OpResult {
@@ -2715,6 +2718,152 @@ function checkDividerFeeds(x: Ctx): OpResult[] {
   return out
 }
 
+/** resistors with one end on n, with the net at the other end */
+function resistorsOn(x: Ctx, n: string) {
+  return x.of('R').map(r => ({ r, o: x.net(r.ref, 1) === n ? x.net(r.ref, 2) : x.net(r.ref, 2) === n ? x.net(r.ref, 1) : null }))
+    .filter((t): t is { r: OpPart; o: string } => !!t.o && t.o !== n)
+}
+const pF = (c: number) => `${sig(c * 1e12, 3)} pF`
+
+/**
+ * An I2C line (a net named SDA or SCL, 2026-11-18): open-drain, so with no resistor up to a supply nothing ever takes it
+ * high (UM10204 3.1.1). A pull-up's largest allowed value is tr ÷ (0.8473 × Cb) (7.1); the bus's capacitance is not on
+ * the schematic, so the result says up to which capacitance this pull-up keeps 100 kHz and 400 kHz, and only refuses
+ * one too large for even the pins' own capacitance (10 pF each at most) at 100 kHz. A sensor module on the line may
+ * carry its own pull-up, so none is a warning, not an error.
+ */
+function checkI2c(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const sp = SPECS.i2c
+  for (const n of x.nets()) {
+    if (!/(^|[^A-Z])(SDA|SCL)\d*($|[^A-Z])/i.test(n) || x.isGnd(n) || (x.voltOf(n)?.v ?? 0) > 0.05) continue
+    const pins = x.on(n).filter(nd => x.part(nd.ref)?.part !== 'R')
+    if (pins.length < 2) continue
+    const ups = resistorsOn(x, n).filter(t => !x.isGnd(t.o) && (x.voltOf(t.o)?.v ?? 0) > 0.05)
+    const res = (state: OpState, summary: string, detail: string[], fix?: string) =>
+      out.push({ rule: 'op_i2c', ref: n, state, summary, detail, ...(fix ? { fix } : {}) })
+    if (!ups.length) {
+      const eg = sp.tr_sm.v / (sp.k.v * 100e-12)
+      res('warn', `I2C 선 ${n}에 풀업 저항이 없습니다. I2C 칩들은 선을 낮게 끌어내리기만 해서, 풀업이 없으면 선이 HIGH로 올라가지 못해 통신이 되지 않습니다`,
+        [`${n}에 이어진 핀: ${pins.map(nd => `${nd.ref}.${nd.pin}`).join(', ')}`, cite(sp.pullup)],
+        `${n}에서 장치들의 전원(3.3 V와 5 V가 섞여 있으면 낮은 쪽)으로 저항을 하나 답니다. 이어진 센서 모듈에 풀업이 이미 있으면 이 경고는 무시해도 됩니다. 값은 버스 용량과 속도로 정합니다: 예를 들어 버스 용량이 100 pF이면 100 kHz에서 최대 ${ohm(eg)} (= 1000 ns ÷ (0.8473 × 100 pF)).`)
+      continue
+    }
+    const rp = par(ups.map(t => parseOhms(x.part(t.r.ref)?.value ?? '') ?? NaN))
+    if (!Number.isFinite(rp) || rp <= 0) {
+      res('unknown', `I2C 선 ${n} 풀업 ${ups.map(t => t.r.ref).join('·')} 값을 읽지 못했습니다`, [ups.map(t => `${t.r.ref} ${x.part(t.r.ref)?.value || '값 없음'}`).join(', ')])
+      continue
+    }
+    const cbSm = sp.tr_sm.v / (sp.k.v * rp), cbFm = sp.tr_fm.v / (sp.k.v * rp)
+    const pinsC = pins.length * sp.ci_max.v
+    const cap = (c: number) => (c >= sp.cb_max.v ? `규격 최대 ${pF(sp.cb_max.v)}까지` : `${pF(c)}까지`)
+    const detail = [
+      `풀업 ${ups.map(t => t.r.ref).join('·')} ${ohm(rp)} (${ups.map(t => t.o).join(', ')} 쪽)`,
+      `100 kHz: 버스 용량 ≤ 1000 ns ÷ (0.8473 × ${ohm(rp)}) = ${pF(cbSm)} · 400 kHz: ≤ 300 ns ÷ (0.8473 × ${ohm(rp)}) = ${pF(cbFm)}`,
+      `핀만 해도 ${pins.length}개 × 최대 ${pF(sp.ci_max.v)} = ${pF(pinsC)} (선과 커넥터의 용량은 더해야 함)`,
+      cite(sp.k), cite(sp.tr_sm), cite(sp.tr_fm), cite(sp.cb_max), cite(sp.ci_max),
+    ]
+    if (cbSm < pinsC) {
+      const most = sp.tr_sm.v / (sp.k.v * pinsC)
+      res('error', `I2C 선 ${n} 풀업 ${ga(ohm(rp))} 너무 커서, 핀 ${pins.length}개의 용량만으로도 100 kHz의 상승 시간 1000 ns를 넘습니다`, detail,
+        `풀업을 ${ohm(Math.floor(most / 100) * 100)}보다 작게 바꿉니다 (선 길이만큼 더 작게).`)
+    } else res('pass', `I2C 선 ${n} 풀업 ${ohm(rp)}: 버스 용량 100 kHz는 ${cap(cbSm)}, 400 kHz는 ${cap(cbFm)}`, detail)
+  }
+  return out
+}
+
+/** every net a header part has a pin on, with that header's level for it (headerLevel) */
+function headerNets(x: Ctx) {
+  const out: { p: OpPart; n: string; lv: NonNullable<ReturnType<typeof headerLevel>> }[] = []
+  for (const p of x.parts()) {
+    if (!/^Conn_/.test(p.part)) continue
+    for (const n of x.nets()) {
+      if (!x.on(n).some(nd => nd.ref === p.ref) || x.isGnd(n) || (x.voltOf(n)?.v ?? 0) > 0.05) continue
+      const lv = headerLevel(x, p, n)
+      if (lv) out.push({ p, n, lv })
+    }
+  }
+  return out
+}
+
+/**
+ * A resistor divider into an Uno's or Nano's pin (an ATmega328P, 2026-11-18): read as an analog input. Its source
+ * resistance is the two resistors in parallel, which the ADC wants at about 10 kΩ or less (DS40002061B 24.6.1), and its
+ * voltage, unloaded, is the divider's: over the 5 V the chip runs on it reads the top of the scale, over VCC + 0.5 V it
+ * is past the pin's absolute maximum (30.1). A lithium pack is taken fully charged.
+ */
+function checkAdcDividers(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const lv = SPECS.levels
+  for (const { p, n, lv: h } of headerNets(x)) {
+    if (h.mcu !== 'ATmega328P') continue
+    const ends = resistorsOn(x, n)
+    const tops = ends.filter(t => !x.isGnd(t.o) && (x.voltOf(t.o)?.v ?? 0) > 0.05), bots = ends.filter(t => x.isGnd(t.o))
+    if (!tops.length || !bots.length) continue
+    const rt = par(tops.map(t => parseOhms(x.part(t.r.ref)?.value ?? '') ?? NaN)), rb = par(bots.map(t => parseOhms(x.part(t.r.ref)?.value ?? '') ?? NaN))
+    const res = (state: OpState, summary: string, detail: string[], fix?: string) =>
+      out.push({ rule: 'op_adc', ref: n, state, summary, detail, ...(fix ? { fix } : {}) })
+    const names = `${tops.map(t => t.r.ref).join('·')}/${bots.map(t => t.r.ref).join('·')}`
+    if (!Number.isFinite(rt) || !Number.isFinite(rb)) { res('unknown', `${p.ref} 입력 ${n}의 분압 저항 ${names} 값을 읽지 못했습니다`, []); continue }
+    const v = tops.map(t => x.voltOf(t.o)!).reduce((m, a) => ((a.full ?? a.v) > (m.full ?? m.v) ? a : m))
+    const top = v.full ?? v.v, vin = top * rb / (rt + rb), rth = rt * rb / (rt + rb)
+    const vcc = h.v, pinMax = vcc + lv.atmega_pin_max.v
+    const detail = [
+      `입력 = ${V(top)}${v.full != null ? ' (완전히 충전한 배터리)' : ''} × ${ohm(rb)} ÷ (${ohm(rt)} + ${ohm(rb)}) = ${V(vin)} (${tops.map(t => t.o).join(', ')}: ${v.full != null ? v.fullWhy : v.why})`,
+      `ADC가 보는 저항 = ${ohm(rt)} ∥ ${ohm(rb)} = ${ohm(rth)}`,
+      `칩 전원 ${V(vcc)}: ${h.by}`, cite(lv.atmega_pin_max), cite(lv.atmega_adc_src),
+    ]
+    const ratio = rb / (rt + rb)
+    if (vin > pinMax + 1e-9) {
+      const rbMax = Math.floor((vcc * rt / (top - vcc)) / 100) * 100
+      res('error', `${p.ref} 입력 ${n}에 분압 ${names}로 ${V(vin)}가 걸려 핀 최대 ${V(pinMax)}(VCC + 0.5 V)를 넘습니다. 핀이 망가질 수 있습니다`, detail,
+        `아래쪽 저항을 ${ohm(rbMax)} 이하로 줄이거나 위쪽을 키워 입력이 ${V(vcc)} 아래가 되게 합니다.`)
+    } else if (vin > vcc + 1e-9) {
+      const rbMax = Math.floor((vcc * rt / (top - vcc)) / 100) * 100
+      res('warn', `${p.ref} 입력 ${n}에 분압 ${names}로 ${V(vin)}가 걸려 칩 전원 ${V(vcc)}를 넘습니다. ADC는 이 이상을 모두 최댓값으로 읽습니다`, detail,
+        `아래쪽 저항을 ${ohm(rbMax)} 이하로 줄여 입력이 ${V(vcc)} 아래가 되게 합니다 (나누는 비율 ${sig(ratio, 3)} → 더 작게).`)
+    } else if (rth > lv.atmega_adc_src.v + 1e-9) {
+      const k = Math.ceil(rth / lv.atmega_adc_src.v)
+      res('warn', `${p.ref} 입력 ${n}의 분압 저항이 커서 ADC가 보는 저항 ${ga(ohm(rth))} 권장 ${eul(ohm(lv.atmega_adc_src.v))} 넘습니다. 값을 읽을 때 늦거나 흔들릴 수 있습니다`, detail,
+        `두 저항을 같은 비율로 ${k}분의 1 이하로 줄입니다 (예: ${ohm(rt / k)} / ${ohm(rb / k)}). 배터리 전류를 아끼려면 입력 핀과 GND 사이에 커패시터를 다는 방법도 있지만, 값은 이 앱이 계산하지 않습니다.`)
+    } else res('pass', `${p.ref} 입력 ${n}: 분압 ${V(vin)} ≤ ${V(vcc)}, ADC가 보는 저항 ${ohm(rth)} ≤ ${ohm(lv.atmega_adc_src.v)}`, detail)
+  }
+  return out
+}
+
+/**
+ * A pin of a 3.3 V board wired straight to a pin of a 5 V board, or to an RS-485 transceiver's output run on 5 V
+ * (2026-11-18). Which side drives the line is not on the schematic, so both ways are told: 5 V into an ESP32 is over the
+ * VDD + 0.3 V its inputs take (datasheet v5.3 table 5-3), and an ESP32's high, 0.8 × VDD at least, is under the 0.6 × VCC
+ * an ATmega328P needs at 5 V (2.64 V against 3 V, table 30-1). Other 3.3 V chips are named, without their numbers.
+ */
+function checkLevels(x: Ctx): OpResult[] {
+  const out: OpResult[] = []
+  const lv = SPECS.levels
+  const hs = headerNets(x)
+  const done = new Set<string>()
+  for (const lo of hs.filter(h => h.lv.v === 3.3)) {
+    if (done.has(lo.n)) continue
+    const hi = hs.find(h => h.n === lo.n && h.lv.v === 5 && h.p.ref !== lo.p.ref)
+    const rsOut = !hi ? x.of('RS485').find(u => x.net(u.ref, 1) === lo.n && (x.voltOf(x.net(u.ref, 8))?.v ?? 0) > 4.5) : undefined
+    if (!hi && !rsOut) continue
+    done.add(lo.n)
+    const esp = /ESP-?32/i.test(lo.p.value)
+    const other = hi ? `${hi.p.ref}(${hi.p.value}, 5 V)` : `${rsOut!.ref}(SN75176B, 5 V 전원)의 수신 출력 R(1번 핀)`
+    const detail = [`${lo.n}: ${lo.p.ref}(${lo.p.value}, 3.3 V)와 ${ga(other)} 바로 이어져 있습니다`, `3.3 V 쪽: ${lo.lv.by}`]
+    const lines: string[] = []
+    if (esp) {
+      lines.push(`5 V 쪽이 HIGH를 내보내면 최대 5 V가 ESP32 입력 한도 3.3 V + 0.3 V = 3.6 V를 넘습니다 (${cite(lv.esp32_in_max)})`)
+      if (hi?.lv.mcu === 'ATmega328P') lines.push(`ESP32가 HIGH를 내보내면 최소 0.8 × 3.3 V = 2.64 V로, ATmega328P가 HIGH로 읽는 0.6 × 5 V = 3 V보다 낮을 수 있습니다 (${cite(lv.esp32_voh)} / ${cite(lv.atmega_vih)})`)
+    } else lines.push(`5 V 쪽이 HIGH를 내보내면 ${lo.p.value}의 입력 한도를 넘을 수 있습니다. 그 칩의 데이터시트에서 입력 최대 전압(5 V를 견디는지)을 확인합니다`)
+    out.push({ rule: 'op_level', ref: lo.n, state: 'warn',
+      summary: `${lo.n}: 3.3 V 보드 ${wa(lo.p.ref)} ${ga(hi ? `5 V 보드 ${hi.p.ref}` : `5 V로 도는 ${rsOut!.ref}`)} 레벨 변환 없이 바로 이어져 있습니다`,
+      detail: [...detail, ...lines],
+      fix: `${lo.n} 사이에 레벨 시프터(전압 변환 모듈)를 넣습니다. 5 V 쪽에서 3.3 V 쪽으로만 가는 신호라면 저항 두 개로 나눠 3.3 V 아래로 낮춰도 됩니다.` })
+  }
+  return out
+}
+
 function checkRegs(x: Ctx, reversedCaps: Set<string>): OpResult[] {
   const out: OpResult[] = []
   for (const r of x.of('REG')) {
@@ -3065,6 +3214,9 @@ function collect(c: OpCircuit, open: ReadonlySet<string>, force = false): { out:
   run('op_stepper', () => checkSteppers(x))
   run('op_rs485', () => checkRs485(x))
   run('op_feed', () => checkDividerFeeds(x))
+  run('op_i2c', () => checkI2c(x))
+  run('op_adc', () => checkAdcDividers(x))
+  run('op_level', () => checkLevels(x))
   return { out, pulled, noPull }
 }
 

@@ -391,6 +391,43 @@ const reg = circuit([['BT1', 'Battery', '9V'], ['U1', 'REG', 'AMS1117-3.3'], ['C
     && /레귤레이터/.test(pDiv?.fix ?? '') && is(regDiv, 'op_feed', 'error', 'U1', /IN 전원\(3번 핀\).*0\.5 V 떨어져/)
     && !direct.some(r => r.rule === 'op_feed'),
     `${show(fDiv, 'op_feed')} | ${show(regDiv, 'op_feed')} | ${show(direct, 'op_feed')}`)
+  // O7k: I2C lines (UM10204, 2026-11-18): no pull-up warns on SDA and SCL; 4.7 kΩ passes with 251 pF at 100 kHz and
+  // 75.3 pF at 400 kHz (tr ÷ (0.8473 × R)); 100 kΩ allows 11.8 pF, under the two pins' 20 pF: an error under 59 kΩ
+  const i2c = (pull?: string) => {
+    const parts: [string, string, string][] = [['J1', 'Conn_01x04', 'Arduino Uno'], ['J2', 'Conn_01x04', 'BME280 module']]
+    const nets: [string, ...string[]][] = [['+5V', 'J1.1', 'J2.1'], ['GND', 'J1.2', 'J2.2'], ['SDA', 'J1.3', 'J2.3'], ['SCL', 'J1.4', 'J2.4']]
+    if (pull) { parts.push(['R1', 'R', pull], ['R2', 'R', pull]); nets[0].push('R1.1', 'R2.1'); nets[2].push('R1.2'); nets[3].push('R2.2') }
+    return run(circuit(parts, nets))
+  }
+  const iNone = i2c(), i47 = i2c('4.7k'), i100 = i2c('100k')
+  check('O7k I2C: no pull-up warns on SDA and SCL; 4.7 kΩ passes (251 pF / 75.3 pF); 100 kΩ is an error offering under 59 kΩ',
+    is(iNone, 'op_i2c', 'warn', 'SDA', /풀업 저항이 없습니다/) && is(iNone, 'op_i2c', 'warn', 'SCL') && (pick(iNone, 'op_i2c', 'SDA')?.detail ?? []).some(d => /UM10204.*3\.1\.1/.test(d))
+    && is(i47, 'op_i2c', 'pass', 'SDA', /4\.7 kΩ: 버스 용량 100 kHz는 251 pF까지, 400 kHz는 75\.3 pF까지/)
+    && is(i100, 'op_i2c', 'error', 'SCL', /너무 커서/) && /59 kΩ보다 작게/.test(pick(i100, 'op_i2c', 'SCL')?.fix ?? ''),
+    `${show(iNone, 'op_i2c')} | ${show(i47, 'op_i2c')} | ${show(i100, 'op_i2c')} | fix ${pick(i100, 'op_i2c', 'SCL')?.fix}`)
+  // O7l: a divider from 12 V into an Uno's pin (DS40002061B 24.6.1, 30.1): 30k/10k gives 3 V through 7.5 kΩ and passes;
+  // 13k/10k 5.22 V warns (over 5 V); 10k/10k 6 V is an error (over 5.5 V); 300k/100k 3 V through 75 kΩ warns (over 10 kΩ)
+  const adc = (top: string, bot: string) => run(circuit([['BT1', 'Battery', '12V'], ['J1', 'Conn_01x03', 'Arduino Uno'], ['R1', 'R', top], ['R2', 'R', bot]],
+    [['+12V', 'BT1.1', 'R1.1'], ['VSENSE', 'R1.2', 'R2.1', 'J1.3'], ['GND', 'BT1.2', 'R2.2', 'J1.2'], ['+5V', 'J1.1']]))
+  const aOk = adc('30k', '10k'), aHi = adc('13k', '10k'), aOver = adc('10k', '10k'), aBig = adc('300k', '100k')
+  check('O7l ADC divider into an Uno: 3 V through 7.5 kΩ passes; 5.22 V warns; 6 V is an error past VCC + 0.5 V; 75 kΩ warns and offers 1/8',
+    is(aOk, 'op_adc', 'pass', 'VSENSE', /3 V ≤ 5 V, ADC가 보는 저항 7\.5 kΩ/) && is(aHi, 'op_adc', 'warn', 'VSENSE', /5\.22 V가 걸려 칩 전원 5 V를 넘습니다/)
+    && is(aOver, 'op_adc', 'error', 'VSENSE', /6 V가 걸려 핀 최대 5\.5 V/) && is(aBig, 'op_adc', 'warn', 'VSENSE', /75 kΩ이 권장 10 kΩ을/)
+    && /8분의 1/.test(pick(aBig, 'op_adc', 'VSENSE')?.fix ?? '') && (pick(aBig, 'op_adc', 'VSENSE')?.detail ?? []).some(d => /24\.6\.1/.test(d)),
+    [aOk, aHi, aOver, aBig].map(r => show(r, 'op_adc')).join(' | '))
+  // O7m: an ESP32's pin straight to an Uno's warns both ways (3.6 V, 2.64 V against 3 V); a 5 V SN75176B's output into an
+  // ESP32 warns; two Unos say nothing
+  const lvl = (a: string, b: string) => run(circuit([['J1', 'Conn_01x03', a], ['J2', 'Conn_01x03', b]],
+    [['GND', 'J1.1', 'J2.1'], ['LINK', 'J1.2', 'J2.2']]))
+  const mixed = lvl('Arduino Uno', 'ESP32 DevKit'), same = lvl('Arduino Uno', 'Arduino Nano')
+  const rsEsp = run(circuit([['J1', 'Conn_01x04', 'ESP32 DevKit'], ['J2', 'Conn_01x02', 'USB 5V'], ['U1', 'RS485', 'SN75176B']],
+    [['+5V', 'J2.1', 'U1.8'], ['GND', 'J2.2', 'J1.1', 'U1.5'], ['RXD', 'U1.1', 'J1.2'], ['TXD', 'U1.4', 'J1.3'], ['DIR', 'U1.2', 'U1.3', 'J1.4']]))
+  const pm = pick(mixed, 'op_level', 'LINK')
+  check('O7m 3.3 V and 5 V boards wired straight warn with 3.6 V and 2.64 V against 3 V; a 5 V SN75176B output into an ESP32 warns; two 5 V boards are silent',
+    is(mixed, 'op_level', 'warn', 'LINK', /3\.3 V 보드 J2와 5 V 보드 J1이/) && (pm?.detail ?? []).some(d => /3\.6 V를 넘습니다.*v5\.3/.test(d))
+    && (pm?.detail ?? []).some(d => /2\.64 V.*3 V보다 낮을 수/.test(d)) && /레벨 시프터/.test(pm?.fix ?? '')
+    && is(rsEsp, 'op_level', 'warn', 'RXD', /5 V로 도는 U1/) && !same.some(r => r.rule === 'op_level'),
+    `${show(mixed, 'op_level')} | ${show(rsEsp, 'op_level')} | ${show(same, 'op_level')}`)
   // an LM1117-3.3 (limits not looked up) still gives its output 3.3 V: 0.1 Ω from that output to GND is 109 W
   // (2026-11-03 tour, S28: the power circuit's R1 "출력 전압 모니터링" sat from VOUT to GND and only 판단 불가 showed);
   // only a voltage after a dash is read (review of 2026-11-03): 2.85 is not 2.8 (2.85² ÷ 0.1 = 81.2 W), a package

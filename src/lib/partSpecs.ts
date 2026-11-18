@@ -68,6 +68,8 @@ const ATMEGA_328P = 'Microchip ATmega48A/PA/88A/PA/168A/PA/328/P 데이터시트
 // Pololu's A4988 stepper motor driver carrier, read 2026-11-17 from its product page
 const POLOLU_A4988 = 'Pololu A4988 Stepper Motor Driver Carrier 제품 페이지 (pololu.com/product/1182)'
 const TI_75176 = 'TI SN65176B/SN75176B 데이터시트 SLLS101I'
+const NXP_I2C = 'NXP UM10204 I2C-bus specification and user manual Rev. 7.0 (2021-10-01)'
+const ESP32_DS = 'Espressif ESP32 Series Datasheet v5.3'
 // two 18650 lithium-ion cells, read 2026-11-14: Panasonic's sheet (batteryspace.com copy) and Murata's (murata.com)
 const PANA_NCR = 'Panasonic NCR18650B 데이터시트 VERSION 13.11 R1'
 const MURATA_VTC6 = 'Murata US18650VTC6 데이터시트 Version 001'
@@ -288,6 +290,27 @@ export const SPECS = {
       term: { v: 120, src: `${TI_75176} 7.2: 선의 양 끝을 특성 임피던스로 종단 (CAT-5E 선의 예 120 Ω)` },
     },
   } satisfies Record<'SN75176B', Record<'vit' | 'bias' | 'term', Num>>,
+
+  // the I2C bus (read 2026-11-18): open-drain lines that only a pull-up takes high, and the rise time that bounds the
+  // pull-up by the bus's capacitance. Captions sit under NXP's tables, so they are cited by title, not number
+  i2c: {
+    pullup: { v: 0, src: `${NXP_I2C} 3.1.1: SDA와 SCL은 전류원이나 풀업 저항으로 전원에 이어지고, 버스가 쉬면 둘 다 HIGH` },
+    k: { v: 0.8473, src: `${NXP_I2C} 7.1: Rp(max) = tr ÷ (0.8473 × Cb) (0.3 VDD에서 0.7 VDD까지 올라가는 시간)` },
+    tr_sm: { v: 1000e-9, src: `${NXP_I2C} 'Characteristics of the SDA and SCL bus lines' 표: 상승 시간 tr 최대 1000 ns (표준 모드 100 kHz)` },
+    tr_fm: { v: 300e-9, src: `${NXP_I2C} 같은 표: 상승 시간 tr 최대 300 ns (고속 모드 400 kHz)` },
+    cb_max: { v: 400e-12, src: `${NXP_I2C} 같은 표: 버스선 하나의 정전 용량 Cb 최대 400 pF` },
+    ci_max: { v: 10e-12, src: `${NXP_I2C} 'Characteristics of the SDA and SCL I/O stages' 표: 입출력 핀 하나의 정전 용량 Ci 최대 10 pF` },
+  } satisfies Record<'pullup' | 'k' | 'tr_sm' | 'tr_fm' | 'cb_max' | 'ci_max', Num>,
+
+  // logic levels at a pin, as fractions of the chip's supply (read 2026-11-18)
+  levels: {
+    atmega_vih: { v: 0.6, src: `${ATMEGA_328P} 표 30-1: VIH 최소 0.6 VCC (VCC 2.4~5.5 V)` },
+    atmega_pin_max: { v: 0.5, src: `${ATMEGA_328P} 30.1 절대 최대 정격: RESET 외 핀 전압 −0.5 V ~ VCC + 0.5 V` },
+    atmega_adc_src: { v: 10e3, src: `${ATMEGA_328P} 24.6.1: ADC는 출력 임피던스가 대략 10 kΩ 이하인 신호에 맞춰져 있고, 더 높으면 샘플링 시간이 소스에 따라 크게 달라짐` },
+    esp32_vih: { v: 0.75, src: `${ESP32_DS} 표 5-3: VIH 최소 0.75 × VDD` },
+    esp32_in_max: { v: 0.3, src: `${ESP32_DS} 표 5-3: VIH 최대 VDD + 0.3 V` },
+    esp32_voh: { v: 0.8, src: `${ESP32_DS} 표 5-3: VOH 최소 0.8 × VDD` },
+  } satisfies Record<'atmega_vih' | 'atmega_pin_max' | 'atmega_adc_src' | 'esp32_vih' | 'esp32_in_max' | 'esp32_voh', Num>,
 
   // a lithium-ion cell: charged to this voltage, named by this one. A pack of n cells in series is n times these.
   // LiFePO4 and high-voltage (LiHV) cells charge to other voltages and are not read as lithium-ion
